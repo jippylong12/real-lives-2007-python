@@ -80,6 +80,35 @@ _TYPE_NAMES: dict[int, str] = {
 }
 
 
+def _sanitize_field(field: "DatField") -> "DatField":
+    """Patch obviously-broken type codes recovered from a schema record (#26).
+
+    The first schema record in jobs.dat / Investments.dat / Loans.dat is an
+    \"IndexField\" — Delphi's automatic 1-indexed row counter — and the
+    bytes the parser reads at offset 0xa4 produce a junk type code (7430).
+    The slot_size (4 bytes) is recovered correctly though, and inspection
+    of the data rows confirms each row's IndexField slot holds a 4-byte
+    uint32 row counter (1, 2, 3, ...). So override the type to 6 (uint32).
+
+    Other unrecognized type codes are left untouched (decode_value will
+    return None for them) but are reported by tests so future contributors
+    can investigate without silent data loss.
+    """
+    if field.type_code in _TYPE_NAMES:
+        return field
+    if field.name == "IndexField" and field.slot_size == 4:
+        return DatField(
+            field_id=field.field_id,
+            name=field.name,
+            qualified_name=field.qualified_name,
+            raw_offset=field.raw_offset,
+            type_code=6,  # uint32
+            slot_size=field.slot_size,
+            record_offset=field.record_offset,
+        )
+    return field
+
+
 @dataclass
 class DatFile:
     """Parsed contents of a .dat file."""
@@ -240,14 +269,16 @@ def parse_dat(path: str | Path) -> DatFile:
                 slot_size = struct.unpack_from("<H", rec, 0xa9)[0]
                 record_offset = struct.unpack_from("<I", rec, 0xac)[0]
                 parsed.schema.append(
-                    DatField(
-                        field_id=field_id,
-                        name=name,
-                        qualified_name=qualified,
-                        raw_offset=off,
-                        type_code=type_code,
-                        slot_size=slot_size,
-                        record_offset=record_offset,
+                    _sanitize_field(
+                        DatField(
+                            field_id=field_id,
+                            name=name,
+                            qualified_name=qualified,
+                            raw_offset=off,
+                            type_code=type_code,
+                            slot_size=slot_size,
+                            record_offset=record_offset,
+                        )
                     )
                 )
                 continue

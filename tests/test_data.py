@@ -261,6 +261,32 @@ def test_country_original_stats_table_populated():
         conn.close()
 
 
+def test_index_field_sanitized_to_uint32():
+    """Issue #26: the first schema record in jobs.dat / Investments.dat /
+    Loans.dat is an 'IndexField' Delphi row counter and the parser used
+    to recover a junk type code (7430). _sanitize_field overrides it to
+    type 6 (uint32). The decoded row counter should be 1-indexed and
+    monotonically increasing."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "jobs.dat")
+    idx = next(f for f in parsed.schema if f.name == "IndexField")
+    assert idx.type_code == 6
+    assert idx.python_type == "uint32"
+
+    rows = parse_dat.decode_all_rows(parsed)
+    counters = [r["IndexField"] for r in rows]
+    assert counters[:5] == [1, 2, 3, 4, 5]
+    assert counters == list(range(1, len(rows) + 1))
+
+
+def test_every_schema_field_has_recognized_type():
+    """Issue #26: after sanitization, every schema field should have a
+    recognized type code (no more 'unknown' fields silently dropping data)."""
+    for name in ("world.dat", "jobs.dat", "Investments.dat", "Loans.dat"):
+        parsed = parse_dat.parse_dat(DATA_DIR / name)
+        unknown = [f.name for f in parsed.schema if f.python_type == "unknown"]
+        assert not unknown, f"{name}: schema fields with unknown type: {unknown}"
+
+
 def test_decode_jobs_dat_with_generic_row_decoder():
     """Issue #19: the generic decoder generalizes from world.dat to any
     .dat file with a fixed-row data section. jobs.dat decodes into 131
