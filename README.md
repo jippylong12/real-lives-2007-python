@@ -233,4 +233,4 @@ included so that the parser tests have something to assert against and so
 that real flags appear in the UI. If a rights-holder objects to this use,
 please open an issue.
 
-This project is released under the MIT License (see `LICENSE`, when added).
+This project is released under the MIT License (see [`LICENSE`](LICENSE)).
