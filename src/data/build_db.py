@@ -301,21 +301,25 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 original_total += 1
 
         # 7b. Country encyclopedia descriptions — recovered from the long-string
-        # pool of world.dat. Empty descriptions are skipped; the API just
-        # returns null for those countries.
+        # pool of world.dat, with seed.FALLBACK_DESCRIPTIONS as a fallback for
+        # countries the binary extractor can't anchor on (issue #11).
         descriptions_total = 0
         if world is not None:
             descriptions = parse_dat.extract_descriptions_per_country(
                 world, list(names_by_code.keys())
             )
-            for c in seed.COUNTRIES:
-                desc = descriptions.get(c["name"], "")
-                if desc:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO country_descriptions (country_code, description) VALUES (?, ?)",
-                        (c["code"], desc),
-                    )
-                    descriptions_total += 1
+        else:
+            descriptions = {}
+        for c in seed.COUNTRIES:
+            desc = descriptions.get(c["name"], "")
+            if not desc and c["code"] in seed.FALLBACK_DESCRIPTIONS:
+                desc = seed.FALLBACK_DESCRIPTIONS[c["code"]]
+            if desc:
+                conn.execute(
+                    "INSERT OR REPLACE INTO country_descriptions (country_code, description) VALUES (?, ?)",
+                    (c["code"], desc),
+                )
+                descriptions_total += 1
 
         conn.commit()
 

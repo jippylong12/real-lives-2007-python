@@ -335,6 +335,94 @@ FALLBACK_CITIES: dict[str, list[str]] = {
 }
 
 
+# Hand-bundled encyclopedia paragraphs for countries the world.dat
+# long-string extractor can't anchor on (#11). One-paragraph CIA-Factbook-
+# style descriptions covering location, terrain, climate, and key facts.
+# build_db merges these only for codes that don't already get a description
+# from the binary extractor — the binary remains the source of truth.
+FALLBACK_DESCRIPTIONS: dict[str, str] = {
+    "ai": (
+        "Caribbean, islands between the Caribbean Sea and North Atlantic Ocean, "
+        "east of Puerto Rico. Tropical; moderated by northeast trade winds. Flat "
+        "and low-lying island of coral and limestone. A British overseas territory; "
+        "the economy depends heavily on luxury tourism, offshore banking, lobster "
+        "fishing, and remittances."
+    ),
+    "bm": (
+        "North Atlantic Ocean, group of islands east of South Carolina. Subtropical; "
+        "mild, humid; gales and strong winds common in winter. Low hills separated "
+        "by fertile depressions; surrounded by coral reefs. A British overseas "
+        "territory with one of the highest GDPs per capita in the world, driven by "
+        "international business and tourism."
+    ),
+    "bo": (
+        "Central South America, southwest of Brazil. Varies with altitude; humid "
+        "and tropical to cold and semiarid. Rugged Andes Mountains with a highland "
+        "plateau (Altiplano), hills, and lowland plains of the Amazon Basin. Bolivia "
+        "is one of the most biodiverse countries on Earth and home to the world's "
+        "largest salt flat (Salar de Uyuni)."
+    ),
+    "er": (
+        "Eastern Africa, bordering the Red Sea between Djibouti and Sudan. Hot, dry "
+        "desert strip along the Red Sea coast; cooler and wetter in the central "
+        "highlands; semiarid in western hills and lowlands. Eritrea fought a 30-year "
+        "war for independence from Ethiopia and is one of the most isolated and "
+        "tightly-controlled states in the world."
+    ),
+    "mh": (
+        "Oceania, two archipelagic island chains of 29 atolls and five single islands "
+        "in the North Pacific Ocean, about half way between Hawaii and Australia. "
+        "Tropical; hot and humid; wet season May to November; islands border typhoon "
+        "belt. Low coral limestone and sand islands. The Marshall Islands hosted "
+        "U.S. nuclear testing at Bikini and Enewetak in the 1940s and 50s."
+    ),
+    "mc": (
+        "Western Europe, bordering the Mediterranean Sea on the southern coast of "
+        "France, near the border with Italy. Mediterranean with mild, wet winters and "
+        "hot, dry summers. Hilly, rugged, rocky. The world's second-smallest country "
+        "after Vatican City, Monaco is famous for its casino, the Monaco Grand Prix, "
+        "and as a tax haven for the wealthy."
+    ),
+    "nr": (
+        "Oceania, island in the South Pacific Ocean, south of the Marshall Islands. "
+        "Tropical with a monsoonal pattern; rainy season (November to February). "
+        "Sandy beach rises to fertile ring around raised coral reefs with phosphate "
+        "plateau in center. Once one of the wealthiest nations per capita on phosphate "
+        "mining, Nauru's economy collapsed when the deposits ran out."
+    ),
+    "pw": (
+        "Oceania, group of islands in the North Pacific Ocean, southeast of the "
+        "Philippines. Tropical; hot and humid; wet season May to November. Varying "
+        "geologically from the high, mountainous main island of Babeldaob to low, "
+        "coral islands usually fringed by large barrier reefs. Palau is renowned "
+        "for its diving and was the first nation to create a shark sanctuary."
+    ),
+    "kn": (
+        "Caribbean, islands in the Caribbean Sea, about one-third of the way from "
+        "Puerto Rico to Trinidad and Tobago. Tropical, tempered by constant sea "
+        "breezes; little seasonal temperature variation; rainy season (May to "
+        "November). Volcanic with mountainous interiors. The Federation of Saint "
+        "Kitts and Nevis is the smallest sovereign state in the Americas by area "
+        "and population."
+    ),
+    "ws": (
+        "Oceania, group of islands in the South Pacific Ocean, about half way "
+        "between Hawaii and New Zealand. Tropical; rainy season (November to April), "
+        "dry season (May to October). Two main islands (Savaii and Upolu) and several "
+        "smaller islands and uninhabited islets; narrow coastal plain with volcanic, "
+        "rocky, rugged mountains in the interior. Samoa was the first Pacific island "
+        "nation to gain independence in the 20th century."
+    ),
+    "sm": (
+        "Southern Europe, an enclave in central Italy. Mediterranean; mild to cool "
+        "winters; warm, sunny summers. Rugged mountains, dominated by the three "
+        "peaks of Monte Titano. The Republic of San Marino is the world's oldest "
+        "surviving sovereign state and constitutional republic, traditionally founded "
+        "in 301 AD."
+    ),
+}
+
+
 # Curated job catalogue. ~30 representative jobs that span the original game's
 # range — unskilled labor up through executive/professional. min_education
 # values: 0=none, 1=primary, 2=secondary, 3=vocational, 4=university.

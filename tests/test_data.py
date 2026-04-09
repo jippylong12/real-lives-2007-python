@@ -200,9 +200,31 @@ def test_extract_descriptions_per_country():
     assert "tropical" in descs["Brazil"].lower()
     assert "Canada and Mexico" in descs["United States"]
     assert "Bay of Bengal" in descs["Bangladesh"]
-    # Coverage: at least 150 of 199 countries got a usable description.
+    # Coverage: the binary extractor alone reaches at least 175 of 199
+    # countries; the build_db pipeline tops it up to 199 with hand-bundled
+    # FALLBACK_DESCRIPTIONS for the tail-of-pool entries (issue #11).
     non_empty = sum(1 for d in descs.values() if d)
-    assert non_empty >= 150, f"only {non_empty} descriptions extracted"
+    assert non_empty >= 175, f"only {non_empty} descriptions extracted from binary"
+
+
+def test_country_descriptions_cover_every_country():
+    """Issue #11: every country in the curated set should land a description
+    after the build_db pipeline runs (binary extraction + FALLBACK_DESCRIPTIONS
+    for tail-of-pool microstates)."""
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        n_countries = conn.execute("SELECT COUNT(*) FROM countries").fetchone()[0]
+        n_descriptions = conn.execute("SELECT COUNT(*) FROM country_descriptions").fetchone()[0]
+        assert n_descriptions == n_countries
+        # Spot-check a fallback country.
+        row = conn.execute(
+            "SELECT description FROM country_descriptions WHERE country_code = 'mc'"
+        ).fetchone()
+        assert row is not None
+        assert "Monaco" in row["description"] or "Mediterranean" in row["description"]
+    finally:
+        conn.close()
 
 
 def test_long_strings_stitch_across_record_boundaries():
