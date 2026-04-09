@@ -159,11 +159,27 @@ class Game:
             log.append(TurnEvent("education", "Education", "education", ed_msg))
             char.remember(ed_msg)
 
-        # 2. Job hunt + promotion (#51).
+        # 2. Job hunt + promotion (#51) + retirement (#75).
         # Tick years_in_role first so the promotion check sees the
         # accumulated experience for the year that just finished.
         if char.job is not None:
             char.years_in_role += 1
+            # Forced retirement when the character ages past their job's
+            # max_age. Athletes retire at 38-40, soldiers at 55, doctors
+            # at 80, etc. promotion_count is preserved (you earned those
+            # promotions); years_in_role resets so a re-entered career
+            # starts fresh.
+            current_job = careers.get_job(char.job)
+            if current_job is not None and char.age > current_job.max_age:
+                log.append(TurnEvent(
+                    "retired", "Retired", "finance",
+                    f"You aged out of your role as a {current_job.name}.",
+                ))
+                char.remember(f"Retired from being a {current_job.name}.")
+                char.job = None
+                char.salary = 0
+                char.years_in_role = 0
+
         job_msg = careers.assign_job(char, country, self.rng)
         if job_msg:
             log.append(TurnEvent("job", "New job", "finance", job_msg))
@@ -180,6 +196,22 @@ class Game:
             log.append(TurnEvent("income", "Income & expenses", "finance",
                                  f"Net change to savings this year: ${net:,}.",
                                  money_delta=net))
+        # 3b. Subscription effect log entries (#77). The careers tick
+        # stashes per-subscription records on the character; surface
+        # them as event log lines so the player sees what their
+        # gym / therapy / premium healthcare plan is actually doing.
+        sub_records = getattr(char, "_pending_subscription_log", None)
+        if sub_records:
+            for rec in sub_records:
+                log.append(TurnEvent(
+                    f"sub_{rec['key']}", rec["name"], "life",
+                    rec["summary"],
+                    deltas=rec.get("deltas", {}),
+                ))
+            try:
+                del char._pending_subscription_log
+            except AttributeError:
+                pass
 
         # 4. Loans + investments yearly tick
         tick = finances.tick_finances(char, self.rng)

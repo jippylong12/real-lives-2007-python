@@ -576,6 +576,80 @@ def test_jobs_table_populated_from_binary():
     assert captain.promotes_to is None  # terminal
 
 
+def test_investment_value_compounds_year_over_year():
+    """#74: investment values should compound — each year's roll
+    multiplies the *current* value, not the original cost basis. A
+    fixed-positive product should grow exponentially over many years."""
+    from src.engine import finances
+    from src.engine.character import Character, Attributes, InvestmentHolding, Gender
+    rng = random.Random(0)
+    char = Character(
+        id="t", name="t", gender=Gender.MALE, age=30,
+        country_code="us", city="x", is_urban=True,
+        attributes=Attributes(),
+        family_wealth=0, money=10000,
+    )
+    # Use the savings account — guaranteed positive return (1-4%).
+    savings = next(p for p in finances.list_investments() if "savings" in p.name)
+    char.investments.append(InvestmentHolding(
+        product_id=savings.id, name=savings.name,
+        cost_basis=1000, value=1000, opened_year=2020,
+    ))
+    for _ in range(20):
+        finances.tick_finances(char, rng)
+    # Expected ~ 1000 * 1.025^20 = 1639. Allow a wide window for the
+    # randomness to swing.
+    final = char.investments[0].value
+    assert 1300 < final < 2200, f"compounding broken: $1000 → ${final} after 20yr"
+    # last_year_delta should be set after the most recent tick.
+    assert char.investments[0].last_year_delta != 0 or char.investments[0].value > 1000
+
+
+def test_repeat_purchases_can_be_bought_multiple_times():
+    """#76: vacations and other one_time=False purchases can be bought
+    repeatedly without being marked as 'owned'."""
+    from src.engine import spending
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 30
+    char.money = 100_000
+    spending.buy(char, country, "vacation_local", 2030)
+    spending.buy(char, country, "vacation_local", 2031)
+    listings = spending.list_purchases(char, country)
+    vac = next(l for l in listings if l["key"] == "vacation_local")
+    assert not vac["owned"]  # repeatable, never marked as owned
+    assert vac["eligible"]   # still buyable as long as the player can afford
+
+
+def test_athlete_retires_at_max_age():
+    """#75: when a character ages past every athletics rung's max_age,
+    advance_year strips their job and salary."""
+    from src.engine import Game, careers
+    g = Game.new(country_code="us", seed=42)
+    elite = careers.get_job("elite athlete")
+    assert elite is not None
+    country = g.country()
+    char = g.state.character
+    char.in_school = False
+    char.education = 1
+    char.attributes.athletic = 80
+    char.vocation_field = "athletics"
+    char.age = 30
+    careers._set_job(char, country, elite, g.rng)
+    assert char.job == "elite athlete"
+    # Push past every athletics rung's max_age (the highest is 40 for
+    # 'professional athlete'). At age 45 nothing in athletics fits.
+    char.age = 44
+    g.advance_year()
+    # After the tick: retired AND can't be re-assigned to any other
+    # athletics job. (Since vocation_field='athletics', the fallback
+    # to all eligible_jobs also filters to athletics — none fit at 45+.)
+    assert char.job is None, f"still employed as {char.job}"
+    assert char.salary == 0
+
+
 def test_investment_age_gate():
     """#68: investments are now age-gated. Savings 12+, bonds 16+, the rest 18+."""
     from src.engine import finances

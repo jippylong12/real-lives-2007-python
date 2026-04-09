@@ -138,6 +138,7 @@ class InvestmentHolding:
     cost_basis: int         # original cash invested
     value: int              # current mark-to-market value
     opened_year: int        # in-game calendar year purchased
+    last_year_delta: int = 0  # change in `value` from the most recent yearly tick (#74)
 
 
 @dataclass

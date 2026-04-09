@@ -773,12 +773,16 @@ def yearly_income(character: Character, country: Country, rng: random.Random) ->
     net = income - expenses
 
     # Subscription costs (#66) — applied even if the character has no
-    # job. Living expenses still hit your savings.
+    # job. Living expenses still hit your savings. The per-subscription
+    # records are stashed on the character so game.advance_year can
+    # surface them as event log entries (#77).
     from . import spending
     sub_cost = spending.yearly_subscription_cost(character)
     if sub_cost:
         net -= sub_cost
-        spending.apply_subscription_effects(character)
+        records = spending.apply_subscription_effects(character)
+        # Stash for game.advance_year to consume and clear after rendering.
+        character._pending_subscription_log = records  # type: ignore[attr-defined]
 
     character.money += net
     return net

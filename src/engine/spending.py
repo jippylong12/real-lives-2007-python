@@ -255,26 +255,58 @@ def get_purchase(key: str) -> Purchase | None:
 
 
 def list_purchases(character: Character, country: Country) -> list[dict]:
-    """Return every purchase annotated with the character's eligibility
-    and the country-scaled price. Used by the frontend's spend panel."""
+    """Return every purchase annotated with the character's eligibility,
+    affordability (#73), and ownership / subscription state. Used by the
+    frontend's spend panel.
+
+    Repeat purchases (vacations, charity, family gifts) are intentionally
+    NOT marked as owned (#76) — buying one doesn't lock you out of the
+    next. Only ``one_time`` items get the owned tag.
+    """
     out = []
+    scale = _scale_for_country(country)
     for p in PURCHASES:
         cost = scaled_cost(p, country)
+        monthly = int(p.monthly_cost * scale) if p.monthly_cost else 0
         eligible, reason = _check_eligibility(p, character, country)
+        # #76: only one-time purchases get the owned flag. Repeats can
+        # always be re-bought.
+        owned = p.one_time and any(rec.get("key") == p.key for rec in character.purchases)
+        subscribed = p.category == "subscription" and p.key in character.subscriptions
+        # #73: affordability is a separate gate from eligibility. The
+        # listing returns it so the frontend can disable Buy when broke
+        # without making a separate call only to get a 400.
+        affordable = character.money >= cost
+        # If not eligible AND no other reason, mention affordability.
+        if eligible and not affordable:
+            reason = f"need ${cost:,}, have ${character.money:,}"
+        # Pretty-printed effect chips for the UI (#77)
+        effects = []
+        if p.deltas:
+            for k, v in p.deltas.items():
+                if v:
+                    sign = "+" if v > 0 else ""
+                    effects.append(f"{sign}{v} {k}")
+        if p.happiness_delta:
+            effects.append(f"+{p.happiness_delta} happiness")
+        if p.family_wealth_delta:
+            effects.append(f"+${int(p.family_wealth_delta * scale):,} family wealth")
         out.append({
             "key": p.key,
             "name": p.name,
             "category": p.category,
             "description": p.description,
             "cost": cost,
-            "monthly_cost": int(p.monthly_cost * _scale_for_country(country)) if p.monthly_cost else 0,
+            "monthly_cost": monthly,
             "happiness_delta": p.happiness_delta,
-            "family_wealth_delta": int(p.family_wealth_delta * _scale_for_country(country)) if p.family_wealth_delta else 0,
+            "family_wealth_delta": int(p.family_wealth_delta * scale) if p.family_wealth_delta else 0,
             "one_time": p.one_time,
-            "eligible": eligible,
+            "eligible": eligible and affordable,
+            "affordable": affordable,
             "reason": reason,
-            "owned": any(rec.get("key") == p.key for rec in character.purchases),
-            "subscribed": p.key in character.subscriptions,
+            "owned": owned,
+            "subscribed": subscribed,
+            "effects": effects,
         })
     return out
 
@@ -369,10 +401,29 @@ def yearly_subscription_cost(character: Character) -> int:
     return sum(int(s.get("monthly_cost", 0)) * 12 for s in character.subscriptions.values())
 
 
-def apply_subscription_effects(character: Character) -> None:
+_SUBSCRIPTION_FLAVOR: dict[str, str] = {
+    "sub_gym": "Another year at the gym kept you in shape.",
+    "sub_therapy": "Therapy helped you process the year.",
+    "sub_premium_health": "Your premium healthcare plan kept the doctors close.",
+    "sub_hobby": "Your hobbies and streaming brought small joys.",
+}
+
+
+def apply_subscription_effects(character: Character) -> list[dict]:
     """Apply each active subscription's per-year attribute deltas. Called
-    by the yearly tick AFTER the cash deduction."""
-    for sub in character.subscriptions.values():
+    by the yearly tick AFTER the cash deduction. Returns a list of
+    summary records the engine can surface in the event log so the
+    player sees what their subscription is actually doing (#77).
+    """
+    out = []
+    for key, sub in character.subscriptions.items():
         deltas = sub.get("deltas") or {}
         if deltas:
             character.attributes.adjust(**deltas)
+        out.append({
+            "key": key,
+            "name": sub.get("name", key),
+            "summary": _SUBSCRIPTION_FLAVOR.get(key, f"Your {sub.get('name', key)} kept paying off."),
+            "deltas": deltas,
+        })
+    return out

@@ -67,6 +67,44 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   border-bottom: 1px solid var(--line);
 }
 .topbar h1 { font-size: 1.1rem; }
+.topbar-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* Save indicator (#72) — pulses on every successful POST. */
+.save-indicator {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--ink-mute);
+  border: 1px solid var(--line);
+  transition: background 0.4s ease, color 0.4s ease;
+}
+.save-indicator.pulsing {
+  background: var(--good);
+  color: #fff;
+  border-color: var(--good);
+}
+
+/* Saved games modal (#72) */
+.saved-games { max-width: 520px; }
+.saved-games-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 60vh; overflow-y: auto;
+  margin-top: 8px;
+}
+.saved-game-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.sg-name { font-weight: 600; font-size: 14px; }
+.sg-meta { font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { margin: 0; font-style: italic; }
 .brand .muted { font-style: normal; font-weight: 400; color: var(--ink-mute); }
@@ -95,6 +133,10 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 .btn.primary:hover { background: var(--accent); border-color: var(--accent); }
 .btn.lg { padding: 14px 28px; font-size: 16px; }
 .btn.xs { padding: 2px 8px; font-size: 11px; }
+/* Visually dimmed but still clickable — pops an alert with the
+   blocked reason so the user understands why the action is gated (#71). */
+.btn.blocked { opacity: 0.55; cursor: help; }
+.btn.blocked:hover { background: var(--bg-elev); border-color: var(--line); color: var(--ink-mute); }
 
 /* Job action buttons row (#62) — sit below the Job stat row so a long
    job name like "company president" doesn't get squeezed by the buttons

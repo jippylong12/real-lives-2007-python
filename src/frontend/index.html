@@ -16,6 +16,8 @@
         <h1>Real Lives <span class="muted">/ web</span></h1>
       </div>
       <div class="topbar-actions" id="topbar-actions">
+        <span id="save-indicator" class="save-indicator">Saved</span>
+        <button id="btn-saved-games" class="btn xs">Saved games</button>
         <button id="btn-new" class="btn primary">New life</button>
       </div>
     </header>
@@ -35,6 +37,7 @@
             </p>
           </div>
           <div class="start-actions">
+            <button id="btn-continue" class="btn primary lg hidden">Continue last life</button>
             <button id="start-random" class="btn primary lg">Start a random life</button>
             <div class="or">or pick a country</div>
             <div id="country-grid" class="country-grid"></div>
@@ -183,6 +186,18 @@
         <h3 id="decision-title">A choice…</h3>
         <p id="decision-desc"></p>
         <div id="decision-buttons" class="decision-buttons"></div>
+      </div>
+    </div>
+
+    <!-- Saved games modal (#72) — browse and load any persisted run. -->
+    <div id="saved-games-modal" class="modal-backdrop hidden">
+      <div class="modal-card panel saved-games">
+        <div class="jobboard-header">
+          <h3>Saved games</h3>
+          <button id="btn-saved-games-close" class="btn xs">Close</button>
+        </div>
+        <p class="muted">All games auto-save after every action. Pick one to continue.</p>
+        <div id="saved-games-list" class="saved-games-list"></div>
       </div>
     </div>
 

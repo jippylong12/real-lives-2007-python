@@ -66,7 +66,20 @@ async function api(path, opts = {}) {
     throw new Error(`${res.status}: ${text}`);
   }
   log(`← ${method} ${path} ${res.status}`);
+  // Pulse the save indicator on every successful POST — every state
+  // mutation auto-saves server-side, so this is honest feedback (#72).
+  if (method === "POST") pulseSaveIndicator();
   return res.json();
+}
+
+// ---------- Save indicator (#72) ----------
+let saveIndicatorTimer = null;
+function pulseSaveIndicator() {
+  const el = $opt("#save-indicator");
+  if (!el) return;
+  el.classList.add("pulsing");
+  if (saveIndicatorTimer) clearTimeout(saveIndicatorTimer);
+  saveIndicatorTimer = setTimeout(() => el.classList.remove("pulsing"), 700);
 }
 
 async function loadCountries() {
@@ -134,25 +147,7 @@ function renderSpendTab() {
   const subsHost = $opt("#active-subscriptions");
   if (!subsHost) return;
 
-  // Active subscriptions section
   const c = state.game?.character;
-  const subs = c?.subscriptions || {};
-  if (Object.keys(subs).length === 0) {
-    subsHost.innerHTML = '<p class="muted">No active subscriptions.</p>';
-  } else {
-    let html = "<h5 class='facts-heading'>Active subscriptions</h5>";
-    for (const [key, sub] of Object.entries(subs)) {
-      html += `<div class="sub-row">
-        <span>${sub.name}</span>
-        <span class="muted">${fmtMoney((sub.monthly_cost || 0) * 12)}/yr</span>
-        <button class="btn xs" data-cancel-sub="${key}">Cancel</button>
-      </div>`;
-    }
-    subsHost.innerHTML = html;
-    subsHost.querySelectorAll("[data-cancel-sub]").forEach((b) => {
-      b.onclick = () => cancelSubscription(b.dataset.cancelSub);
-    });
-  }
 
   // Category tabs
   const tabsHost = $opt("#purchase-categories");
@@ -170,39 +165,101 @@ function renderSpendTab() {
     tabsHost.appendChild(btn);
   }
 
-  // Purchase rows
+  // Available + Owned split (#76)
+  const inCategory = spendState.purchases.filter((p) => p.category === spendState.category);
+  const available = inCategory.filter((p) => !p.owned && !p.subscribed);
+  const owned = inCategory.filter((p) => p.owned || p.subscribed);
+
+  // Active subscriptions block (always shown across categories)
+  const subs = c?.subscriptions || {};
+  if (Object.keys(subs).length === 0) {
+    subsHost.innerHTML = "";
+  } else {
+    let html = "<h5 class='facts-heading'>Active subscriptions</h5>";
+    for (const [key, sub] of Object.entries(subs)) {
+      html += `<div class="sub-row">
+        <span>${sub.name}</span>
+        <span class="muted">${fmtMoney((sub.monthly_cost || 0) * 12)}/yr</span>
+        <button class="btn xs" data-cancel-sub="${key}">Cancel</button>
+      </div>`;
+    }
+    subsHost.innerHTML = html;
+    subsHost.querySelectorAll("[data-cancel-sub]").forEach((b) => {
+      b.onclick = () => cancelSubscription(b.dataset.cancelSub);
+    });
+  }
+
+  // Available list
   const list = $opt("#purchase-list");
   list.innerHTML = "";
-  const filtered = spendState.purchases.filter((p) => p.category === spendState.category);
-  if (filtered.length === 0) {
+
+  if (available.length === 0 && owned.length === 0) {
     list.innerHTML = '<p class="muted">Nothing in this category.</p>';
     return;
   }
-  for (const p of filtered) {
-    const row = document.createElement("div");
-    row.className = "purchase-row" + (!p.eligible ? " disabled" : "") + (p.owned || p.subscribed ? " owned" : "");
-    const costLabel = p.monthly_cost
-      ? `${fmtMoney(p.monthly_cost)}/mo`
-      : fmtMoney(p.cost);
-    const blockers = !p.eligible ? `<div class="pr-blocked">${p.reason || "ineligible"}</div>` : "";
-    const ownedTag = p.owned ? '<span class="pr-owned">Owned</span>'
-                   : p.subscribed ? '<span class="pr-owned">Subscribed</span>'
-                   : '';
-    row.innerHTML = `
-      <div class="pr-main">
-        <div class="pr-name">${p.name} ${ownedTag}</div>
-        <div class="pr-desc">${p.description}</div>
-        ${blockers}
-      </div>
-      <div class="pr-actions">
-        <span class="pr-cost">${costLabel}</span>
-        <button class="btn sm" data-buy="${p.key}" ${(!p.eligible || p.owned || p.subscribed) ? "disabled" : ""}>Buy</button>
-      </div>`;
-    list.appendChild(row);
+
+  for (const p of available) {
+    list.appendChild(buildPurchaseRow(p, false));
   }
+
+  // Owned/subscribed footer (#76) — only when there's something to show
+  if (owned.length > 0) {
+    const heading = document.createElement("h5");
+    heading.className = "facts-heading";
+    heading.textContent = "Owned & subscribed";
+    list.appendChild(heading);
+    for (const p of owned) {
+      list.appendChild(buildPurchaseRow(p, true));
+    }
+  }
+
   list.querySelectorAll("[data-buy]").forEach((b) => {
-    b.onclick = () => buyPurchase(b.dataset.buy);
+    b.onclick = () => {
+      const blocked = b.dataset.blocked;
+      if (blocked) { alert(blocked); return; }
+      buyPurchase(b.dataset.buy);
+    };
   });
+}
+
+function buildPurchaseRow(p, isOwned) {
+  const row = document.createElement("div");
+  row.className = "purchase-row" + (isOwned ? " owned" : "") + (!p.eligible && !isOwned ? " disabled" : "");
+  const costLabel = p.monthly_cost
+    ? `${fmtMoney(p.monthly_cost)}/mo`
+    : fmtMoney(p.cost);
+  const ownedTag = p.owned ? '<span class="pr-owned">Owned</span>'
+                  : p.subscribed ? '<span class="pr-owned">Subscribed</span>'
+                  : '';
+
+  // Effect chips (#77)
+  let effectsHtml = "";
+  if (p.effects && p.effects.length) {
+    effectsHtml = '<div class="pr-effects">' +
+      p.effects.map(e => `<span class="delta ${e.startsWith('-') ? 'down' : 'up'}">${e}</span>`).join('') +
+      '</div>';
+  }
+
+  // Click-to-alert when blocked, like the healthcare buttons (#71)
+  let actionHtml;
+  if (isOwned) {
+    actionHtml = '';  // no Buy button for owned items
+  } else {
+    const blockedReason = !p.eligible ? (p.reason || "not eligible") : "";
+    actionHtml = `<button class="btn sm ${blockedReason ? 'blocked' : ''}" data-buy="${p.key}" data-blocked="${blockedReason}">Buy</button>`;
+  }
+
+  row.innerHTML = `
+    <div class="pr-main">
+      <div class="pr-name">${p.name} ${ownedTag}</div>
+      <div class="pr-desc">${p.description}</div>
+      ${effectsHtml}
+    </div>
+    <div class="pr-actions">
+      <span class="pr-cost">${costLabel}</span>
+      ${actionHtml}
+    </div>`;
+  return row;
 }
 
 async function buyPurchase(key) {
@@ -262,40 +319,64 @@ function renderHealthcareActions() {
   const c = state.game?.character;
   if (!c) return;
 
+  // Button rendering helper (#71): build a button that's *visually*
+  // dimmed when blocked but still clickable, so the player gets an
+  // alert with the blocked reason instead of silent nothing.
+  function actionButton(id, label, cost, blockedReason) {
+    const cantAfford = c.money < cost;
+    const blocked = blockedReason || (cantAfford ? `not enough cash (need ${fmtMoney(cost)})` : null);
+    const cls = blocked ? "btn xs blocked" : "btn xs";
+    return `<button class="${cls}" id="${id}" data-blocked="${blocked || ""}">${label} ${fmtMoney(cost)}</button>`;
+  }
+
   let html = "";
 
-  // General checkup
-  const checkup = opts.checkup;
-  if (checkup) {
-    const disabled = !checkup.eligible || c.money < checkup.cost ? "disabled" : "";
-    const title = checkup.eligible ? "" : (checkup.reason || "");
-    html += `<button class="btn xs" id="btn-checkup" ${disabled} title="${title}">Checkup ${fmtMoney(checkup.cost)}</button>`;
+  if (opts.checkup) {
+    html += actionButton(
+      "btn-checkup",
+      "Checkup",
+      opts.checkup.cost,
+      opts.checkup.eligible ? null : (opts.checkup.reason || "not eligible"),
+    );
   }
-
-  // Major treatment
-  const major = opts.major;
-  if (major) {
-    const disabled = !major.eligible || c.money < major.cost ? "disabled" : "";
-    const title = major.eligible ? "" : (major.reason || "");
-    html += `<button class="btn xs" id="btn-major" ${disabled} title="${title}">Major treatment ${fmtMoney(major.cost)}</button>`;
+  if (opts.major) {
+    html += actionButton(
+      "btn-major",
+      "Major treatment",
+      opts.major.cost,
+      opts.major.eligible ? null : (opts.major.reason || "not eligible"),
+    );
   }
-
-  // Per-disease cure buttons
   if (opts.diseases && opts.diseases.length) {
     for (const d of opts.diseases) {
-      const disabled = c.money < d.cost ? "disabled" : "";
       const verb = d.permanent ? "Manage" : "Cure";
-      html += `<button class="btn xs" data-treat-disease="${d.disease_key}" ${disabled}>${verb} ${d.name} ${fmtMoney(d.cost)}</button>`;
+      const blocked = c.money < d.cost ? `not enough cash (need ${fmtMoney(d.cost)})` : null;
+      const cls = blocked ? "btn xs blocked" : "btn xs";
+      html += `<button class="${cls}" data-treat-disease="${d.disease_key}" data-blocked="${blocked || ""}">${verb} ${d.name} ${fmtMoney(d.cost)}</button>`;
     }
   }
 
   host.innerHTML = html;
-  const cb = $opt("#btn-checkup");
-  if (cb) cb.addEventListener("click", buyCheckup);
-  const mb = $opt("#btn-major");
-  if (mb) mb.addEventListener("click", buyMajorTreatment);
+
+  // Wire clicks. Blocked buttons just alert their reason. Live buttons
+  // call the action.
+  function wireAction(id, action) {
+    const btn = $opt("#" + id);
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      const blocked = btn.dataset.blocked;
+      if (blocked) { alert(blocked); return; }
+      action();
+    });
+  }
+  wireAction("btn-checkup", buyCheckup);
+  wireAction("btn-major", buyMajorTreatment);
   host.querySelectorAll("[data-treat-disease]").forEach((b) => {
-    b.onclick = () => treatDisease(b.dataset.treatDisease);
+    b.onclick = () => {
+      const blocked = b.dataset.blocked;
+      if (blocked) { alert(blocked); return; }
+      treatDisease(b.dataset.treatDisease);
+    };
   });
 }
 
@@ -367,6 +448,101 @@ async function dropOutOfSchool() {
   } catch (e) {
     logErr("dropOutOfSchool failed", e);
     alert(`Could not drop out: ${e.message}`);
+  }
+}
+
+// ---------- Saved games (#72) ----------
+async function loadGameById(gameId) {
+  log(`loadGameById(${gameId})`);
+  try {
+    state.game = await api(`/api/game/${gameId}`);
+    try { localStorage.setItem("rl_last_game_id", state.game.id); } catch (e) {}
+    // Reset stale UI from any previous render
+    $opt("#event-list").innerHTML = '<p class="placeholder">Welcome back. Click "Live another year" to keep going.</p>';
+    $opt("#timeline").innerHTML = "";
+    $opt("#decision-modal")?.classList.add("hidden");
+    showGameScreen();
+    renderGame();
+    loadPurchases();
+    loadHealthcare();
+    closeSavedGames();
+  } catch (e) {
+    logErr("loadGameById failed", e);
+    alert(`Could not load that game: ${e.message}`);
+  }
+}
+
+async function continueLastGame() {
+  let lastId;
+  try { lastId = localStorage.getItem("rl_last_game_id"); } catch (e) {}
+  if (lastId) {
+    await loadGameById(lastId);
+    return;
+  }
+  // Fall back to the most recently updated game from the server.
+  try {
+    const games = await api("/api/games");
+    if (games.length === 0) {
+      alert("No saved games yet. Start a new life!");
+      return;
+    }
+    await loadGameById(games[0].id);
+  } catch (e) {
+    logErr("continueLastGame failed", e);
+    alert(e.message);
+  }
+}
+
+async function openSavedGames() {
+  log("openSavedGames");
+  try {
+    const games = await api("/api/games");
+    const host = $opt("#saved-games-list");
+    host.innerHTML = "";
+    if (games.length === 0) {
+      host.innerHTML = '<p class="muted">No saved games yet.</p>';
+    } else {
+      for (const g of games) {
+        const row = document.createElement("div");
+        row.className = "saved-game-row";
+        const status = g.alive ? `age ${g.age}` : `died at ${g.age}`;
+        row.innerHTML = `
+          <div class="sg-main">
+            <div class="sg-name">${g.character_name}</div>
+            <div class="sg-meta">${g.country_code.toUpperCase()} · ${status} · ${g.updated_at.slice(0, 10)}</div>
+          </div>
+          <button class="btn sm" data-load="${g.id}">${g.alive ? "Continue" : "View"}</button>`;
+        host.appendChild(row);
+      }
+      host.querySelectorAll("[data-load]").forEach((b) => {
+        b.onclick = () => loadGameById(b.dataset.load);
+      });
+    }
+    $opt("#saved-games-modal").classList.remove("hidden");
+  } catch (e) {
+    logErr("openSavedGames failed", e);
+    alert(e.message);
+  }
+}
+
+function closeSavedGames() {
+  $opt("#saved-games-modal")?.classList.add("hidden");
+}
+
+async function refreshContinueButton() {
+  const btn = $opt("#btn-continue");
+  if (!btn) return;
+  let lastId;
+  try { lastId = localStorage.getItem("rl_last_game_id"); } catch (e) {}
+  if (lastId) {
+    btn.classList.remove("hidden");
+    return;
+  }
+  try {
+    const games = await api("/api/games");
+    btn.classList.toggle("hidden", games.length === 0);
+  } catch (e) {
+    btn.classList.add("hidden");
   }
 }
 
@@ -526,6 +702,8 @@ async function newGame(countryCode) {
       body: JSON.stringify(body),
     });
     log(`new game created: ${state.game.id} — ${state.game.character.name} in ${state.game.country.name}`);
+    // Remember the most recent game for the Continue button (#72).
+    try { localStorage.setItem("rl_last_game_id", state.game.id); } catch (e) {}
     // Reset stale UI from any previous life (#44). Use $opt for nodes
     // that may be missing on the death screen until first death.
     $opt("#event-list").innerHTML = '<p class="placeholder">Click "Live another year" to begin your life.</p>';
@@ -595,6 +773,7 @@ function showStartScreen() {
   $("#screen-game").classList.add("hidden");
   $("#screen-death").classList.add("hidden");
   $("#screen-start").classList.remove("hidden");
+  refreshContinueButton();
 }
 
 function showDeathScreen(turn) {
@@ -1054,13 +1233,19 @@ function renderFinances() {
   } else {
     invs.forEach((inv, i) => {
       const pl = inv.value - inv.cost_basis;
-      const cls = pl >= 0 ? "up" : "down";
+      const lifeCls = pl >= 0 ? "up" : "down";
+      const yoy = inv.last_year_delta || 0;
+      const yoyCls = yoy >= 0 ? "up" : "down";
+      const yoyChip = yoy !== 0
+        ? `<span class="delta ${yoyCls}">${yoy >= 0 ? "+" : ""}${fmtMoney(yoy)} this yr</span>`
+        : "";
       const row = document.createElement("div");
       row.className = "holding";
       row.innerHTML = `
         <div class="h-name">${inv.name}</div>
         <div class="h-meta">cost ${fmtMoney(inv.cost_basis)} · value <strong>${fmtMoney(inv.value)}</strong>
-          <span class="delta ${cls}">${pl >= 0 ? "+" : ""}${fmtMoney(pl)}</span></div>
+          <span class="delta ${lifeCls}">${pl >= 0 ? "+" : ""}${fmtMoney(pl)} lifetime</span>
+          ${yoyChip}</div>
         <button class="btn sm" data-sell="${i}">Sell</button>`;
       invHost.appendChild(row);
     });
@@ -1287,6 +1472,9 @@ async function init() {
   $("#start-random").addEventListener("click", () => newGame(null));
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
+  $("#btn-continue").addEventListener("click", continueLastGame);
+  $("#btn-saved-games").addEventListener("click", openSavedGames);
+  $("#btn-saved-games-close").addEventListener("click", closeSavedGames);
   $("#btn-quit-job").addEventListener("click", quitJob);
   $("#btn-drop-out").addEventListener("click", dropOutOfSchool);
   $("#btn-find-work").addEventListener("click", openJobBoard);
@@ -1302,6 +1490,7 @@ async function init() {
   setupCountryPicker();
   renderCountryGrid();
   setupFinanceTabs();
+  refreshContinueButton();
   log("init: ready");
 }
 

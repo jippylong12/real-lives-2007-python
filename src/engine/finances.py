@@ -207,12 +207,14 @@ def tick_finances(character: Character, rng: random.Random) -> FinanceTick:
     for inv in list(character.investments):
         prod = products.get(inv.product_id)
         if prod is None:
+            inv.last_year_delta = 0
             continue
         # Catastrophic-loss roll (#41): the position can go to zero with
         # probability risk * 0.10 per year. Real small businesses fail
         # >50% over 10 years; savings accounts never (risk=0). This makes
         # the `risk` field actually load-bearing instead of decorative.
         if prod.risk > 0 and rng.random() < prod.risk * 0.10:
+            inv.last_year_delta = -inv.value
             tick.investment_pl -= inv.value
             inv.value = 0
             tick.closed_investments.append(inv.name)
@@ -220,6 +222,7 @@ def tick_finances(character: Character, rng: random.Random) -> FinanceTick:
         roll = rng.uniform(prod.annual_return_low, prod.annual_return_high)
         delta = int(inv.value * roll)
         inv.value += delta
+        inv.last_year_delta = delta  # #74: surface per-year change in UI
         tick.investment_pl += delta
         if inv.value <= 0:
             tick.closed_investments.append(inv.name)
