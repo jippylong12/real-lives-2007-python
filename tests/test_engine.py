@@ -234,6 +234,55 @@ def test_religion_events_present_in_registry():
     assert not missing, f"missing events: {missing}"
 
 
+def test_rural_nigerian_more_malaria_than_urban_nigerian():
+    """Issue #10: malaria is rural-skewed (urban_skew=0.4). Simulating
+    many rural and urban Nigerian lives should yield meaningfully more
+    malaria diagnoses for the rural cohort."""
+    from src.engine.character import create_random_character
+    nigeria = get_country("ng")
+
+    def tally(force_urban: bool) -> int:
+        n = 0
+        for seed in range(40):
+            rng = random.Random(seed)
+            char = create_random_character(nigeria, rng)
+            char.is_urban = force_urban
+            for age in range(0, 70):
+                char.age = age
+                d = diseases.roll_disease(char, nigeria, rng)
+                if d is not None and d.key == "malaria":
+                    n += 1
+                    break
+        return n
+
+    rural = tally(False)
+    urban = tally(True)
+    assert rural > urban, f"rural malaria ({rural}) should exceed urban ({urban})"
+
+
+def test_urban_skew_is_inverted_for_rural_characters():
+    """The eligible_diseases chance for an urban-skewed disease (TB,
+    urban_skew=1.8) should be higher for is_urban=True than is_urban=False
+    in the same country."""
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("in")  # India: tropical, dense urban areas
+    char_u = create_random_character(country, rng)
+    char_u.is_urban = True
+    char_u.age = 35
+    char_r = create_random_character(country, rng)
+    char_r.is_urban = False
+    char_r.age = 35
+
+    def tb_chance(c):
+        for d, p in diseases.eligible_diseases(c, country):
+            if d.key == "tuberculosis":
+                return p
+        return 0.0
+
+    assert tb_chance(char_u) > tb_chance(char_r) * 1.5
+
+
 def test_country_dataclass_carries_at_war_and_conscription():
     """Issue #17: the binary at_war / military_conscription flags flow
     through to the Country dataclass and reach the event system."""

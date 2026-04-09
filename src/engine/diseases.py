@@ -47,6 +47,13 @@ class Disease:
     poor_mult: float = 1.0      # multiplier when gdp_pc < 5000
     rich_mult: float = 1.0      # multiplier when gdp_pc > 30000
     sanitation_dependent: bool = False  # bigger penalty in countries with bad water
+    # Urbanization skew (#10): >1.0 means urban-skewed (TB, depression, COPD,
+    # asthma, lung cancer — anything driven by density, pollution, sedentary
+    # lifestyle), <1.0 means rural-skewed (malaria, cholera, schistosomiasis,
+    # hookworm — anything driven by poor sanitation or rural exposure).
+    # Applied to is_urban characters as urban_skew, to !is_urban characters
+    # as 1/urban_skew.
+    urban_skew: float = 1.0
     description: str = ""
 
 
@@ -62,7 +69,7 @@ DISEASES: list[Disease] = [
     Disease("cancer_esophagus", "Esophageal cancer","cancer", 0.0005, 50, 85, 10, 0.45, True, 40000, description="Tumor of the esophagus."),
     Disease("cancer_leukemia",  "Leukemia",         "cancer", 0.0006,  3, 85, 10, 0.30, True, 50000, description="Cancer of blood-forming tissue."),
     Disease("cancer_liver",     "Liver cancer",     "cancer", 0.0008, 45, 85, 11, 0.50, True, 38000, description="Hepatocellular carcinoma."),
-    Disease("cancer_lung",      "Lung cancer",      "cancer", 0.0015, 45, 90, 11, 0.45, True, 42000, description="Most cases linked to tobacco use."),
+    Disease("cancer_lung",      "Lung cancer",      "cancer", 0.0015, 45, 90, 11, 0.45, True, 42000, urban_skew=1.6, description="Most cases linked to tobacco use and urban air pollution."),
     Disease("cancer_lymphoma",  "Lymphoma",         "cancer", 0.0007, 25, 85, 9,  0.25, True, 38000, description="Cancer of the lymphatic system."),
     Disease("cancer_melanoma",  "Melanoma",         "cancer", 0.0006, 30, 85, 8,  0.20, True, 28000, description="Skin cancer."),
     Disease("cancer_mouth",     "Mouth cancer",     "cancer", 0.0005, 40, 85, 8,  0.30, True, 26000, description="Oral cavity tumor."),
@@ -82,21 +89,21 @@ DISEASES: list[Disease] = [
     Disease("chlamydia_pid",          "Pelvic inflammatory disease", "sti", 0.0008, 18, 50, 7, 0.03, True, 1500, gender_only=0, permanent=True, description="Untreated chlamydia or gonorrhea complication."),
     Disease("chlamydia_infertility",  "STI-related infertility", "sti", 0.0004, 20, 45, 0, 0.0, False, 0, permanent=True, description="Tubal damage from prior pelvic infection."),
     Disease("gonorrhea",              "Gonorrhea",               "sti", 0.0020, 16, 50, 4, 0.01, True, 250, description="Bacterial STI; treatable with antibiotics."),
-    Disease("hiv",                    "HIV/AIDS",                "sti", 0.0010, 16, 60, 7, 0.10, True, 8000, permanent=True, poor_mult=4.0, rich_mult=0.4, description="Lifelong infection; manageable with antiretroviral therapy."),
+    Disease("hiv",                    "HIV/AIDS",                "sti", 0.0010, 16, 60, 7, 0.10, True, 8000, permanent=True, poor_mult=4.0, rich_mult=0.4, urban_skew=1.5, description="Lifelong infection; manageable with antiretroviral therapy."),
     Disease("hpv",                    "HPV infection",           "sti", 0.0040, 16, 45, 1, 0.0, True, 0, description="Most clear naturally; some strains cause cancer."),
 
     # ===== Tropical / parasitic =====
-    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_mult=8.0, rich_mult=0.05, description="Mosquito-borne parasitic infection."),
+    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_mult=8.0, rich_mult=0.05, urban_skew=0.4, description="Mosquito-borne parasitic infection; rural exposure dominates."),
     Disease("dengue",           "Dengue fever",     "tropical", 0.0080,  3, 80, 8,  0.02, True, 300, tropical_mult=5.0, rich_mult=0.1, description="Viral fever transmitted by Aedes mosquitoes."),
     Disease("yellow_fever",     "Yellow fever",     "tropical", 0.0010,  5, 70, 12, 0.20, True, 800, tropical_mult=6.0, rich_mult=0.05, description="Viral hemorrhagic fever; vaccine-preventable."),
     Disease("chagas",           "Chagas disease",   "tropical", 0.0008,  5, 80, 5, 0.04, True, 1500, permanent=True, tropical_mult=4.0, rich_mult=0.0, description="Trypanosoma cruzi; chronic cardiac damage."),
     Disease("leishmaniasis",    "Leishmaniasis",    "tropical", 0.0009,  5, 70, 8, 0.10, True, 1200, tropical_mult=5.0, rich_mult=0.0, description="Sandfly-transmitted protozoan disease."),
     Disease("sleeping_sickness","Sleeping sickness","tropical", 0.0004, 10, 70, 12, 0.40, True, 2000, tropical_mult=10.0, rich_mult=0.0, description="African trypanosomiasis."),
-    Disease("schistosomiasis",  "Schistosomiasis",  "tropical", 0.0050,  5, 70, 4, 0.005, True, 200, sanitation_dependent=True, tropical_mult=6.0, rich_mult=0.0, description="Snail-borne parasitic worm."),
+    Disease("schistosomiasis",  "Schistosomiasis",  "tropical", 0.0050,  5, 70, 4, 0.005, True, 200, sanitation_dependent=True, tropical_mult=6.0, rich_mult=0.0, urban_skew=0.3, description="Snail-borne parasitic worm; rural water exposure."),
     Disease("onchocerciasis",   "River blindness",  "tropical", 0.0006,  8, 70, 4, 0.005, True, 400, permanent=True, tropical_mult=8.0, rich_mult=0.0, description="Onchocerca volvulus; can cause blindness."),
     Disease("trichuriasis",     "Whipworm",         "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Soil-transmitted intestinal worm."),
     Disease("ascariasis",       "Roundworm",        "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Soil-transmitted intestinal worm."),
-    Disease("hookworm",         "Hookworm",         "tropical", 0.0060,  5, 60, 3, 0.005, True, 80, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Iron-deficiency anemia from blood-feeding worms."),
+    Disease("hookworm",         "Hookworm",         "tropical", 0.0060,  5, 60, 3, 0.005, True, 80, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, urban_skew=0.3, description="Iron-deficiency anemia from blood-feeding worms; rural soil exposure."),
 
     # ===== Childhood =====
     Disease("measles",          "Measles",          "childhood", 0.0080,  0, 12, 6, 0.04, True, 50, poor_mult=3.0, rich_mult=0.1, description="Highly contagious viral rash."),
@@ -115,17 +122,17 @@ DISEASES: list[Disease] = [
     Disease("hypertension",     "Hypertension",     "chronic", 0.0080, 30, 85, 3, 0.02, True, 800, permanent=True, description="Chronic high blood pressure."),
     Disease("heart_disease",    "Coronary heart disease", "chronic", 0.0030, 40, 90, 9, 0.10, True, 12000, permanent=True, rich_mult=1.2, description="Atherosclerosis of the coronary arteries."),
     Disease("stroke",           "Stroke",           "chronic", 0.0015, 50, 90, 12, 0.20, True, 8000, permanent=True, description="Brain blood-supply interruption; cerebrovascular accident."),
-    Disease("asthma",           "Asthma",           "chronic", 0.0040,  3, 80, 3, 0.005, True, 600, permanent=True, description="Chronic inflammatory airway disease."),
-    Disease("copd",             "COPD",             "chronic", 0.0020, 40, 85, 6, 0.05, True, 1500, permanent=True, description="Chronic obstructive pulmonary disease."),
+    Disease("asthma",           "Asthma",           "chronic", 0.0040,  3, 80, 3, 0.005, True, 600, permanent=True, urban_skew=1.4, description="Chronic inflammatory airway disease; urban air pollution."),
+    Disease("copd",             "COPD",             "chronic", 0.0020, 40, 85, 6, 0.05, True, 1500, permanent=True, urban_skew=1.5, description="Chronic obstructive pulmonary disease; pollution-driven."),
     Disease("arthritis",        "Arthritis",        "chronic", 0.0050, 40, 90, 3, 0.0, True, 800, permanent=True, description="Joint inflammation; rheumatoid or osteo."),
     Disease("kidney_disease",   "Chronic kidney disease", "chronic", 0.0015, 45, 85, 7, 0.08, True, 6000, permanent=True, description="Reduced kidney function."),
 
     # ===== Infectious =====
-    Disease("tuberculosis",     "Tuberculosis",     "infectious", 0.0040, 5, 80, 8, 0.07, True, 600, sanitation_dependent=True, poor_mult=4.0, rich_mult=0.1, description="Mycobacterium tuberculosis; airborne."),
+    Disease("tuberculosis",     "Tuberculosis",     "infectious", 0.0040, 5, 80, 8, 0.07, True, 600, sanitation_dependent=True, poor_mult=4.0, rich_mult=0.1, urban_skew=1.8, description="Mycobacterium tuberculosis; airborne, dense-urban skewed."),
     Disease("hepatitis_a",      "Hepatitis A",      "infectious", 0.0030, 3, 60, 5, 0.005, True, 200, sanitation_dependent=True, poor_mult=3.0, description="Fecal-oral viral hepatitis."),
     Disease("hepatitis_b",      "Hepatitis B",      "infectious", 0.0020, 5, 70, 6, 0.03, True, 800, permanent=True, poor_mult=2.5, rich_mult=0.4, description="Blood-borne viral hepatitis."),
     Disease("hepatitis_c",      "Hepatitis C",      "infectious", 0.0015, 18, 70, 7, 0.04, True, 1500, permanent=True, description="Blood-borne; can lead to cirrhosis."),
-    Disease("cholera",          "Cholera",          "infectious", 0.0030, 3, 70, 9, 0.10, True, 100, sanitation_dependent=True, poor_mult=5.0, rich_mult=0.0, description="Severe watery diarrhea from contaminated water."),
+    Disease("cholera",          "Cholera",          "infectious", 0.0030, 3, 70, 9, 0.10, True, 100, sanitation_dependent=True, poor_mult=5.0, rich_mult=0.0, urban_skew=0.5, description="Severe watery diarrhea from contaminated water; rural sanitation."),
     Disease("typhoid",          "Typhoid fever",    "infectious", 0.0020, 5, 60, 7, 0.06, True, 200, sanitation_dependent=True, poor_mult=3.0, rich_mult=0.05, description="Salmonella Typhi infection."),
     Disease("meningitis",       "Meningitis",       "infectious", 0.0010, 0, 25, 12, 0.20, True, 1500, description="Inflammation of meninges; can be bacterial or viral."),
     Disease("pneumonia",        "Pneumonia",        "infectious", 0.0080, 0, 90, 7, 0.05, True, 600, description="Lung infection."),
@@ -137,7 +144,7 @@ DISEASES: list[Disease] = [
     Disease("bronchitis",       "Bronchitis",       "respiratory", 0.0100, 2, 80, 3, 0.002, True, 80, description="Inflammation of bronchial tubes."),
 
     # ===== Mental health =====
-    Disease("depression",       "Major depression", "mental", 0.0080, 14, 80, 5, 0.02, True, 1500, description="Persistent depressive episode."),
+    Disease("depression",       "Major depression", "mental", 0.0080, 14, 80, 5, 0.02, True, 1500, urban_skew=1.4, description="Persistent depressive episode; urban isolation correlates."),
     Disease("anxiety",          "Anxiety disorder", "mental", 0.0070, 14, 80, 3, 0.0, True, 1000, description="Generalized anxiety or panic disorder."),
 ]
 
@@ -159,6 +166,20 @@ def _country_modifier(disease: Disease, country: "Country") -> float:
     return mult
 
 
+def _urbanization_modifier(disease: Disease, character: "Character") -> float:
+    """Apply the disease's urban_skew to the character's residence (#10).
+
+    urban_skew > 1.0 → urban-skewed disease (TB, COPD, depression). Urban
+    characters get the multiplier; rural characters get its reciprocal.
+    urban_skew < 1.0 → rural-skewed disease (malaria, cholera, hookworm).
+    Same logic — urban characters get the (sub-1) multiplier, rural ones
+    get the reciprocal (>1).
+    """
+    if disease.urban_skew == 1.0:
+        return 1.0
+    return disease.urban_skew if character.is_urban else 1.0 / disease.urban_skew
+
+
 def eligible_diseases(character: "Character", country: "Country") -> list[tuple[Disease, float]]:
     """Return (disease, modulated annual chance) pairs the character can newly contract."""
     out: list[tuple[Disease, float]] = []
@@ -170,7 +191,7 @@ def eligible_diseases(character: "Character", country: "Country") -> list[tuple[
             continue
         if d.key in active:
             continue
-        chance = d.base_chance * _country_modifier(d, country)
+        chance = d.base_chance * _country_modifier(d, country) * _urbanization_modifier(d, character)
         # Resistance and health services dampen incidence
         chance *= max(0.2, 2.0 - character.attributes.resistance / 50)
         if not d.sanitation_dependent:

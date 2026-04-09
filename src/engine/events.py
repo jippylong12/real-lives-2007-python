@@ -215,6 +215,16 @@ def _apply_corruption_witnessed(c, co, rng):
     )
 
 
+def _apply_village_harvest(c, co, rng):
+    return EventOutcome(
+        summary=(
+            "You spent the season helping with the harvest in your village. "
+            "The work was hard but you grew stronger and felt connected to your community."
+        ),
+        deltas={"strength": +3, "endurance": +2, "happiness": +3, "wisdom": +1},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Religion- and culture-specific events
 # ---------------------------------------------------------------------------
@@ -674,10 +684,19 @@ EVENT_REGISTRY: list[Event] = [
         apply=_apply_civic_engagement,
     ),
     _passive(
+        "village_harvest", "Village harvest", "life",
+        "You helped bring in the harvest.",
+        when=lambda c, co: not c.is_urban and 8 <= c.age <= 60,
+        chance=lambda c, co: 0.20,
+        apply=_apply_village_harvest,
+    ),
+    _passive(
         "witnessed_corruption", "Witnessed corruption", "moral",
         "You witnessed local corruption.",
         when=lambda c, co: c.age >= 16 and co.corruption > 40,
-        chance=lambda c, co: co.corruption / 1500,
+        # Urban characters interact with bureaucracy more frequently and
+        # see corruption first-hand at much higher rates than rural villagers.
+        chance=lambda c, co: (co.corruption / 1500) * (1.8 if c.is_urban else 0.5),
         apply=_apply_corruption_witnessed,
     ),
 
