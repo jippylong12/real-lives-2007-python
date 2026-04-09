@@ -189,6 +189,51 @@ def test_gender_only_diseases_respected():
     assert "cancer_prostate" not in keys
 
 
+# ---------- Religion / culture events ----------
+
+def test_religion_events_only_fire_for_matching_religion():
+    """Christmas should only ever fire in Christian-majority countries; the
+    Hajj choice should only ever appear in Muslim-majority countries."""
+    christmas = next(e for e in EVENT_REGISTRY if e.key == "christmas")
+    hajj = next(e for e in EVENT_REGISTRY if e.key == "hajj")
+    diwali = next(e for e in EVENT_REGISTRY if e.key == "diwali")
+
+    rng = random.Random(0)
+    sa = get_country("sa")  # Saudi Arabia, Islam
+    us = get_country("us")  # USA, Christianity
+    inn = get_country("in")  # India, Hinduism
+
+    # Build a 30-year-old character in each country and check eligibility
+    char_us = create_random_character(us, rng); char_us.age = 30; char_us.money = 5000
+    char_sa = create_random_character(sa, rng); char_sa.age = 30; char_sa.money = 5000
+    char_in = create_random_character(inn, rng); char_in.age = 30; char_in.money = 5000
+
+    assert christmas.eligible(char_us, us)
+    assert not christmas.eligible(char_sa, sa)
+    assert not christmas.eligible(char_in, inn)
+
+    assert hajj.eligible(char_sa, sa)
+    assert not hajj.eligible(char_us, us)
+    assert not hajj.eligible(char_in, inn)
+
+    assert diwali.eligible(char_in, inn)
+    assert not diwali.eligible(char_us, us)
+    assert not diwali.eligible(char_sa, sa)
+
+
+def test_religion_events_present_in_registry():
+    keys = {e.key for e in EVENT_REGISTRY}
+    expected = {
+        "christmas", "easter", "ramadan", "eid_al_fitr", "diwali", "vesak",
+        "passover", "yom_kippur", "ancestral_ceremony", "baptism",
+        "first_communion", "sacred_thread", "bar_mitzvah",
+        "hajj", "varanasi_pilgrimage", "monastic_retreat", "arranged_marriage",
+        "conversion_offer", "religious_school",
+    }
+    missing = expected - keys
+    assert not missing, f"missing events: {missing}"
+
+
 def test_active_disease_persists_through_save_load():
     g = Game.new(country_code="us", seed=42)
     diseases.contract_disease(

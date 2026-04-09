@@ -216,6 +216,101 @@ def _apply_corruption_witnessed(c, co, rng):
 
 
 # ---------------------------------------------------------------------------
+# Religion- and culture-specific events
+# ---------------------------------------------------------------------------
+
+def _apply_christmas(c, co, rng):
+    return EventOutcome(
+        summary="You celebrated Christmas with your family. Gifts, carols, and a long meal.",
+        deltas={"happiness": +6},
+    )
+
+
+def _apply_easter(c, co, rng):
+    return EventOutcome(
+        summary="You attended Easter services and shared a feast with relatives.",
+        deltas={"happiness": +4, "conscience": +1},
+    )
+
+
+def _apply_ramadan(c, co, rng):
+    return EventOutcome(
+        summary="You observed Ramadan, fasting from dawn to sunset for a month.",
+        deltas={"happiness": +5, "conscience": +3, "wisdom": +2, "endurance": +2, "health": -1},
+    )
+
+
+def _apply_eid(c, co, rng):
+    return EventOutcome(
+        summary="You celebrated Eid al-Fitr with family and a great feast.",
+        deltas={"happiness": +7},
+    )
+
+
+def _apply_diwali(c, co, rng):
+    return EventOutcome(
+        summary="You celebrated Diwali, lighting lamps and sharing sweets with neighbors.",
+        deltas={"happiness": +6, "appearance": +1},
+    )
+
+
+def _apply_vesak(c, co, rng):
+    return EventOutcome(
+        summary="You attended Vesak observances at the local temple.",
+        deltas={"happiness": +4, "wisdom": +2, "conscience": +1},
+    )
+
+
+def _apply_passover(c, co, rng):
+    return EventOutcome(
+        summary="You hosted a Passover Seder for family and friends.",
+        deltas={"happiness": +5, "wisdom": +1},
+    )
+
+
+def _apply_yom_kippur(c, co, rng):
+    return EventOutcome(
+        summary="You observed Yom Kippur, fasting and reflecting on the past year.",
+        deltas={"happiness": +2, "conscience": +5, "wisdom": +2},
+    )
+
+
+def _apply_ancestral_ceremony(c, co, rng):
+    return EventOutcome(
+        summary="The community gathered for an ancestral ceremony. You felt connected to those who came before.",
+        deltas={"happiness": +5, "wisdom": +3, "conscience": +2},
+    )
+
+
+def _apply_baptism(c, co, rng):
+    return EventOutcome(
+        summary="You were baptized in a Christian ceremony surrounded by family.",
+        deltas={"happiness": +3, "conscience": +2},
+    )
+
+
+def _apply_first_communion(c, co, rng):
+    return EventOutcome(
+        summary="You received your First Communion. Your family was very proud.",
+        deltas={"happiness": +5, "conscience": +2, "wisdom": +1},
+    )
+
+
+def _apply_sacred_thread(c, co, rng):
+    return EventOutcome(
+        summary="You went through the Upanayana sacred-thread ceremony, marking your initiation into adult religious study.",
+        deltas={"happiness": +4, "wisdom": +3, "conscience": +2},
+    )
+
+
+def _apply_bar_mitzvah(c, co, rng):
+    return EventOutcome(
+        summary="You celebrated your Bar/Bat Mitzvah, reading from the Torah for the first time before your community.",
+        deltas={"happiness": +6, "wisdom": +3, "conscience": +2},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Choices
 # ---------------------------------------------------------------------------
 
@@ -287,6 +382,142 @@ BRIBERY = _choice(
                     summary="You refused. The paperwork is delayed by months."),
     ],
 )
+
+HAJJ = _choice(
+    key="hajj",
+    title="Hajj pilgrimage",
+    category="moral",
+    description=(
+        "You are old enough and able to undertake the Hajj — the pilgrimage to Mecca that "
+        "every able Muslim is expected to make once in their life. The journey is expensive "
+        "and physically demanding, but it carries profound religious meaning."
+    ),
+    when=lambda c, co: 25 <= c.age <= 60 and co.primary_religion == "Islam" and c.money >= 3000,
+    chance=lambda c, co: 0.05,
+    choices=[
+        EventChoice(key="go", label="Make the pilgrimage",
+                    deltas={"happiness": +12, "wisdom": +6, "conscience": +5, "endurance": -2, "health": -2},
+                    money_delta=-3000,
+                    summary="You completed the Hajj. The experience changed you."),
+        EventChoice(key="defer", label="Defer for another year",
+                    deltas={"happiness": -1},
+                    summary="You decided to wait. There is always next year."),
+    ],
+)
+
+
+VARANASI_PILGRIMAGE = _choice(
+    key="varanasi_pilgrimage",
+    title="Pilgrimage to Varanasi",
+    category="moral",
+    description=(
+        "An elder in the family suggests a pilgrimage to Varanasi to bathe in the Ganges. "
+        "Many Hindus believe a visit cleanses the soul and prepares one for moksha."
+    ),
+    when=lambda c, co: c.age >= 30 and co.primary_religion == "Hinduism",
+    chance=lambda c, co: 0.04,
+    choices=[
+        EventChoice(key="go", label="Make the pilgrimage",
+                    deltas={"happiness": +8, "wisdom": +4, "conscience": +3},
+                    money_delta=-200,
+                    summary="You bathed in the Ganges at Varanasi. You feel renewed."),
+        EventChoice(key="decline", label="Stay home",
+                    deltas={"happiness": -1},
+                    summary="You did not make the trip this year."),
+    ],
+)
+
+
+MONASTIC_RETREAT = _choice(
+    key="monastic_retreat",
+    title="Temporary ordination",
+    category="moral",
+    description=(
+        "Friends invite you to ordain temporarily as a monk and spend several months at a "
+        "forest monastery — a tradition many young Buddhist men in your country observe at "
+        "least once."
+    ),
+    when=lambda c, co: 18 <= c.age <= 30 and co.primary_religion == "Buddhism" and c.gender == Gender.MALE,
+    chance=lambda c, co: 0.06,
+    choices=[
+        EventChoice(key="ordain", label="Take robes",
+                    deltas={"happiness": +6, "wisdom": +8, "conscience": +5, "intelligence": +2},
+                    summary="You spent the rains retreat at the monastery. You return calmer and more disciplined."),
+        EventChoice(key="decline", label="Stay in the world",
+                    deltas={"happiness": -1},
+                    summary="You did not ordain this time."),
+    ],
+)
+
+
+ARRANGED_MARRIAGE = _choice(
+    key="arranged_marriage",
+    title="An arranged match",
+    category="life",
+    description=(
+        "Your family has identified a suitable partner and would like to arrange the match. "
+        "This is the customary path in your community, but the choice is still yours."
+    ),
+    when=lambda c, co: 18 <= c.age <= 28 and not c.married and co.primary_religion in ("Hinduism", "Islam") and co.gdp_pc < 25000,
+    chance=lambda c, co: 0.20,
+    choices=[
+        EventChoice(key="accept", label="Accept the match",
+                    deltas={"happiness": +4, "conscience": +2},
+                    summary="You agreed to the arranged marriage. The wedding will be next year."),
+        EventChoice(key="defer", label="Ask for more time",
+                    deltas={"happiness": -2, "wisdom": +1},
+                    summary="You asked your family to wait. They were disappointed but understood."),
+        EventChoice(key="refuse", label="Refuse the match",
+                    deltas={"happiness": +1, "conscience": -3, "wisdom": +2},
+                    summary="You refused. There was a long argument, but you held firm."),
+    ],
+)
+
+
+CONVERSION_OFFER = _choice(
+    key="conversion_offer",
+    title="An offer of a different faith",
+    category="moral",
+    description=(
+        "A friend invites you to convert to their religion. They speak warmly about it and "
+        "promise to introduce you to their community."
+    ),
+    when=lambda c, co: c.age >= 16,
+    chance=lambda c, co: 0.02,
+    choices=[
+        EventChoice(key="convert", label="Convert",
+                    deltas={"happiness": +3, "wisdom": +2, "conscience": +1},
+                    summary="You converted. Your old community was sad but you found new friends."),
+        EventChoice(key="decline_polite", label="Politely decline",
+                    deltas={"conscience": +1},
+                    summary="You thanked your friend but kept your own faith."),
+        EventChoice(key="reject", label="Reject angrily",
+                    deltas={"happiness": -3, "conscience": -2, "appearance": -1},
+                    summary="You snapped at your friend. The friendship is strained."),
+    ],
+)
+
+
+RELIGIOUS_SCHOOL = _choice(
+    key="religious_school",
+    title="A place at religious school",
+    category="education",
+    description=(
+        "Your family is offered a place for you at a respected religious school. The "
+        "instruction is rigorous and centers on scripture and tradition."
+    ),
+    when=lambda c, co: 8 <= c.age <= 14 and co.primary_religion in ("Islam", "Christianity", "Hinduism", "Buddhism", "Judaism"),
+    chance=lambda c, co: 0.08,
+    choices=[
+        EventChoice(key="attend", label="Attend the religious school",
+                    deltas={"intelligence": +3, "wisdom": +5, "conscience": +4, "happiness": +2},
+                    summary="You spent the year studying scripture. You feel grounded."),
+        EventChoice(key="decline", label="Stay at the regular school",
+                    deltas={"happiness": +1},
+                    summary="You stuck with the regular school."),
+    ],
+)
+
 
 MILITARY_SERVICE = _choice(
     key="military_service",
@@ -439,10 +670,109 @@ EVENT_REGISTRY: list[Event] = [
         apply=_apply_corruption_witnessed,
     ),
 
+    # --- Religion- and culture-specific passive events ---
+    _passive(
+        "christmas", "Christmas", "life",
+        "A Christmas celebration with the family.",
+        when=lambda c, co: c.age >= 3 and co.primary_religion == "Christianity",
+        chance=lambda c, co: 0.85,
+        apply=_apply_christmas,
+    ),
+    _passive(
+        "easter", "Easter", "life",
+        "Easter Sunday observances and family meal.",
+        when=lambda c, co: c.age >= 5 and co.primary_religion == "Christianity",
+        chance=lambda c, co: 0.65,
+        apply=_apply_easter,
+    ),
+    _passive(
+        "ramadan", "Ramadan", "life",
+        "A month of fasting from dawn to sunset.",
+        when=lambda c, co: c.age >= 10 and co.primary_religion == "Islam",
+        chance=lambda c, co: 0.90,
+        apply=_apply_ramadan,
+    ),
+    _passive(
+        "eid_al_fitr", "Eid al-Fitr", "life",
+        "Celebrating the end of Ramadan.",
+        when=lambda c, co: c.age >= 5 and co.primary_religion == "Islam",
+        chance=lambda c, co: 0.85,
+        apply=_apply_eid,
+    ),
+    _passive(
+        "diwali", "Diwali", "life",
+        "The festival of lights.",
+        when=lambda c, co: c.age >= 4 and co.primary_religion == "Hinduism",
+        chance=lambda c, co: 0.85,
+        apply=_apply_diwali,
+    ),
+    _passive(
+        "vesak", "Vesak Day", "life",
+        "Buddha's birthday observance at the temple.",
+        when=lambda c, co: c.age >= 6 and co.primary_religion == "Buddhism",
+        chance=lambda c, co: 0.70,
+        apply=_apply_vesak,
+    ),
+    _passive(
+        "passover", "Passover", "life",
+        "A Passover Seder with family and friends.",
+        when=lambda c, co: c.age >= 6 and co.primary_religion == "Judaism",
+        chance=lambda c, co: 0.85,
+        apply=_apply_passover,
+    ),
+    _passive(
+        "yom_kippur", "Yom Kippur", "life",
+        "A day of fasting and reflection.",
+        when=lambda c, co: c.age >= 13 and co.primary_religion == "Judaism",
+        chance=lambda c, co: 0.85,
+        apply=_apply_yom_kippur,
+    ),
+    _passive(
+        "ancestral_ceremony", "Ancestral ceremony", "life",
+        "A community ancestral observance.",
+        when=lambda c, co: c.age >= 6 and co.primary_religion in ("None", "Indigenous beliefs", "Shinto"),
+        chance=lambda c, co: 0.40,
+        apply=_apply_ancestral_ceremony,
+    ),
+    _passive(
+        "baptism", "Baptism", "life",
+        "Christian baptism ceremony.",
+        when=lambda c, co: c.age == 1 and co.primary_religion == "Christianity",
+        chance=lambda c, co: 0.70,
+        apply=_apply_baptism,
+    ),
+    _passive(
+        "first_communion", "First Communion", "life",
+        "Catholic First Communion.",
+        when=lambda c, co: c.age == 8 and co.primary_religion == "Christianity",
+        chance=lambda c, co: 0.50,
+        apply=_apply_first_communion,
+    ),
+    _passive(
+        "sacred_thread", "Sacred thread ceremony", "life",
+        "Hindu Upanayana ceremony.",
+        when=lambda c, co: c.age in (8, 9, 10, 11, 12) and co.primary_religion == "Hinduism" and c.gender == Gender.MALE,
+        chance=lambda c, co: 0.30,
+        apply=_apply_sacred_thread,
+    ),
+    _passive(
+        "bar_mitzvah", "Bar/Bat Mitzvah", "life",
+        "Coming-of-age in the Jewish tradition.",
+        when=lambda c, co: c.age in (12, 13) and co.primary_religion == "Judaism",
+        chance=lambda c, co: 0.85,
+        apply=_apply_bar_mitzvah,
+    ),
+
     # --- Choice events ---
     THEFT_CHILD,
     THEFT_ADULT,
     BRIBERY,
+    HAJJ,
+    VARANASI_PILGRIMAGE,
+    MONASTIC_RETREAT,
+    ARRANGED_MARRIAGE,
+    CONVERSION_OFFER,
+    RELIGIOUS_SCHOOL,
 ]
 
 
