@@ -173,6 +173,47 @@ def test_country_binary_field_catch_all_populated():
         conn.close()
 
 
+def test_binary_overlay_replaces_curated_country_stats():
+    """Issue #18: countries that match a row in world.dat get their
+    population/life_expectancy/infant_mortality/literacy/HDI overlaid with
+    the 2007 binary's values, while countries that don't match (the 6
+    territory additions from #7) keep their curated seed.py values."""
+    report = build_db.build()
+    assert report.get("binary_overlays", 0) >= 180
+
+    conn = build_db.get_connection()
+    try:
+        # Afghanistan: countries.population must equal country_original_stats.population.
+        af = conn.execute(
+            "SELECT population, infant_mortality, hdi FROM countries WHERE code='af'"
+        ).fetchone()
+        af_orig = conn.execute(
+            "SELECT population, infant_mortality, hdi FROM country_original_stats WHERE country_code='af'"
+        ).fetchone()
+        assert af["population"] == af_orig["population"] == 31889000
+        assert af["infant_mortality"] == af_orig["infant_mortality"] == 165.0
+        assert af["hdi"] == af_orig["hdi"]
+
+        # USA: same overlay holds.
+        us = conn.execute(
+            "SELECT population FROM countries WHERE code='us'"
+        ).fetchone()
+        us_orig = conn.execute(
+            "SELECT population FROM country_original_stats WHERE country_code='us'"
+        ).fetchone()
+        assert us["population"] == us_orig["population"] == 301139000
+
+        # Bermuda is a #7 territory addition that isn't in world.dat —
+        # its curated seed value should still be in place.
+        bm = conn.execute(
+            "SELECT population FROM countries WHERE code='bm'"
+        ).fetchone()
+        # The curated seed value for Bermuda is 64000.
+        assert bm["population"] == 64000
+    finally:
+        conn.close()
+
+
 def test_at_war_and_conscription_promoted_to_countries_table():
     """Issue #17: AtWar and MilitaryConscription from world.dat get promoted
     into the canonical countries table so the engine can read them via the

@@ -245,12 +245,43 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 if code:
                     decoded_by_code[code] = row
 
-        # 2. Countries — curated values from seed, with binary at_war and
-        # military_conscription overlays for any country that matched the
-        # binary (#17). Countries that aren't in the binary (territory
-        # additions from #7) get default 0/0.
+        # 2. Countries — curated values from seed, with binary overlays
+        # (#18 hybrid path). For any country present in world.dat, we
+        # override the population/life expectancy/infant mortality/literacy/
+        # HDI with the 2007 binary's values; the curated extras seed.py
+        # carries (war_freq, disaster_freq, crime_rate, urban_pct, region,
+        # religion, language) stay as-is — none of those exist in the binary.
+        # Countries not in the binary (the 6 territory additions from #7)
+        # keep their curated values across the board.
+        overlay_countries = 0
         for c in seed.COUNTRIES:
             bin_row = decoded_by_code.get(c["code"], {})
+
+            population = c["population"]
+            life_expectancy = c["life_expectancy"]
+            infant_mortality = c["infant_mortality"]
+            literacy = c["literacy"]
+            hdi = c["hdi"]
+            if bin_row:
+                bp = bin_row.get("Population")
+                if isinstance(bp, (int, float)) and bp > 0:
+                    population = int(bp)
+                male = bin_row.get("MaleLifeExpectancy")
+                female = bin_row.get("FemaleLifeExpectancy")
+                if isinstance(male, (int, float)) and isinstance(female, (int, float)) and male > 0 and female > 0:
+                    life_expectancy = (male + female) / 2.0
+                im = bin_row.get("InfantMortality")
+                if isinstance(im, (int, float)) and im >= 0:
+                    infant_mortality = float(im)
+                ml = bin_row.get("MaleLiteracy")
+                fl = bin_row.get("FemaleLiteracy")
+                if isinstance(ml, (int, float)) and isinstance(fl, (int, float)) and ml > 0 and fl > 0:
+                    literacy = (ml + fl) / 2.0
+                bh = bin_row.get("HDI")
+                if isinstance(bh, (int, float)) and bh > 0:
+                    hdi = float(bh)
+                overlay_countries += 1
+
             at_war = 1 if bin_row.get("AtWar") else 0
             conscription = 1 if bin_row.get("MilitaryConscription") else 0
             conn.execute(
@@ -265,9 +296,9 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    c["code"], c["name"], c["region"], c["population"], c["gdp_pc"],
-                    c["life_expectancy"], c["infant_mortality"], c["literacy"],
-                    c["gini"], c["hdi"], c["urban_pct"],
+                    c["code"], c["name"], c["region"], population, c["gdp_pc"],
+                    life_expectancy, infant_mortality, literacy,
+                    c["gini"], hdi, c["urban_pct"],
                     c["primary_religion"], c["primary_language"], c["capital"], c["currency"],
                     c["war_freq"], c["disaster_freq"], c["crime_rate"], c["corruption"],
                     c["safe_water_pct"], c["health_services_pct"],
@@ -464,6 +495,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             "descriptions": descriptions_total,
             "original_stats": original_total,
             "binary_fields": binary_field_total,
+            "binary_overlays": overlay_countries,
             "jobs_original_stats": jobs_orig_total,
             "dat_schemas": {name: len(p.schema) for name, p in parsed_files.items()},
             "recovered_strings": {name: len(p.string_pool) for name, p in parsed_files.items()},
