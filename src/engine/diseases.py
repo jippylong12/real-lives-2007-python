@@ -81,22 +81,26 @@ class Disease:
 # realistic prevalence (e.g., ~13% lifetime risk of breast cancer in women).
 DISEASES: list[Disease] = [
     # ===== Cancers (16) =====
-    Disease("cancer_bladder",   "Bladder cancer",   "cancer", 0.0006, 50, 90, 8,  0.25, True, 30000, description="Tumor in the bladder lining."),
-    Disease("cancer_breast",    "Breast cancer",    "cancer", 0.0020, 35, 90, 9,  0.20, True, 35000, gender_only=0, description="Tumor in breast tissue."),
-    Disease("cancer_cervix",    "Cervical cancer",  "cancer", 0.0010, 25, 80, 9,  0.25, True, 25000, gender_only=0, poor_mult=2.5, rich_mult=0.5, description="Tumor of the cervix; preventable with screening."),
-    Disease("cancer_colon",     "Colon cancer",     "cancer", 0.0014, 45, 90, 9,  0.25, True, 32000, description="Tumor of the colon."),
-    Disease("cancer_esophagus", "Esophageal cancer","cancer", 0.0005, 50, 85, 10, 0.45, True, 40000, description="Tumor of the esophagus."),
-    Disease("cancer_leukemia",  "Leukemia",         "cancer", 0.0006,  3, 85, 10, 0.30, True, 50000, description="Cancer of blood-forming tissue."),
-    Disease("cancer_liver",     "Liver cancer",     "cancer", 0.0008, 45, 85, 11, 0.50, True, 38000, description="Hepatocellular carcinoma."),
-    Disease("cancer_lung",      "Lung cancer",      "cancer", 0.0015, 45, 90, 11, 0.45, True, 42000, urban_skew=1.6, description="Most cases linked to tobacco use and urban air pollution."),
-    Disease("cancer_lymphoma",  "Lymphoma",         "cancer", 0.0007, 25, 85, 9,  0.25, True, 38000, description="Cancer of the lymphatic system."),
-    Disease("cancer_melanoma",  "Melanoma",         "cancer", 0.0006, 30, 85, 8,  0.20, True, 28000, description="Skin cancer."),
-    Disease("cancer_mouth",     "Mouth cancer",     "cancer", 0.0005, 40, 85, 8,  0.30, True, 26000, description="Oral cavity tumor."),
-    Disease("cancer_ovary",     "Ovarian cancer",   "cancer", 0.0008, 40, 80, 10, 0.35, True, 35000, gender_only=0, description="Tumor of the ovary."),
-    Disease("cancer_pancreas",  "Pancreatic cancer","cancer", 0.0006, 50, 85, 12, 0.65, True, 45000, description="Highly lethal abdominal cancer."),
-    Disease("cancer_prostate",  "Prostate cancer",  "cancer", 0.0018, 50, 90, 8,  0.18, True, 30000, gender_only=1, description="Most common cancer in older men."),
-    Disease("cancer_stomach",   "Stomach cancer",   "cancer", 0.0006, 45, 85, 10, 0.40, True, 32000, description="Gastric carcinoma."),
-    Disease("cancer_uterus",    "Uterine cancer",   "cancer", 0.0007, 45, 80, 8,  0.25, True, 28000, gender_only=0, description="Endometrial tumor."),
+    # Calibration anchors (#24, US lifetime risk):
+    #   Breast 13% (women), Prostate 13% (men), Lung 6%, Colon 4%,
+    #   Bladder 2%, Melanoma 2%, Lymphoma 2%, Leukemia 1.5%, Stomach 0.8%,
+    #   Pancreas 1.6%, Liver 1%, Esophagus 0.5%, Mouth 1%
+    Disease("cancer_bladder",   "Bladder cancer",   "cancer", 0.0010, 50, 90, 8,  0.25, True, 30000, description="Tumor in the bladder lining."),
+    Disease("cancer_breast",    "Breast cancer",    "cancer", 0.0045, 35, 90, 9,  0.20, True, 35000, gender_only=0, description="Tumor in breast tissue."),
+    Disease("cancer_cervix",    "Cervical cancer",  "cancer", 0.0006, 25, 80, 9,  0.25, True, 25000, gender_only=0, poor_mult=2.5, rich_mult=0.5, description="Tumor of the cervix; preventable with screening."),
+    Disease("cancer_colon",     "Colon cancer",     "cancer", 0.0018, 45, 90, 9,  0.25, True, 32000, description="Tumor of the colon."),
+    Disease("cancer_esophagus", "Esophageal cancer","cancer", 0.0010, 50, 85, 10, 0.45, True, 40000, description="Tumor of the esophagus."),
+    Disease("cancer_leukemia",  "Leukemia",         "cancer", 0.0012,  3, 85, 10, 0.30, True, 50000, description="Cancer of blood-forming tissue."),
+    Disease("cancer_liver",     "Liver cancer",     "cancer", 0.0014, 45, 85, 11, 0.50, True, 38000, description="Hepatocellular carcinoma."),
+    Disease("cancer_lung",      "Lung cancer",      "cancer", 0.0018, 45, 90, 11, 0.45, True, 42000, urban_skew=1.6, description="Most cases linked to tobacco use and urban air pollution."),
+    Disease("cancer_lymphoma",  "Lymphoma",         "cancer", 0.0015, 25, 85, 9,  0.25, True, 38000, description="Cancer of the lymphatic system."),
+    Disease("cancer_melanoma",  "Melanoma",         "cancer", 0.0014, 30, 85, 8,  0.20, True, 28000, description="Skin cancer."),
+    Disease("cancer_mouth",     "Mouth cancer",     "cancer", 0.0010, 40, 85, 8,  0.30, True, 26000, description="Oral cavity tumor."),
+    Disease("cancer_ovary",     "Ovarian cancer",   "cancer", 0.0006, 40, 80, 10, 0.35, True, 35000, gender_only=0, description="Tumor of the ovary."),
+    Disease("cancer_pancreas",  "Pancreatic cancer","cancer", 0.0014, 50, 85, 12, 0.65, True, 45000, description="Highly lethal abdominal cancer."),
+    Disease("cancer_prostate",  "Prostate cancer",  "cancer", 0.0060, 50, 90, 8,  0.18, True, 30000, gender_only=1, description="Most common cancer in older men."),
+    Disease("cancer_stomach",   "Stomach cancer",   "cancer", 0.0012, 45, 85, 10, 0.40, True, 32000, description="Gastric carcinoma."),
+    Disease("cancer_uterus",    "Uterine cancer",   "cancer", 0.0014, 45, 80, 8,  0.25, True, 28000, gender_only=0, description="Endometrial tumor."),
 
     # ===== Sexually transmitted (with staged syphilis) =====
     Disease("syphilis_primary",       "Primary syphilis",        "sti", 0.0015, 16, 60, 5, 0.02, True,  500, poor_mult=3.0, rich_mult=0.3, description="Painless chancre at the infection site."),
@@ -279,20 +283,23 @@ def contract_disease(
 ) -> dict:
     """Add a disease to the character's record. Returns a serialized event
     payload (summary, deltas, money_delta) for the engine's turn log."""
-    # Mark active.
+    # Treatment availability: requires good local health services AND the
+    # player can afford the treatment from cash + family wealth.
+    can_pay = character.money + character.family_wealth >= disease.treatment_cost
+    has_services = country.health_services_pct >= 60
+    treatable = disease.treatable and has_services and can_pay
+
+    # Mark active. Track whether the character received treatment so the
+    # death-roll loop can be much gentler on managed conditions (#24).
     character.diseases[disease.key] = {
         "name": disease.name,
         "category": disease.category,
         "active": True,
         "age_acquired": character.age,
         "permanent": disease.permanent,
+        "treated": treatable,
     }
 
-    # Treatment availability: requires good local health services AND the
-    # player can afford the treatment from cash + family wealth.
-    can_pay = character.money + character.family_wealth >= disease.treatment_cost
-    has_services = country.health_services_pct >= 60
-    treatable = disease.treatable and has_services and can_pay
     cost = 0
     if treatable and disease.treatment_cost > 0:
         cost = disease.treatment_cost
@@ -351,6 +358,12 @@ def chronic_progression(character: "Character", country: "Country", rng: random.
     """Apply per-year wear from any active chronic / permanent conditions and
     perform a death lottery for severe untreated diseases. Returns (health_loss,
     notable_summary_lines).
+
+    Wear is much smaller than the contract-year severity since treatment +
+    long-term management dampens day-to-day impact (#24). With the
+    multi-disease restructure (#22) characters can accumulate 4-5 chronic
+    conditions over a lifetime, so the per-condition wear has to be modest
+    or every chronic patient dies of cumulative wear before old age.
     """
     total_loss = 0
     lines: list[str] = []
@@ -361,9 +374,12 @@ def chronic_progression(character: "Character", country: "Country", rng: random.
         d = next((dd for dd in DISEASES if dd.key == key), None)
         if d is None:
             continue
-        # Permanent / chronic conditions degrade health each year.
-        wear = max(1, d.severity // 3) if d.permanent else 0
-        total_loss += wear
+        # Permanent / chronic conditions degrade health each year. Cancers
+        # dropped down to severity//4, other permanents to severity//6.
+        if d.permanent:
+            divisor = 4 if d.category == "cancer" else 6
+            wear = max(1, d.severity // divisor)
+            total_loss += wear
         # Death lottery for severe conditions.
         if d.lethality > 0:
             if rng.random() < d.lethality * 0.5:  # half rate after acquisition year
@@ -375,7 +391,10 @@ def chronic_progression(character: "Character", country: "Country", rng: random.
 
 def disease_kill_check(character: "Character", country: "Country", rng: random.Random) -> str | None:
     """Per-year roll: if the character has a high-lethality active disease,
-    they may die from it. Returns the cause-of-death string or None."""
+    they may die from it. Treated permanent conditions get a much gentler
+    death-roll multiplier (5% of base) reflecting long-term medical
+    management; untreated cases roll at 25% of base. Returns the
+    cause-of-death string or None."""
     for key, state in list(character.diseases.items()):
         if not state.get("active"):
             continue
@@ -384,6 +403,8 @@ def disease_kill_check(character: "Character", country: "Country", rng: random.R
             continue
         if d.lethality <= 0:
             continue
-        if rng.random() < d.lethality * 0.4:
+        treated = bool(state.get("treated"))
+        multiplier = 0.05 if treated else 0.25
+        if rng.random() < d.lethality * multiplier:
             return d.name
     return None

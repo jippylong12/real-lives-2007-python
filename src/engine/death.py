@@ -27,9 +27,19 @@ def infant_mortality_chance(country: Country) -> float:
 
 
 def background_mortality(character: Character, country: Country) -> float:
-    """Per-year background death roll for healthy adults."""
+    """Per-year background death roll for healthy adults.
+
+    Calibrated so that a healthy adult in a high-HDI country has roughly
+    real-world background mortality (~0.001/year for ages 20-50, with health
+    impairment kicking in only when health drops below 50). Old age is
+    handled by the separate exponential ramp in :func:`old_age_mortality`.
+    """
     health = max(1, character.attributes.health)
-    base = 0.001 + (100 - health) * 0.0002
+    base = 0.0008
+    # Health penalty only kicks in below 50 (severely impaired) and ramps
+    # up steeply from there.
+    if health < 50:
+        base += (50 - health) * 0.0006
     if country.hdi < 0.6:
         base *= 1.4
     if country.health_services_pct < 70:

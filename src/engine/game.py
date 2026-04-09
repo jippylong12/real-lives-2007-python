@@ -251,11 +251,21 @@ class Game:
                 log.append(TurnEvent("chronic_disease", "Chronic illness", "health",
                                      line, deltas={"health": -chronic_loss}))
 
-        # 9. Slight happiness drift toward 60 baseline
+        # 9. Slight happiness and health drift toward baseline. Without the
+        # health drift, every acute disease / minor injury hit accumulates
+        # forever and characters die of cumulative attrition long before
+        # old age (#24). Drift is stronger in countries with good
+        # healthcare since recovery from injuries / acute illness is faster.
         if char.attributes.happiness < 60:
             char.attributes.adjust(happiness=+1)
         elif char.attributes.happiness > 80:
             char.attributes.adjust(happiness=-1)
+        if char.age < 70:
+            heal_target = 60 + int(country.health_services_pct / 5)  # 70-80 in good countries
+            if char.attributes.health < heal_target:
+                # Faster recovery in well-resourced countries.
+                regen = 3 if country.health_services_pct >= 80 else 2
+                char.attributes.adjust(health=+regen)
 
         # 10. Death roll — first from active high-lethality diseases, then
         # from the generic age/health curve.

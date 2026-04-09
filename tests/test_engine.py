@@ -309,6 +309,37 @@ def test_acute_categories_capped_at_one_per_year():
     )
 
 
+def test_cancer_lifetime_rates_in_real_world_ballpark():
+    """Issue #24: cancer lifetime incidence in the US should be at least
+    8% for breast (women) and prostate (men) — within +/- 50% of the
+    real-world ~13% lifetime risk per SEER. The previous calibration
+    showed both at <1% because the disease roller capped at one disease
+    per year (#22) and characters died early (#24 lifespan fix)."""
+    from src.engine import Game
+    from src.engine.character import Gender
+
+    def cancer_rate(country_code: str, cancer_key: str, gender: Gender, n: int = 200) -> float:
+        hits = 0
+        cohort = 0
+        for seed in range(n):
+            g = Game.new(country_code=country_code, seed=seed)
+            if g.state.character.gender != gender:
+                continue
+            cohort += 1
+            while g.state.character.alive and g.state.character.age < 100:
+                r = g.advance_year()
+                if r.pending_decision:
+                    g.apply_decision(r.pending_decision["choices"][0]["key"])
+            if cancer_key in g.state.character.diseases:
+                hits += 1
+        return hits / cohort if cohort else 0.0
+
+    breast = cancer_rate("us", "cancer_breast", Gender.FEMALE)
+    prostate = cancer_rate("us", "cancer_prostate", Gender.MALE)
+    assert breast >= 0.08, f"US lifetime breast cancer {breast*100:.1f}% should be >=8%"
+    assert prostate >= 0.08, f"US lifetime prostate cancer {prostate*100:.1f}% should be >=8%"
+
+
 def test_disease_calibration_anchor_lifetime_rates():
     """Issue #14: simulated lifetime malaria incidence in Sweden must be
     < 1%, and in Nigeria must be > 50%. The previous values (~8% Sweden,
