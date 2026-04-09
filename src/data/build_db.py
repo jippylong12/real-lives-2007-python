@@ -90,6 +90,13 @@ CREATE TABLE IF NOT EXISTS country_cities (
 );
 CREATE INDEX IF NOT EXISTS idx_country_cities_code ON country_cities(country_code);
 
+-- Encyclopedia-style descriptions recovered from world.dat long-string runs.
+CREATE TABLE IF NOT EXISTS country_descriptions (
+    country_code  TEXT PRIMARY KEY,
+    description   TEXT NOT NULL,
+    FOREIGN KEY (country_code) REFERENCES countries(code)
+);
+
 -- Recovered original-game schema (for reference / validation).
 CREATE TABLE IF NOT EXISTS dat_schema (
     table_name TEXT NOT NULL,
@@ -211,6 +218,23 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 )
                 cities_total += 1
 
+        # 7. Country encyclopedia descriptions — recovered from the long-string
+        # pool of world.dat. Empty descriptions are skipped; the API just
+        # returns null for those countries.
+        descriptions_total = 0
+        if world is not None:
+            descriptions = parse_dat.extract_descriptions_per_country(
+                world, list(names_by_code.keys())
+            )
+            for c in seed.COUNTRIES:
+                desc = descriptions.get(c["name"], "")
+                if desc:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO country_descriptions (country_code, description) VALUES (?, ?)",
+                        (c["code"], desc),
+                    )
+                    descriptions_total += 1
+
         conn.commit()
 
         return {
@@ -220,6 +244,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             "investments": len(seed.INVESTMENTS),
             "loans": len(seed.LOANS),
             "cities": cities_total,
+            "descriptions": descriptions_total,
             "dat_schemas": {name: len(p.schema) for name, p in parsed_files.items()},
             "recovered_strings": {name: len(p.string_pool) for name, p in parsed_files.items()},
         }

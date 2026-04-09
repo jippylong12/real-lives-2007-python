@@ -66,6 +66,11 @@ class DatFile:
     total_records: int
     schema: list[DatField] = field(default_factory=list)
     string_pool: list[str] = field(default_factory=list)
+    # Per-record short strings (>= 3 chars, tagged with record index).
+    record_strings: dict[int, list[str]] = field(default_factory=dict)
+    # Long printable runs (>= 30 chars), tagged with the record index they
+    # came from. Used to recover encyclopedia-style descriptive text.
+    long_strings: list[tuple[int, str]] = field(default_factory=list)
 
 
 def _iter_records(blob: bytes) -> Iterator[tuple[int, int, bytes]]:
@@ -132,6 +137,33 @@ def _extract_strings(record: bytes, min_len: int = 3, max_len: int = 80) -> list
     return out
 
 
+def _extract_long_strings(record: bytes, min_len: int = 30, max_len: int = 1500) -> list[str]:
+    """Pull *long* printable ASCII runs out of a record's value blob.
+
+    Encyclopedia-style fields (Location, Climate, Terrain, EnvironmentalIssues,
+    EncyclopediaHistoryName, ...) are 50–250 char descriptive sentences. The
+    short-string extractor caps runs at 80 chars and would truncate them, so
+    we run a separate pass with a much higher cap.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(record):
+        b = record[i]
+        if 32 <= b < 127:
+            j = i
+            while j < len(record) and 32 <= record[j] < 127:
+                j += 1
+            run = record[i:j].decode("ascii", errors="ignore")
+            if len(run) >= min_len and len(run) <= max_len:
+                run = run.strip()
+                if run:
+                    out.append(run)
+            i = j
+        else:
+            i += 1
+    return out
+
+
 def parse_dat(path: str | Path) -> DatFile:
     """Parse a Real Lives 2007 .dat file and return its schema + recovered strings."""
     p = Path(path)
@@ -178,8 +210,13 @@ def parse_dat(path: str | Path) -> DatFile:
             in_schema = False
 
         # Data records: harvest printable strings.
-        for s in _extract_strings(rec):
-            parsed.string_pool.append(s)
+        rec_short = _extract_strings(rec)
+        if rec_short:
+            parsed.record_strings[idx] = rec_short
+            for s in rec_short:
+                parsed.string_pool.append(s)
+        for s in _extract_long_strings(rec):
+            parsed.long_strings.append((idx, s))
 
     return parsed
 
@@ -332,6 +369,74 @@ def extract_cities_per_country(
             seen_local.add(s)
             cities.append(s)
         out[name] = cities
+    return out
+
+
+def extract_descriptions_per_country(
+    parsed: "DatFile",
+    seed_country_names: list[str],
+    *,
+    record_window: int = 4,
+) -> dict[str, str]:
+    """Compose a short encyclopedia paragraph for each country from the
+    parsed ``world.dat`` file.
+
+    Each country's data lives in roughly ``record_window`` consecutive 0x300
+    records. The first record contains the country name as a short string;
+    the next several contain the Location / Climate / Terrain /
+    EnvironmentalIssues / etc. fields as long printable runs. We anchor on
+    the first record where a country name appears, then collect the long
+    descriptive runs from that record and the next few.
+    """
+    name_set = set(seed_country_names)
+
+    # Build a sorted list of (record_idx, country_name) from per-record short
+    # strings. Skip duplicates so each country anchors on its FIRST record.
+    anchors: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for rec_idx in sorted(parsed.record_strings.keys()):
+        for s in parsed.record_strings[rec_idx]:
+            canon = _COUNTRY_NAME_ALIASES.get(s, s)
+            if canon in name_set and canon not in seen:
+                anchors.append((rec_idx, canon))
+                seen.add(canon)
+
+    # Group long_strings by record index for fast lookup.
+    long_by_rec: dict[int, list[str]] = {}
+    for ri, s in parsed.long_strings:
+        long_by_rec.setdefault(ri, []).append(s)
+
+    out: dict[str, str] = {n: "" for n in seed_country_names}
+    for j, (rec_idx, name) in enumerate(anchors):
+        next_rec = (
+            anchors[j + 1][0] if j + 1 < len(anchors) else rec_idx + record_window + 1
+        )
+        end_rec = min(next_rec, rec_idx + record_window + 1)
+        seen_local: set[str] = set()
+        pieces: list[str] = []
+        for ri in range(rec_idx, end_rec):
+            for s in long_by_rec.get(ri, []):
+                # Drop the country name itself and per-country tags.
+                if s == name or _COUNTRY_NAME_ALIASES.get(s, s) == name:
+                    continue
+                # Skip filesystem-style path identifiers like "asia/afghanistan".
+                if "/" in s and len(s) < 60:
+                    continue
+                if not any(c.isalpha() for c in s):
+                    continue
+                s_clean = s.strip()
+                if not s_clean or len(s_clean) < 30:
+                    continue
+                # Reject strings dominated by non-letters (control glyphs, etc.).
+                letters = sum(1 for c in s_clean if c.isalpha())
+                if letters / len(s_clean) < 0.6:
+                    continue
+                if s_clean in seen_local:
+                    continue
+                seen_local.add(s_clean)
+                pieces.append(s_clean)
+        if pieces:
+            out[name] = " ".join(pieces[:4])
     return out
 
 

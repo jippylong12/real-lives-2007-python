@@ -99,6 +99,22 @@ def cities_for(country_code: str) -> tuple[City, ...]:
     return _cities_by_country().get(country_code.lower(), ())
 
 
+@lru_cache(maxsize=1)
+def _descriptions() -> dict[str, str]:
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT country_code, description FROM country_descriptions").fetchall()
+    finally:
+        conn.close()
+    return {r["country_code"]: r["description"] for r in rows}
+
+
+def description_for(country_code: str) -> str | None:
+    """Encyclopedia text recovered from world.dat for ``country_code``, or None
+    if no description was extractable for that country."""
+    return _descriptions().get(country_code.lower())
+
+
 def pick_birth_city(country: "Country", rng: random.Random) -> tuple[str, bool]:
     """Choose a (city_name, is_urban) pair for a newborn in `country`.
 

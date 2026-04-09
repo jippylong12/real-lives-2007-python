@@ -92,3 +92,20 @@ def test_extract_cities_per_country():
     assert "Sao Paulo" in cities["Brazil"]
     assert "Lagos" in cities["Nigeria"]
     assert "Algiers" in cities["Algeria"]
+
+
+def test_extract_descriptions_per_country():
+    from src.data.seed import COUNTRIES
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    descs = parse_dat.extract_descriptions_per_country(
+        parsed, [c["name"] for c in COUNTRIES]
+    )
+    # The recovered text is real factbook prose — spot-check that the
+    # descriptive substrings show up in the right country.
+    assert "Mediterranean" in descs["Algeria"]
+    assert "tropical" in descs["Brazil"].lower()
+    assert "Canada and Mexico" in descs["United States"]
+    assert "Bay of Bengal" in descs["Bangladesh"]
+    # Coverage: at least 150 of 199 countries got a usable description.
+    non_empty = sum(1 for d in descs.values() if d)
+    assert non_empty >= 150, f"only {non_empty} descriptions extracted"

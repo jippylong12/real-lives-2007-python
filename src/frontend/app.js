@@ -175,6 +175,12 @@ function renderGame() {
   // Country panel
   const ci = $("#country-info");
   ci.innerHTML = "";
+  if (co.description) {
+    const desc = document.createElement("p");
+    desc.className = "country-desc";
+    desc.textContent = co.description;
+    ci.appendChild(desc);
+  }
   const ciRows = [
     ["Region", co.region],
     ["Population", co.population.toLocaleString()],
@@ -385,6 +391,7 @@ function renderCountryGrid() {
     const tile = document.createElement("button");
     tile.className = "country-tile";
     tile.innerHTML = `<img src="/flags/${c.code}.bmp" alt=""><span>${c.name}</span>`;
+    if (c.description) tile.title = c.description;
     tile.onclick = () => newGame(c.code);
     grid.appendChild(tile);
   }

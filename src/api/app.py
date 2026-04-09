@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from ..engine import finances
 from ..engine.game import Game, list_games, load_game
-from ..engine.world import all_countries, cities_for, get_country
+from ..engine.world import all_countries, cities_for, description_for, get_country
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -110,6 +110,7 @@ def _country_dict(c) -> dict:
         "safe_water_pct": c.safe_water_pct,
         "health_services_pct": c.health_services_pct,
         "flag_url": f"/flags/{c.code}.bmp",
+        "description": description_for(c.code),
     }
 
 
