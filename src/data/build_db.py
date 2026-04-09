@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS country_original_stats (
     aids_rate               REAL,
     male_literacy           INTEGER,
     female_literacy         INTEGER,
-    hdi                     REAL
+    hdi                     REAL,
+    encyclopedia_key        TEXT      -- short basename pointer (#13)
 );
 CREATE INDEX IF NOT EXISTS idx_original_stats_code ON country_original_stats(country_code);
 
@@ -284,8 +285,8 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                         binary_name, country_code, population, birth_rate, death_rate,
                         infant_mortality, male_life_expectancy, female_life_expectancy,
                         inflation_rate, at_war, aids_rate, male_literacy,
-                        female_literacy, hdi
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        female_literacy, hdi, encyclopedia_key
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         bname.strip(), code, pop,
@@ -296,6 +297,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                         row.get("AIDS"),
                         row.get("MaleLiteracy"), row.get("FemaleLiteracy"),
                         row.get("HDI"),
+                        row.get("EncyclopediaHistoryName"),
                     ),
                 )
                 original_total += 1

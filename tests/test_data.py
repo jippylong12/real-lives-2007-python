@@ -207,6 +207,46 @@ def test_extract_descriptions_per_country():
     assert non_empty >= 175, f"only {non_empty} descriptions extracted from binary"
 
 
+def test_encyclopedia_history_name_is_short_basename_key():
+    """Issue #13: investigation. Calling decode_value(buf, EncyclopediaHistoryName)
+    directly returns a short identifier (8-10 char file-basename style key
+    like 'Afghanis', 'BosniaNH'), not inline encyclopedia prose. The
+    descriptive text the country sidebar shows is recovered from the
+    long-string pool by extract_descriptions_per_country, not from this
+    field. The key is persisted into country_original_stats.encyclopedia_key
+    for completeness."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    field = next(f for f in parsed.schema if f.name == "EncyclopediaHistoryName")
+    # Schema says it's a 31-byte string field.
+    assert field.type_code == 1
+    assert field.slot_size == 31
+
+    rows = parse_dat.decode_all_countries(parsed)
+    by_name = {r["Country"]: r for r in rows}
+    af_key = by_name["Afghanistan"]["EncyclopediaHistoryName"]
+    us_key = by_name["the United States"]["EncyclopediaHistoryName"]
+    br_key = by_name["Brazil"]["EncyclopediaHistoryName"]
+    # All keys should be short ASCII identifiers, never paragraphs.
+    for k in (af_key, us_key, br_key):
+        assert isinstance(k, str)
+        assert 0 < len(k) < 15
+        assert " " not in k  # not free-form text
+    assert af_key == "Afghanis"   # truncated form of Afghanistan
+    assert us_key == "US"
+    assert br_key == "Brazil"
+
+    # Persisted as encyclopedia_key in country_original_stats.
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        row = conn.execute(
+            "SELECT encyclopedia_key FROM country_original_stats WHERE country_code = 'us'"
+        ).fetchone()
+        assert row["encyclopedia_key"] == "US"
+    finally:
+        conn.close()
+
+
 def test_country_descriptions_cover_every_country():
     """Issue #11: every country in the curated set should land a description
     after the build_db pipeline runs (binary extraction + FALLBACK_DESCRIPTIONS
