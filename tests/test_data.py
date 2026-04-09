@@ -198,3 +198,19 @@ def test_extract_descriptions_per_country():
     # Coverage: at least 150 of 199 countries got a usable description.
     non_empty = sum(1 for d in descs.values() if d)
     assert non_empty >= 150, f"only {non_empty} descriptions extracted"
+
+
+def test_long_strings_stitch_across_record_boundaries():
+    """Issue #12: encyclopedia prose that crossed a 0x300 record boundary
+    used to be split into two halves ('hot summe' / 'rs.'). The continuous
+    walker stitches it back together."""
+    from src.data.seed import COUNTRIES
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    descs = parse_dat.extract_descriptions_per_country(
+        parsed, [c["name"] for c in COUNTRIES]
+    )
+    # Afghanistan: previously ended in 'hot summe'.
+    assert "hot summers" in descs["Afghanistan"]
+    assert "hot summe " not in descs["Afghanistan"]
+    # Bangladesh: previously began with 'ia, at the head' instead of 'South Asia'.
+    assert descs["Bangladesh"].startswith("South Asia")

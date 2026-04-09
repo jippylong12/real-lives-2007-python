@@ -159,27 +159,41 @@ def _extract_strings(record: bytes, min_len: int = 3, max_len: int = 80) -> list
     return out
 
 
-def _extract_long_strings(record: bytes, min_len: int = 30, max_len: int = 1500) -> list[str]:
-    """Pull *long* printable ASCII runs out of a record's value blob.
+def _walk_long_strings_continuous(
+    blob: bytes,
+    data_start_offset: int,
+    *,
+    min_len: int = 30,
+    max_len: int = 1500,
+) -> list[tuple[int, str]]:
+    """Walk the entire data section as a single byte stream and yield
+    ``(record_idx, run)`` for each printable ASCII run.
 
-    Encyclopedia-style fields (Location, Climate, Terrain, EnvironmentalIssues,
-    EncyclopediaHistoryName, ...) are 50–250 char descriptive sentences. The
-    short-string extractor caps runs at 80 chars and would truncate them, so
-    we run a separate pass with a much higher cap.
+    This stitches printable runs that touch a 0x300 record boundary
+    (Afghanistan's climate "hot summers", Bangladesh's leading "South Asia"
+    — issue #12). A per-record extractor would split those into two halves
+    because each record is processed in isolation; walking the post-schema
+    region as one continuous byte stream lets a run flow across boundaries
+    naturally.
+
+    Each emitted run is tagged with the global record index where it
+    *started*, so the result merges cleanly with ``record_strings`` keys.
     """
-    out: list[str] = []
-    i = 0
-    while i < len(record):
-        b = record[i]
+    out: list[tuple[int, str]] = []
+    i = data_start_offset
+    n = len(blob)
+    while i < n:
+        b = blob[i]
         if 32 <= b < 127:
             j = i
-            while j < len(record) and 32 <= record[j] < 127:
+            while j < n and 32 <= blob[j] < 127:
                 j += 1
-            run = record[i:j].decode("ascii", errors="ignore")
-            if len(run) >= min_len and len(run) <= max_len:
+            run = blob[i:j].decode("ascii", errors="ignore")
+            if min_len <= len(run) <= max_len:
                 run = run.strip()
                 if run:
-                    out.append(run)
+                    rec_idx = (i - HEADER_SIZE) // RECORD_SIZE
+                    out.append((rec_idx, run))
             i = j
         else:
             i += 1
@@ -195,6 +209,7 @@ def parse_dat(path: str | Path) -> DatFile:
     parsed = DatFile(path=p, total_records=total)
     seen_field_ids: set[int] = set()
     in_schema = True
+    first_data_idx: int | None = None
 
     for idx, off, rec in _iter_records(blob):
         if in_schema:
@@ -239,14 +254,23 @@ def parse_dat(path: str | Path) -> DatFile:
             # First record that doesn't fit the schema pattern → switch modes.
             in_schema = False
 
-        # Data records: harvest printable strings.
+        if first_data_idx is None:
+            first_data_idx = idx
+
+        # Data records: harvest short printable strings (per-record so each
+        # string keeps its record index for the country anchoring pass).
         rec_short = _extract_strings(rec)
         if rec_short:
             parsed.record_strings[idx] = rec_short
             for s in rec_short:
                 parsed.string_pool.append(s)
-        for s in _extract_long_strings(rec):
-            parsed.long_strings.append((idx, s))
+
+    # Long-string extraction uses a continuous walk over the post-schema
+    # region so printable runs that span 0x300 record boundaries get
+    # stitched into one string instead of being split (issue #12).
+    if first_data_idx is not None:
+        data_start = HEADER_SIZE + first_data_idx * RECORD_SIZE
+        parsed.long_strings.extend(_walk_long_strings_continuous(blob, data_start))
 
     return parsed
 
