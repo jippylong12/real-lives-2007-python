@@ -219,7 +219,13 @@ def contract_disease(
     cost = 0
     if treatable and disease.treatment_cost > 0:
         cost = disease.treatment_cost
-        character.money -= cost
+        # Drain personal money first, then dip into family_wealth for the rest.
+        # (Affordability already required money + family_wealth >= cost.)
+        from_money = min(character.money, cost)
+        character.money -= from_money
+        remaining = cost - from_money
+        if remaining > 0:
+            character.family_wealth -= remaining
 
     severity = disease.severity
     if treatable:

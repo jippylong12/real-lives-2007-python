@@ -234,6 +234,39 @@ def test_religion_events_present_in_registry():
     assert not missing, f"missing events: {missing}"
 
 
+def test_disease_treatment_cost_drains_family_wealth_after_money():
+    """Personal money goes first; the remainder dips into family_wealth.
+    Regression for #15: previously the deduction only touched character.money
+    so a poor character could end up with negative money while family_wealth
+    sat untouched."""
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 50
+    char.money = 1000
+    char.family_wealth = 50000
+    # Hypertension is treatable, $800 — well within money, no fallback.
+    htn = next(d for d in diseases.DISEASES if d.key == "hypertension")
+    diseases.contract_disease(char, get_country("us"), htn, random.Random(0))
+    assert char.money == 200
+    assert char.family_wealth == 50000
+
+    # Heart disease is $12000 — exhausts money, dips into family_wealth.
+    char.money = 1000
+    char.family_wealth = 50000
+    chd = next(d for d in diseases.DISEASES if d.key == "heart_disease")
+    diseases.contract_disease(char, get_country("us"), chd, random.Random(0))
+    assert char.money == 0
+    assert char.family_wealth == 50000 - (12000 - 1000)
+
+    # If neither pot can cover, treatment is skipped — neither pot is touched.
+    char.money = 100
+    char.family_wealth = 200
+    char.diseases.clear()
+    diseases.contract_disease(char, get_country("us"), chd, random.Random(0))
+    assert char.money == 100
+    assert char.family_wealth == 200
+
+
 def test_active_disease_persists_through_save_load():
     g = Game.new(country_code="us", seed=42)
     diseases.contract_disease(
