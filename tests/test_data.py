@@ -139,6 +139,70 @@ def test_schema_carries_type_size_offset():
     assert male_life.slot_size == 8
 
 
+def test_country_binary_field_catch_all_populated():
+    """Issue #17: every binary field decoded from world.dat should land in
+    country_binary_field, not just the curated handful in
+    country_original_stats. ~150 long-tail fields should be present."""
+    report = build_db.build()
+    assert report.get("binary_fields", 0) > 20000
+
+    conn = build_db.get_connection()
+    try:
+        # All 168 schema fields should be persisted across the binary's
+        # 189 mappable countries.
+        n_fields = conn.execute(
+            "SELECT COUNT(DISTINCT field_name) FROM country_binary_field"
+        ).fetchone()[0]
+        assert n_fields >= 150
+
+        # Spot-check long-tail fields the curated columns don't cover.
+        row = conn.execute(
+            "SELECT value_num FROM country_binary_field "
+            "WHERE country_code='af' AND field_name='EarthquakeAffected'"
+        ).fetchone()
+        assert row is not None
+        assert row["value_num"] > 0  # Afghanistan has earthquakes
+
+        # Iraq human rights flag (binary type-4 bool stored as 0/1).
+        row = conn.execute(
+            "SELECT value_num FROM country_binary_field "
+            "WHERE country_code='iq' AND field_name='Torture'"
+        ).fetchone()
+        assert row is not None
+    finally:
+        conn.close()
+
+
+def test_at_war_and_conscription_promoted_to_countries_table():
+    """Issue #17: AtWar and MilitaryConscription from world.dat get promoted
+    into the canonical countries table so the engine can read them via the
+    Country dataclass without going through country_binary_field."""
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        # Iraq and Afghanistan both flagged at_war=1 in 2007.
+        for code in ("af", "iq"):
+            row = conn.execute(
+                "SELECT at_war FROM countries WHERE code=?", (code,)
+            ).fetchone()
+            assert row["at_war"] == 1, f"{code} should be at_war=1"
+
+        # USA all-volunteer force, no conscription.
+        row = conn.execute(
+            "SELECT at_war, military_conscription FROM countries WHERE code='us'"
+        ).fetchone()
+        assert row["at_war"] == 0
+        assert row["military_conscription"] == 0
+
+        # Israel: universal conscription.
+        row = conn.execute(
+            "SELECT military_conscription FROM countries WHERE code='il'"
+        ).fetchone()
+        assert row["military_conscription"] == 1
+    finally:
+        conn.close()
+
+
 def test_country_original_stats_table_populated():
     """The build_db pipeline persists the binary-decoded values into a
     country_original_stats table that the engine can cross-check against."""

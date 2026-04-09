@@ -42,6 +42,8 @@ class Country:
     corruption: float
     safe_water_pct: float
     health_services_pct: float
+    at_war: int = 0                    # binary AtWar flag (#17)
+    military_conscription: int = 0     # binary MilitaryConscription flag (#17)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Country":

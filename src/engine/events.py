@@ -524,8 +524,16 @@ MILITARY_SERVICE = _choice(
     title="Military conscription",
     category="war",
     description="You have been called up for military service. Will you serve, or seek an exemption?",
-    when=lambda c, co: 18 <= c.age <= 22 and c.gender == Gender.MALE and co.war_freq > 0.01,
-    chance=lambda c, co: 0.4,
+    # Eligible if the country has formal conscription on the books OR is at
+    # war OR has elevated war frequency. The conscription flag comes from
+    # world.dat (#17) and supersedes the war_freq heuristic for countries
+    # like Israel/Switzerland that conscript in peacetime.
+    when=lambda c, co: (
+        18 <= c.age <= 22
+        and c.gender == Gender.MALE
+        and (co.military_conscription or co.at_war or co.war_freq > 0.01)
+    ),
+    chance=lambda c, co: 0.6 if co.military_conscription else 0.4,
     choices=[
         EventChoice(key="serve", label="Serve in the military",
                     deltas={"strength": +8, "endurance": +8, "wisdom": +5, "happiness": -5},
@@ -578,7 +586,10 @@ EVENT_REGISTRY: list[Event] = [
         "war_event", "Conflict in the region", "war",
         "Conflict touches your life.",
         when=lambda c, co: True,
-        chance=lambda c, co: co.war_freq,
+        # Active wars (binary AtWar flag, #17) lift the per-year war event
+        # probability to a minimum of 15% so countries flagged at war by the
+        # 2007 binary feel materially different from peacetime ones.
+        chance=lambda c, co: max(co.war_freq, 0.15) if co.at_war else co.war_freq,
         apply=_apply_war,
     ),
     MILITARY_SERVICE,

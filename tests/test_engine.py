@@ -234,6 +234,40 @@ def test_religion_events_present_in_registry():
     assert not missing, f"missing events: {missing}"
 
 
+def test_country_dataclass_carries_at_war_and_conscription():
+    """Issue #17: the binary at_war / military_conscription flags flow
+    through to the Country dataclass and reach the event system."""
+    israel = get_country("il")
+    assert israel.military_conscription == 1
+    iraq = get_country("iq")
+    assert iraq.at_war == 1
+    sweden = get_country("se")
+    assert sweden.at_war == 0
+
+
+def test_military_service_event_uses_conscription_flag():
+    """The MILITARY_SERVICE choice event fires for conscript countries
+    even when their war_freq is low — Israel/Switzerland's universal
+    service can't be detected from war_freq alone."""
+    from src.engine.events import MILITARY_SERVICE
+    from src.engine.character import create_random_character
+
+    rng = random.Random(0)
+    israel = get_country("il")
+    char = create_random_character(israel, rng)
+    char.gender = Gender.MALE
+    char.age = 19
+    assert MILITARY_SERVICE.eligible(char, israel)
+
+    # USA: all-volunteer force, peacetime in 2007 binary, low war_freq.
+    # The event should not fire.
+    us = get_country("us")
+    char2 = create_random_character(us, rng)
+    char2.gender = Gender.MALE
+    char2.age = 19
+    assert not MILITARY_SERVICE.eligible(char2, us)
+
+
 def test_disease_treatment_cost_drains_family_wealth_after_money():
     """Personal money goes first; the remainder dips into family_wealth.
     Regression for #15: previously the deduction only touched character.money

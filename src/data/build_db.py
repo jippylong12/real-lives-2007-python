@@ -28,27 +28,29 @@ DB_PATH = DATA_DIR / "reallives.db"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS countries (
-    code                TEXT PRIMARY KEY,
-    name                TEXT NOT NULL,
-    region              TEXT NOT NULL,
-    population          INTEGER NOT NULL,
-    gdp_pc              INTEGER NOT NULL,
-    life_expectancy     REAL NOT NULL,
-    infant_mortality    REAL NOT NULL,
-    literacy            REAL NOT NULL,
-    gini                REAL NOT NULL,
-    hdi                 REAL NOT NULL,
-    urban_pct           REAL NOT NULL,
-    primary_religion    TEXT NOT NULL,
-    primary_language    TEXT NOT NULL,
-    capital             TEXT NOT NULL,
-    currency            TEXT NOT NULL,
-    war_freq            REAL NOT NULL,
-    disaster_freq       REAL NOT NULL,
-    crime_rate          REAL NOT NULL,
-    corruption          REAL NOT NULL,
-    safe_water_pct      REAL NOT NULL,
-    health_services_pct REAL NOT NULL
+    code                    TEXT PRIMARY KEY,
+    name                    TEXT NOT NULL,
+    region                  TEXT NOT NULL,
+    population              INTEGER NOT NULL,
+    gdp_pc                  INTEGER NOT NULL,
+    life_expectancy         REAL NOT NULL,
+    infant_mortality        REAL NOT NULL,
+    literacy                REAL NOT NULL,
+    gini                    REAL NOT NULL,
+    hdi                     REAL NOT NULL,
+    urban_pct               REAL NOT NULL,
+    primary_religion        TEXT NOT NULL,
+    primary_language        TEXT NOT NULL,
+    capital                 TEXT NOT NULL,
+    currency                TEXT NOT NULL,
+    war_freq                REAL NOT NULL,
+    disaster_freq           REAL NOT NULL,
+    crime_rate              REAL NOT NULL,
+    corruption              REAL NOT NULL,
+    safe_water_pct          REAL NOT NULL,
+    health_services_pct     REAL NOT NULL,
+    at_war                  INTEGER NOT NULL DEFAULT 0,    -- #17, from binary
+    military_conscription   INTEGER NOT NULL DEFAULT 0     -- #17, from binary
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -96,6 +98,23 @@ CREATE TABLE IF NOT EXISTS country_descriptions (
     description   TEXT NOT NULL,
     FOREIGN KEY (country_code) REFERENCES countries(code)
 );
+
+-- Catch-all long-format table for every binary field decoded from world.dat
+-- (#17). The Population/HDI/MaleLifeExpectancy fields are *also* persisted
+-- to country_original_stats and the canonical countries table; this table
+-- captures the long tail (50+ disaster history fields, ethnic group
+-- fractions, exchange rates, war province / war type, etc.) so callers can
+-- query any decoded field by name without each new use case having to widen
+-- a hand-curated schema.
+CREATE TABLE IF NOT EXISTS country_binary_field (
+    country_code  TEXT NOT NULL,
+    field_name    TEXT NOT NULL,
+    value_text    TEXT,
+    value_num     REAL,
+    PRIMARY KEY (country_code, field_name)
+);
+CREATE INDEX IF NOT EXISTS idx_country_binary_field_name
+    ON country_binary_field(field_name);
 
 -- Original-game job catalogue decoded directly from jobs.dat (#19). The
 -- binary ships 131 jobs vs. the curated seed.JOBS list of ~30. This table
@@ -189,8 +208,51 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     (table_name, f.field_id, f.name, f.qualified_name),
                 )
 
-        # 2. Countries.
+        # Pre-decode world.dat once and key it by ISO code so steps 2 (country
+        # insert with binary at_war/military_conscription) and 7a/7c
+        # (country_original_stats + country_binary_field) can share the same
+        # decoded values without re-running the decoder.
+        world = parsed_files.get("world")
+        decoded_world: list[dict] = []
+        decoded_by_code: dict[str, dict] = {}
+        if world is not None:
+            decoded_world = parse_dat.decode_all_rows(world)
+
+            def _to_code(binary_name: str) -> str | None:
+                cleaned = binary_name.strip()
+                if cleaned.startswith("the "):
+                    cleaned = cleaned[4:]
+                BIN_ALIASES = {
+                    "Burma": "Myanmar",
+                    "Cote d'Ivoire": "Ivory Coast",
+                    "Macedonia": "North Macedonia",
+                    "Swaziland": "Eswatini",
+                    "Runion": "Reunion",
+                    "Congo": "Republic of the Congo",
+                    "Congo Democratic Republic": "DR Congo",
+                }
+                cleaned = BIN_ALIASES.get(cleaned, cleaned)
+                for cc in seed.COUNTRIES:
+                    if cc["name"] == cleaned:
+                        return cc["code"]
+                return None
+
+            for row in decoded_world:
+                bname = row.get("Country")
+                if not isinstance(bname, str) or not bname.strip():
+                    continue
+                code = _to_code(bname)
+                if code:
+                    decoded_by_code[code] = row
+
+        # 2. Countries — curated values from seed, with binary at_war and
+        # military_conscription overlays for any country that matched the
+        # binary (#17). Countries that aren't in the binary (territory
+        # additions from #7) get default 0/0.
         for c in seed.COUNTRIES:
+            bin_row = decoded_by_code.get(c["code"], {})
+            at_war = 1 if bin_row.get("AtWar") else 0
+            conscription = 1 if bin_row.get("MilitaryConscription") else 0
             conn.execute(
                 """
                 INSERT OR REPLACE INTO countries (
@@ -198,8 +260,9 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     infant_mortality, literacy, gini, hdi, urban_pct,
                     primary_religion, primary_language, capital, currency,
                     war_freq, disaster_freq, crime_rate, corruption,
-                    safe_water_pct, health_services_pct
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    safe_water_pct, health_services_pct,
+                    at_war, military_conscription
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     c["code"], c["name"], c["region"], c["population"], c["gdp_pc"],
@@ -208,6 +271,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     c["primary_religion"], c["primary_language"], c["capital"], c["currency"],
                     c["war_freq"], c["disaster_freq"], c["crime_rate"], c["corruption"],
                     c["safe_water_pct"], c["health_services_pct"],
+                    at_war, conscription,
                 ),
             )
 
@@ -305,58 +369,67 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
         # interprets the schema's type/size/offset metadata to pull every
         # field's value out of each fixed-size country row.
         original_total = 0
-        if world is not None:
-            decoded = parse_dat.decode_all_countries(world)
-            # Build a name→code mapping. The binary uses 2007 spellings + a
-            # few "the X" prefixes that we strip before lookup.
-            def to_code(binary_name: str) -> str | None:
-                cleaned = binary_name.strip()
-                if cleaned.startswith("the "):
-                    cleaned = cleaned[4:]
-                # Special-case aliases for binary names that don't match seed.
-                BIN_ALIASES = {
-                    "Burma": "Myanmar",
-                    "Cote d'Ivoire": "Ivory Coast",
-                    "Macedonia": "North Macedonia",
-                    "Swaziland": "Eswatini",
-                    "Runion": "Reunion",
-                    "Congo": "Republic of the Congo",
-                    "Congo Democratic Republic": "DR Congo",
-                }
-                cleaned = BIN_ALIASES.get(cleaned, cleaned)
-                for c in seed.COUNTRIES:
-                    if c["name"] == cleaned:
-                        return c["code"]
-                return None
+        binary_field_total = 0
+        for row in decoded_world:
+            bname = row.get("Country")
+            if not isinstance(bname, str) or not bname.strip():
+                continue
+            # Find the matching code by scanning decoded_by_code for this row.
+            code = next((cc for cc, rr in decoded_by_code.items() if rr is row), None)
+            pop = row.get("Population")
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO country_original_stats (
+                    binary_name, country_code, population, birth_rate, death_rate,
+                    infant_mortality, male_life_expectancy, female_life_expectancy,
+                    inflation_rate, at_war, aids_rate, male_literacy,
+                    female_literacy, hdi, encyclopedia_key
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    bname.strip(), code, pop,
+                    row.get("BirthRate"), row.get("DeathRate"),
+                    row.get("InfantMortality"),
+                    row.get("MaleLifeExpectancy"), row.get("FemaleLifeExpectancy"),
+                    row.get("InflationRate"),
+                    1 if row.get("AtWar") else 0,
+                    row.get("AIDS"),
+                    row.get("MaleLiteracy"), row.get("FemaleLiteracy"),
+                    row.get("HDI"),
+                    row.get("EncyclopediaHistoryName"),
+                ),
+            )
+            original_total += 1
 
-            for row in decoded:
-                bname = row.get("Country")
-                if not isinstance(bname, str) or not bname.strip():
+            # 7c. Long-format catch-all for every binary field (#17). This
+            # captures the 150+ fields beyond the curated columns: disaster
+            # history (Avalanche*, Famine*, Earthquake*, ...), human-rights
+            # flags, military service rules, ethnic group fractions,
+            # exchange rate, war province / war type, etc.
+            if code is None:
+                continue
+            for fname, val in row.items():
+                if val is None:
                     continue
-                code = to_code(bname)
-                pop = row.get("Population")
+                if isinstance(val, bool):
+                    value_text = None
+                    value_num = float(int(val))
+                elif isinstance(val, (int, float)):
+                    value_text = None
+                    value_num = float(val)
+                else:
+                    s = str(val).strip("\x00").strip()
+                    if not s:
+                        continue
+                    value_text = s
+                    value_num = None
                 conn.execute(
-                    """
-                    INSERT OR REPLACE INTO country_original_stats (
-                        binary_name, country_code, population, birth_rate, death_rate,
-                        infant_mortality, male_life_expectancy, female_life_expectancy,
-                        inflation_rate, at_war, aids_rate, male_literacy,
-                        female_literacy, hdi, encyclopedia_key
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        bname.strip(), code, pop,
-                        row.get("BirthRate"), row.get("DeathRate"),
-                        row.get("InfantMortality"),
-                        row.get("MaleLifeExpectancy"), row.get("FemaleLifeExpectancy"),
-                        row.get("InflationRate"), row.get("AtWar"),
-                        row.get("AIDS"),
-                        row.get("MaleLiteracy"), row.get("FemaleLiteracy"),
-                        row.get("HDI"),
-                        row.get("EncyclopediaHistoryName"),
-                    ),
+                    "INSERT OR REPLACE INTO country_binary_field "
+                    "(country_code, field_name, value_text, value_num) "
+                    "VALUES (?, ?, ?, ?)",
+                    (code, fname, value_text, value_num),
                 )
-                original_total += 1
+                binary_field_total += 1
 
         # 7b. Country encyclopedia descriptions — recovered from the long-string
         # pool of world.dat, with seed.FALLBACK_DESCRIPTIONS as a fallback for
@@ -390,6 +463,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             "cities": cities_total,
             "descriptions": descriptions_total,
             "original_stats": original_total,
+            "binary_fields": binary_field_total,
             "jobs_original_stats": jobs_orig_total,
             "dat_schemas": {name: len(p.schema) for name, p in parsed_files.items()},
             "recovered_strings": {name: len(p.string_pool) for name, p in parsed_files.items()},
