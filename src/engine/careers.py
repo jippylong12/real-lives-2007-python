@@ -721,6 +721,31 @@ def quit_job(character: Character) -> None:
     character.salary = 0
 
 
+def can_drop_out_of_school(character: Character, country: Country) -> tuple[bool, str | None]:
+    """Whether the player can leave school early to start working (#69).
+    Eligible only when the character is currently in school AND has
+    reached the country's minimum working age."""
+    if not character.in_school:
+        return False, "you're not in school"
+    floor = minimum_working_age(country)
+    if character.age < floor:
+        return False, f"can't work yet — minimum working age in {country.name} is {floor}"
+    return True, None
+
+
+def drop_out_of_school(character: Character, country: Country) -> None:
+    """Leave school to start working (#69). Sets in_school = False so
+    the can_character_work gate clears. Education stays at whatever
+    level was already completed.
+
+    Raises ValueError if the character isn't eligible.
+    """
+    eligible, reason = can_drop_out_of_school(character, country)
+    if not eligible:
+        raise ValueError(reason or "not eligible")
+    character.in_school = False
+
+
 def yearly_income(character: Character, country: Country, rng: random.Random) -> int:
     """Apply income, expenses, subscription costs, and yearly variance.
 

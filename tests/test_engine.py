@@ -576,6 +576,84 @@ def test_jobs_table_populated_from_binary():
     assert captain.promotes_to is None  # terminal
 
 
+def test_investment_age_gate():
+    """#68: investments are now age-gated. Savings 12+, bonds 16+, the rest 18+."""
+    from src.engine import finances
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.money = 100_000
+
+    savings = next(p for p in finances.list_investments() if "savings" in p.name)
+    bonds = next(p for p in finances.list_investments() if "government bonds" in p.name)
+    stock = next(p for p in finances.list_investments() if "high-risk stock" in p.name)
+
+    # Age 5 — too young for everything
+    char.age = 5
+    for prod in (savings, bonds, stock):
+        try:
+            finances.buy_investment(char, prod, 1000, 2030)
+            assert False, f"5yo bought {prod.name}"
+        except ValueError as e:
+            assert "must be at least" in str(e)
+
+    # Age 13 — savings only
+    char.age = 13
+    finances.buy_investment(char, savings, 100, 2030)
+    try:
+        finances.buy_investment(char, bonds, 1000, 2030)
+        assert False, "13yo bought bonds"
+    except ValueError:
+        pass
+
+    # Age 17 — savings + bonds, no stock
+    char.age = 17
+    finances.buy_investment(char, bonds, 1000, 2030)
+    try:
+        finances.buy_investment(char, stock, 2500, 2030)
+        assert False, "17yo bought stock"
+    except ValueError:
+        pass
+
+    # Age 19 — full access
+    char.age = 19
+    finances.buy_investment(char, stock, 2500, 2030)
+
+
+def test_drop_out_of_school_country_gates():
+    """#69: drop_out_of_school respects the country's minimum working age."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+
+    sweden = get_country("se")
+    nigeria = get_country("ng")
+
+    rng = random.Random(0)
+    sw_char = create_random_character(sweden, rng)
+    sw_char.age = 10
+    sw_char.in_school = True
+    eligible, reason = careers.can_drop_out_of_school(sw_char, sweden)
+    assert not eligible  # Sweden's working age is 14
+    assert "14" in reason
+
+    sw_char.age = 14
+    eligible, _ = careers.can_drop_out_of_school(sw_char, sweden)
+    assert eligible
+
+    ng_char = create_random_character(nigeria, rng)
+    ng_char.age = 10
+    ng_char.in_school = True
+    eligible, _ = careers.can_drop_out_of_school(ng_char, nigeria)
+    assert eligible  # Nigeria's working age is 8
+
+    careers.drop_out_of_school(ng_char, nigeria)
+    assert ng_char.in_school is False
+    # And now they can work
+    can_work, _ = careers.can_character_work(ng_char, nigeria)
+    assert can_work
+
+
 def test_buy_house_increases_family_wealth():
     """#66: a starter home purchase drains money and adds to family_wealth."""
     from src.engine import spending

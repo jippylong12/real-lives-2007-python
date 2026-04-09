@@ -73,6 +73,19 @@ LOAN_MIN_AGE = 18
 FAMILY_LOAN_MIN_AGE = 14
 
 
+# Minimum age for investments by product name (#68). Real-world banking:
+# kids can have a savings account from ~12 with a parent co-signer; bonds
+# usually need a brokerage account at 16+; the riskier instruments
+# (stocks, real estate, small business) need an adult signing.
+def investment_min_age(product_name: str) -> int:
+    name = product_name.lower()
+    if "savings" in name:
+        return 12
+    if "bond" in name:
+        return 16
+    return 18
+
+
 def take_loan(character: Character, product: LoanProduct, amount: int, year: int) -> LoanHolding:
     """Open a new loan against `product`. Adds the principal to the player's
     cash and tracks the loan as a LoanHolding for per-year repayment.
@@ -106,7 +119,13 @@ def take_loan(character: Character, product: LoanProduct, amount: int, year: int
 def buy_investment(character: Character, product: InvestmentProduct, amount: int, year: int) -> InvestmentHolding:
     """Open a new investment position. Deducts cash from the player.
 
-    Raises ValueError on bad input (under min, non-positive, insufficient cash)."""
+    Raises ValueError on bad input (too young, under min, non-positive,
+    insufficient cash)."""
+    min_age = investment_min_age(product.name)
+    if character.age < min_age:
+        raise ValueError(
+            f"you must be at least {min_age} to buy a {product.name}"
+        )
     if amount <= 0:
         raise ValueError("investment amount must be positive")
     if amount < product.min_amount:

@@ -110,9 +110,15 @@ def _serialize_game(game: Game) -> dict:
         can_work, blocked_reason = careers.can_character_work(state.character, country)
         char_dict["can_work"] = can_work
         char_dict["work_blocked_reason"] = blocked_reason
+        # Also surface the drop-out gate (#69)
+        can_drop, drop_reason = careers.can_drop_out_of_school(state.character, country)
+        char_dict["can_drop_out"] = can_drop
+        char_dict["drop_out_blocked_reason"] = drop_reason
     else:
         char_dict["can_work"] = False
         char_dict["work_blocked_reason"] = "no country"
+        char_dict["can_drop_out"] = False
+        char_dict["drop_out_blocked_reason"] = "no country"
 
     return {
         "id": state.id,
@@ -353,6 +359,7 @@ def create_app() -> FastAPI:
                 "annual_return_high": p.annual_return_high,
                 "risk": p.risk,
                 "min_amount": p.min_amount,
+                "min_age": finances.investment_min_age(p.name),  # #68
             }
             for p in finances.list_investments()
         ]
@@ -366,6 +373,7 @@ def create_app() -> FastAPI:
                 "max_amount": p.max_amount,
                 "interest_rate": p.interest_rate,
                 "max_years": p.max_years,
+                "min_age": finances.FAMILY_LOAN_MIN_AGE if p.name == "family loan" else finances.LOAN_MIN_AGE,  # #68
             }
             for p in finances.list_loans()
         ]
@@ -407,6 +415,22 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="game not found")
         try:
             careers.quit_job(game.state.character)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        game.save()
+        return _serialize_game(game)
+
+    @app.post("/api/game/{game_id}/drop_out_of_school")
+    def drop_out_of_school(game_id: str):
+        """Leave school early to start working (#69). Only allowed
+        when the character has reached the country's minimum working
+        age."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        try:
+            careers.drop_out_of_school(game.state.character, country)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         game.save()

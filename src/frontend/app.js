@@ -356,6 +356,20 @@ async function quitJob() {
   }
 }
 
+async function dropOutOfSchool() {
+  if (!confirm("Drop out of school to start working? You can't go back.")) return;
+  log("dropOutOfSchool");
+  try {
+    state.game = await api(`/api/game/${state.game.id}/drop_out_of_school`, { method: "POST" });
+    renderGame();
+    loadPurchases();
+    loadHealthcare();
+  } catch (e) {
+    logErr("dropOutOfSchool failed", e);
+    alert(`Could not drop out: ${e.message}`);
+  }
+}
+
 // ---------- Job board (#54, #57, #58) ----------
 const jobboardState = {
   category: "All",
@@ -692,6 +706,13 @@ function renderGame() {
         blocked.classList.add("hidden");
       }
     }
+  }
+
+  // Drop out of school button (#69) — visible when in school AND old
+  // enough to work in this country.
+  const dropBtn = $opt("#btn-drop-out");
+  if (dropBtn) {
+    dropBtn.classList.toggle("hidden", !c.can_drop_out);
   }
   $("#stat-salary").textContent = c.salary ? fmtMoney(c.salary) + "/yr" : "—";
   $("#stat-money").textContent = fmtMoney(c.money);
@@ -1048,11 +1069,18 @@ function renderFinances() {
     });
   }
 
-  // Investment product dropdown
+  // Investment product dropdown — filter by character age (#68).
   const invSel = $("#invest-product");
-  if (invSel.options.length !== state.investmentProducts.length) {
-    invSel.innerHTML = "";
-    for (const p of state.investmentProducts) {
+  const eligibleInvs = state.investmentProducts.filter((p) => c.age >= (p.min_age || 0));
+  invSel.innerHTML = "";
+  if (eligibleInvs.length === 0) {
+    const opt = document.createElement("option");
+    opt.disabled = true;
+    opt.selected = true;
+    opt.textContent = "Too young to invest";
+    invSel.appendChild(opt);
+  } else {
+    for (const p of eligibleInvs) {
       const opt = document.createElement("option");
       opt.value = p.id;
       const lo = (p.annual_return_low * 100).toFixed(0);
@@ -1061,6 +1089,12 @@ function renderFinances() {
       invSel.appendChild(opt);
     }
   }
+  // Disable the invest form when no products are available.
+  const invForm = $("#invest-form");
+  const invInput = $("#invest-amount");
+  const invBtn = invForm.querySelector("button");
+  invInput.disabled = eligibleInvs.length === 0;
+  invBtn.disabled = eligibleInvs.length === 0;
 
   // Open loans list with manual repay control (#40).
   const loanHost = $("#open-loans");
@@ -1254,6 +1288,7 @@ async function init() {
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
   $("#btn-quit-job").addEventListener("click", quitJob);
+  $("#btn-drop-out").addEventListener("click", dropOutOfSchool);
   $("#btn-find-work").addEventListener("click", openJobBoard);
   $("#btn-jobboard-close").addEventListener("click", closeJobBoard);
   $("#jobboard-show-all").addEventListener("change", (e) => {
