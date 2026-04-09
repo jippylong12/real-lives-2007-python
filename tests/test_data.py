@@ -402,6 +402,42 @@ def test_extract_descriptions_per_country():
     assert non_empty >= 175, f"only {non_empty} descriptions extracted from binary"
 
 
+def test_encyclopedia_no_sentinel_persisted_as_null():
+    """Issue #29: 'No' is the binary's 'no entry' sentinel for 7 small
+    territories (Andorra, Brunei, Guam, French Polynesia, Guadeloupe,
+    Micronesia, New Caledonia). Should persist as NULL, not as the
+    literal string."""
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        # No country in country_original_stats should have key 'No'.
+        rows = conn.execute(
+            "SELECT country_code FROM country_original_stats WHERE encyclopedia_key = 'No'"
+        ).fetchall()
+        assert not rows, f"'No' sentinel persisted: {[r['country_code'] for r in rows]}"
+
+        # Andorra (and the other 6) should be NULL.
+        for code in ("ad", "bn", "gu"):
+            row = conn.execute(
+                "SELECT encyclopedia_key FROM country_original_stats WHERE country_code = ?",
+                (code,),
+            ).fetchone()
+            if row is not None:
+                assert row["encyclopedia_key"] is None, (
+                    f"{code} encyclopedia_key should be NULL, got {row['encyclopedia_key']!r}"
+                )
+
+        # And the catch-all country_binary_field shouldn't carry the 'No'
+        # entries either.
+        n = conn.execute(
+            "SELECT COUNT(*) FROM country_binary_field "
+            "WHERE field_name='EncyclopediaHistoryName' AND value_text='No'"
+        ).fetchone()[0]
+        assert n == 0
+    finally:
+        conn.close()
+
+
 def test_encyclopedia_history_name_is_short_basename_key():
     """Issue #13: investigation. Calling decode_value(buf, EncyclopediaHistoryName)
     directly returns a short identifier (8-10 char file-basename style key

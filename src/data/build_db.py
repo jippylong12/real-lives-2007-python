@@ -428,7 +428,12 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     row.get("AIDS"),
                     row.get("MaleLiteracy"), row.get("FemaleLiteracy"),
                     row.get("HDI"),
-                    row.get("EncyclopediaHistoryName"),
+                    # 'No' is the binary's "no encyclopedia entry" sentinel
+                    # used by 7 small territories (Andorra, Brunei, Guam,
+                    # French Polynesia, Guadeloupe, Micronesia, New
+                    # Caledonia). Persist as NULL instead of the literal
+                    # string (#29).
+                    None if row.get("EncyclopediaHistoryName") == "No" else row.get("EncyclopediaHistoryName"),
                 ),
             )
             original_total += 1
@@ -442,6 +447,9 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 continue
             for fname, val in row.items():
                 if val is None:
+                    continue
+                # Skip 'No' encyclopedia sentinel — it's not a real key (#29).
+                if fname == "EncyclopediaHistoryName" and val == "No":
                     continue
                 if isinstance(val, bool):
                     value_text = None
