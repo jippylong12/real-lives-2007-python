@@ -54,16 +54,18 @@ When porting a mechanic from the original, the workflow is:
 
 Pre-built binaries are attached to each [GitHub
 release](https://github.com/jippylong12/real-lives-2007-python/releases).
-The build runs automatically on `macos-latest` (Apple Silicon), `macos-13`
-(Intel), `windows-latest`, and `ubuntu-latest` whenever a `v*` tag is
-pushed.
+The build runs automatically on `macos-latest` (Apple Silicon),
+`windows-latest`, and `ubuntu-latest` whenever a `v*` tag is pushed.
 
 | Platform | Asset | What you get |
 |---|---|---|
 | macOS Apple Silicon (M1+) | `RealLives2007-<ver>-macos-arm64.zip` | `Real Lives 2007.app` bundle |
-| macOS Intel | `RealLives2007-<ver>-macos-x86_64.zip` | `Real Lives 2007.app` bundle |
 | Windows 10/11 (64-bit) | `RealLives2007-<ver>-windows-x86_64.zip` | folder with `RealLives2007.exe` |
 | Linux x86_64 | `RealLives2007-<ver>-linux-x86_64.tar.gz` | folder with `RealLives2007` binary |
+
+> **Intel Mac users**: GitHub retired the Intel macOS runner from its
+> standard public-repo pool, so we don't ship a pre-built Intel `.app`.
+> Build from source instead — instructions below.
 
 ### macOS
 

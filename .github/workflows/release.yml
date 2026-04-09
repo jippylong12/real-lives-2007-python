@@ -27,11 +27,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest          # Apple Silicon
+          # macos-latest is Apple Silicon. Intel macOS runners (macos-13) were
+          # retired from the standard public-repo pool, so Intel Mac users
+          # need to build from source for now.
+          - os: macos-latest
             artifact_name: macos-arm64
-            archive_ext: zip
-          - os: macos-13              # Intel
-            artifact_name: macos-x86_64
             archive_ext: zip
           - os: windows-latest
             artifact_name: windows-x86_64
@@ -126,6 +126,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             artifacts/macos-arm64/*
-            artifacts/macos-x86_64/*
             artifacts/windows-x86_64/*
             artifacts/linux-x86_64/*
