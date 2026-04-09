@@ -50,7 +50,29 @@ When porting a mechanic from the original, the workflow is:
   and `Loans.dat` files are bundled in `data/`. A custom parser
   (`src/data/parse_dat.py`) reads them; see *Data parsing* below.
 
-## Quick start
+## Download (macOS)
+
+Pre-built `.app` bundles are attached to each [GitHub
+release](https://github.com/jippylong12/real-lives-2007-python/releases). The
+quick path:
+
+1. Download `RealLives2007-<version>-macos-arm64.zip` (Apple Silicon) or
+   `-macos-x86_64.zip` (Intel) from the latest release.
+2. Unzip — you'll get **Real Lives 2007.app**.
+3. Drag it to `/Applications` (optional) and double-click to launch.
+4. **First launch only**: macOS Gatekeeper will refuse to open the app
+   because it's unsigned. Right-click → **Open** → **Open**. After that
+   it launches normally.
+
+The app starts a local web server on a free port, opens your default
+browser to it, and saves your games to
+`~/Library/Application Support/RealLives2007/`. Quit by closing the
+terminal window the app spawned.
+
+> No code signing or notarization yet — that requires an Apple Developer
+> account. PRs welcome.
+
+## Run from source
 
 ```bash
 git clone <this-repo>
@@ -73,6 +95,18 @@ life"), click *Live another year*, and play.
 python src/main.py --port 9000          # use a different port
 python src/main.py --rebuild-db         # wipe and re-seed data/reallives.db
 ```
+
+### Build the macOS .app yourself
+
+```bash
+bash packaging/build_macos.sh           # produces dist/Real Lives 2007.app
+                                        #          dist/RealLives2007-<ver>-macos-<arch>.zip
+```
+
+The build script installs PyInstaller into the existing `.venv` if missing,
+then runs the spec at `packaging/RealLives2007.spec`. Output is a 30-40MB
+self-contained bundle containing Python, FastAPI, uvicorn, the original game's
+`.dat` files, the frontend assets, and the launcher script.
 
 ## Project layout
 

@@ -35,11 +35,11 @@ from ..engine.game import Game, list_games, load_game
 from ..engine.world import (
     all_countries, binary_facts_for, cities_for, description_for, get_country,
 )
+from .. import runtime_paths
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-FRONTEND_DIR = PROJECT_ROOT / "src" / "frontend"
+DATA_DIR = runtime_paths.data_dir()
+FRONTEND_DIR = runtime_paths.frontend_dir()
 FLAGS_DIR = DATA_DIR / "flags"
 
 

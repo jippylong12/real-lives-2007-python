@@ -19,11 +19,12 @@ from pathlib import Path
 
 from . import parse_dat
 from . import seed
+from .. import runtime_paths
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-DB_PATH = DATA_DIR / "reallives.db"
+DATA_DIR = runtime_paths.data_dir()
+DB_PATH = runtime_paths.db_path()
 
 
 # Binary fields that represent a 0-100 percentage. The 2007 game's data has
