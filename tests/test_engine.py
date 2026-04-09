@@ -260,6 +260,55 @@ def test_tropical_only_diseases_hard_gated_outside_tropics():
     assert "dengue" in keys_in
 
 
+def test_roll_diseases_returns_multiple_per_year():
+    """Issue #22: roll_diseases (plural) can return multiple diseases per
+    year now. Verify by simulating many years for a high-age character
+    in a high-prevalence country and checking we observe at least one
+    multi-disease year — that's only possible after the restructure."""
+    from src.engine.character import create_random_character
+    rng = random.Random(42)
+    country = get_country("ng")  # high infectious + tropical load
+    char = create_random_character(country, rng)
+    char.age = 60
+    char.attributes.resistance = 20
+
+    n_years = 2000
+    multi_years = 0
+    for _ in range(n_years):
+        char.diseases.clear()
+        fired = diseases.roll_diseases(char, country, rng)
+        if len(fired) >= 2:
+            multi_years += 1
+    assert multi_years > 0, (
+        "no multi-disease years observed — roll_diseases should be able to "
+        "return more than one disease in a single year now"
+    )
+
+
+def test_acute_categories_capped_at_one_per_year():
+    """Multiple acute infections (TB + flu + bronchitis) shouldn't all
+    fire in the same year — the per-category cap prevents that."""
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("ng")  # high infectious load
+    char = create_random_character(country, rng)
+    char.age = 30
+    char.attributes.resistance = 10  # very low to maximize incidence
+
+    n_years = 500
+    multi_infectious = 0
+    for _ in range(n_years):
+        char.diseases.clear()
+        fired = diseases.roll_diseases(char, country, rng)
+        infectious_count = sum(1 for d in fired if d.category == "infectious")
+        if infectious_count > 1:
+            multi_infectious += 1
+    assert multi_infectious == 0, (
+        f"saw {multi_infectious} years with multiple infectious diseases — "
+        "the acute category cap is broken"
+    )
+
+
 def test_disease_calibration_anchor_lifetime_rates():
     """Issue #14: simulated lifetime malaria incidence in Sweden must be
     < 1%, and in Nigeria must be > 50%. The previous values (~8% Sweden,

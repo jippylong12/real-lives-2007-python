@@ -140,10 +140,10 @@ DISEASES: list[Disease] = [
     Disease("wasting",          "Childhood wasting","childhood", 0.0100,  0,  5, 6, 0.02, True, 200, permanent=True, poor_mult=4.0, rich_mult=0.05, description="Acute severe undernutrition."),
 
     # ===== Chronic =====
-    Disease("diabetes_t2",      "Type 2 diabetes",  "chronic", 0.0120, 35, 85, 4, 0.01, True, 1500, permanent=True, rich_mult=1.5, description="Insulin resistance; managed with diet and medication."),
+    Disease("diabetes_t2",      "Type 2 diabetes",  "chronic", 0.0180, 35, 85, 4, 0.01, True, 1500, permanent=True, rich_mult=1.5, description="Insulin resistance; managed with diet and medication."),
     Disease("diabetes_t1",      "Type 1 diabetes",  "chronic", 0.0010,  3, 30, 5, 0.02, True, 2000, permanent=True, description="Autoimmune destruction of insulin-producing cells."),
-    Disease("hypertension",     "Hypertension",     "chronic", 0.0220, 30, 85, 3, 0.02, True, 800, permanent=True, description="Chronic high blood pressure."),
-    Disease("heart_disease",    "Coronary heart disease", "chronic", 0.0095, 40, 90, 9, 0.10, True, 12000, permanent=True, rich_mult=1.2, description="Atherosclerosis of the coronary arteries."),
+    Disease("hypertension",     "Hypertension",     "chronic", 0.0350, 30, 85, 3, 0.02, True, 800, permanent=True, description="Chronic high blood pressure."),
+    Disease("heart_disease",    "Coronary heart disease", "chronic", 0.0160, 40, 90, 9, 0.10, True, 12000, permanent=True, rich_mult=1.2, description="Atherosclerosis of the coronary arteries."),
     Disease("stroke",           "Stroke",           "chronic", 0.0015, 50, 90, 12, 0.20, True, 8000, permanent=True, description="Brain blood-supply interruption; cerebrovascular accident."),
     Disease("asthma",           "Asthma",           "chronic", 0.0040,  3, 80, 3, 0.005, True, 600, permanent=True, urban_skew=1.4, description="Chronic inflammatory airway disease; urban air pollution."),
     Disease("copd",             "COPD",             "chronic", 0.0020, 40, 85, 6, 0.05, True, 1500, permanent=True, urban_skew=1.5, description="Chronic obstructive pulmonary disease; pollution-driven."),
@@ -220,30 +220,58 @@ def eligible_diseases(character: "Character", country: "Country") -> list[tuple[
         if d.key in active:
             continue
         chance = d.base_chance * _country_modifier(d, country) * _urbanization_modifier(d, character)
-        # Resistance and health services dampen incidence
-        chance *= max(0.2, 2.0 - character.attributes.resistance / 50)
-        if not d.sanitation_dependent:
-            chance *= max(0.5, 1.5 - country.health_services_pct / 100)
+        # Resistance and health services dampen incidence — but only for
+        # categories where the immune system / preventive care can plausibly
+        # block onset. Chronic conditions and cancers are driven by genetics,
+        # diet, age, and pollution, not infection resistance, so they bypass
+        # these modifiers (#22).
+        if d.category not in {"chronic", "cancer", "mental"}:
+            chance *= max(0.2, 2.0 - character.attributes.resistance / 50)
+            if not d.sanitation_dependent:
+                chance *= max(0.5, 1.5 - country.health_services_pct / 100)
         out.append((d, chance))
     return out
 
 
-def roll_disease(character: "Character", country: "Country", rng: random.Random) -> Disease | None:
-    """Sample at most one new disease per year, weighted by per-disease chance."""
+# Categories that are *acute* — capped at one per year so a character
+# doesn't get five different respiratory infections in the same calendar
+# year. Chronic / cancer / mental categories are silent and can accumulate
+# freely, which is what makes lifetime prevalence land in the right
+# ballpark for hypertension, diabetes, heart disease, etc.
+_ACUTE_CATEGORIES = {"infectious", "respiratory", "childhood", "sti", "tropical"}
+
+
+def roll_diseases(character: "Character", country: "Country", rng: random.Random) -> list[Disease]:
+    """Roll independently for each eligible disease per year (#22).
+
+    Each disease gets its own Bernoulli trial against its modulated annual
+    chance. Acute categories (infectious, respiratory, childhood, STI,
+    tropical) are capped at one disease per year so a character doesn't
+    contract flu + bronchitis + pneumonia + TB in the same calendar year.
+    Silent categories (chronic, cancer, mental) accumulate freely — that's
+    what allows lifetime hypertension/diabetes/cancer prevalence to reach
+    realistic levels.
+    """
     candidates = eligible_diseases(character, country)
     if not candidates:
-        return None
-    # Compute the union probability that *any* of the candidate diseases fires.
-    # If one fires, pick which one weighted by its individual chance.
-    total = sum(p for _, p in candidates)
-    if total <= 0:
-        return None
-    # Cap so a single year can't deterministically infect everyone.
-    fire = 1.0 - (1.0 - min(1.0, total)) ** 1.0
-    if rng.random() >= fire:
-        return None
-    weights = [p for _, p in candidates]
-    return rng.choices([d for d, _ in candidates], weights=weights, k=1)[0]
+        return []
+    fired: list[Disease] = []
+    capped_categories: set[str] = set()
+    for d, chance in candidates:
+        if d.category in _ACUTE_CATEGORIES and d.category in capped_categories:
+            continue
+        if rng.random() < chance:
+            fired.append(d)
+            if d.category in _ACUTE_CATEGORIES:
+                capped_categories.add(d.category)
+    return fired
+
+
+def roll_disease(character: "Character", country: "Country", rng: random.Random) -> Disease | None:
+    """Backwards-compat: return the first disease that fires this year, or
+    None. Prefer :func:`roll_diseases` for full multi-disease behavior."""
+    fired = roll_diseases(character, country, rng)
+    return fired[0] if fired else None
 
 
 def contract_disease(

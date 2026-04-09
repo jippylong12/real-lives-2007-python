@@ -102,14 +102,26 @@ def _choice(
 # ---------------------------------------------------------------------------
 
 def _apply_specific_disease(c, co, rng):
-    disease = diseases.roll_disease(c, co, rng)
-    if disease is None:
-        return EventOutcome(summary="")  # nothing fired this year
-    payload = diseases.contract_disease(c, co, disease, rng)
+    """Apply every disease that fires this year (#22) and aggregate the
+    summary lines, attribute deltas, and money cost into one EventOutcome
+    so the engine's per-year event log shows them as a single \"health\"
+    update."""
+    fired = diseases.roll_diseases(c, co, rng)
+    if not fired:
+        return EventOutcome(summary="")
+    summaries: list[str] = []
+    agg_deltas: dict[str, int] = {}
+    agg_money = 0
+    for d in fired:
+        payload = diseases.contract_disease(c, co, d, rng)
+        summaries.append(payload["summary"])
+        for k, v in payload["deltas"].items():
+            agg_deltas[k] = agg_deltas.get(k, 0) + v
+        agg_money += payload["money_delta"]
     return EventOutcome(
-        summary=payload["summary"],
-        deltas=payload["deltas"],
-        money_delta=payload["money_delta"],
+        summary=" ".join(summaries),
+        deltas=agg_deltas,
+        money_delta=agg_money,
     )
 
 
