@@ -62,12 +62,33 @@ async function sellInvestment(index) {
   renderGame();
 }
 
+async function payLoan(index, amount) {
+  state.game = await api(`/api/game/${state.game.id}/pay_loan`, {
+    method: "POST",
+    body: JSON.stringify({ index, amount }),
+  });
+  renderGame();
+}
+
+async function quitJob() {
+  if (!confirm("Quit your current job? You'll need to find a new one.")) return;
+  state.game = await api(`/api/game/${state.game.id}/quit_job`, { method: "POST" });
+  renderGame();
+}
+
 async function newGame(countryCode) {
   const body = countryCode ? { country_code: countryCode } : {};
   state.game = await api("/api/game/new", {
     method: "POST",
     body: JSON.stringify(body),
   });
+  // Reset stale UI from any previous life (#44).
+  $("#event-list").innerHTML = '<p class="placeholder">Click "Live another year" to begin your life.</p>';
+  $("#timeline").innerHTML = "";
+  $("#decision-area").classList.add("hidden");
+  $("#death-timeline").innerHTML = "";
+  if ($("#death-summary")) $("#death-summary").innerHTML = "";
+  if ($("#death-diseases")) $("#death-diseases").innerHTML = "";
   showGameScreen();
   renderGame();
 }
@@ -109,8 +130,53 @@ function showDeathScreen(turn) {
   $("#screen-game").classList.add("hidden");
   $("#screen-death").classList.remove("hidden");
   const c = state.game.character;
+  const co = state.game.country;
   $("#death-detail").textContent =
-    `${c.name} died at age ${c.age} in ${c.city}, ${state.game.country.name}. Cause: ${turn.cause_of_death}.`;
+    `${c.name} died at age ${c.age} in ${c.city}, ${co.name}. Cause: ${turn.cause_of_death}.`;
+
+  // Life retrospective stats card (#35).
+  const summary = $("#death-summary");
+  summary.innerHTML = "";
+  const portfolio = state.game.portfolio_value || 0;
+  const netWorth = (c.money || 0) + portfolio - (c.debt || 0);
+  const numDiseases = Object.keys(c.diseases || {}).length;
+  const numChronics = Object.values(c.diseases || {}).filter(d => d.permanent).length;
+  const numChildren = (c.children || []).length;
+  const stats = [
+    ["Years lived", c.age],
+    ["Education", EDU_LABELS[c.education] || "none"],
+    ["Final job", c.job || "—"],
+    ["Final salary", c.salary ? fmtMoney(c.salary) + "/yr" : "—"],
+    ["Net worth at death", fmtMoney(netWorth)],
+    ["Married", c.married ? (c.spouse_name || "yes") : "no"],
+    ["Children", numChildren],
+    ["Diseases endured", `${numDiseases}${numChronics ? ` (${numChronics} chronic)` : ""}`],
+    ["Top wisdom", c.attributes?.wisdom ?? 0],
+    ["Top conscience", c.attributes?.conscience ?? 0],
+  ];
+  for (const [k, v] of stats) {
+    const row = document.createElement("div");
+    row.className = "ds-row";
+    row.innerHTML = `<span>${k}</span><strong>${v}</strong>`;
+    summary.appendChild(row);
+  }
+
+  // Diseases list with treated/permanent annotation.
+  const dis = $("#death-diseases");
+  dis.innerHTML = "";
+  const diseaseEntries = Object.entries(c.diseases || {});
+  if (diseaseEntries.length === 0) {
+    dis.innerHTML = '<p class="muted">No diseases recorded — a healthy life.</p>';
+  } else {
+    for (const [, d] of diseaseEntries) {
+      const item = document.createElement("div");
+      const tag = d.permanent ? "chronic" : (d.active ? "active" : "resolved");
+      item.className = `disease ${tag}`;
+      item.innerHTML = `<span class="d-name">${d.name}</span><span class="d-status">${tag} · age ${d.age_acquired}</span>`;
+      dis.appendChild(item);
+    }
+  }
+
   const tl = $("#death-timeline");
   tl.innerHTML = "";
   for (const line of c.history.slice(-25)) {
@@ -149,12 +215,26 @@ function renderGame() {
   $("#stat-year").textContent = g.year;
   $("#stat-edu").textContent = EDU_LABELS[c.education] || "—";
   $("#stat-job").textContent = c.job || "—";
+  $("#btn-quit-job").classList.toggle("hidden", !c.job);
   $("#stat-salary").textContent = c.salary ? fmtMoney(c.salary) + "/yr" : "—";
   $("#stat-money").textContent = fmtMoney(c.money);
   $("#stat-portfolio").textContent = fmtMoney(g.portfolio_value || 0);
   $("#stat-debt").textContent = fmtMoney(c.debt || 0);
   $("#stat-married").textContent = c.married ? (c.spouse_name || "yes") : "no";
   $("#stat-kids").textContent = (c.children || []).length;
+
+  // Headline health bar (always visible — #47)
+  const hh = $("#health-headline");
+  const h = c.attributes?.health ?? 0;
+  let band = "good";
+  if (h < 30) band = "critical";
+  else if (h < 60) band = "warning";
+  hh.innerHTML = `
+    <div class="health-label">
+      <span>Health</span><strong>${h}</strong>
+    </div>
+    <div class="bar"><span class="${band}" style="width:${h}%"></span></div>`;
+
   renderFinances();
 
   // Attributes
@@ -291,34 +371,39 @@ function renderGame() {
       ci.appendChild(ul);
     }
 
-    const dh = facts.disaster_history || {};
-    const dhSig = Object.entries(dh).filter(([, v]) => typeof v === "number" && v > 0);
-    if (dhSig.length) {
+    // Disaster history is now an array of {kind, events, killed_per_event,
+    // affected_per_event} records (#34). Render as "N events, ~K deaths,
+    // ~A affected each" so it's clear the values are per-event averages,
+    // not cumulative totals.
+    const dh = facts.disaster_history || [];
+    if (dh.length) {
       const h = document.createElement("h5");
       h.className = "facts-heading";
-      h.textContent = "Disaster history (2007)";
+      h.textContent = "Disaster history (per typical event)";
       ci.appendChild(h);
       const ul = document.createElement("ul");
       ul.className = "facts-list";
       const labelMap = {
-        EarthquakeAffected: "Earthquake-affected",
-        EarthquakeKilled: "Earthquake deaths",
-        FamineKilled: "Famine deaths",
-        FamineAffected: "Famine-affected",
-        FloodKilled: "Flood deaths",
-        FloodAffected: "Flood-affected",
-        DroughtKilled: "Drought deaths",
-        DroughtAffected: "Drought-affected",
-        EpidemicKilled: "Epidemic deaths",
-        EpidemicAffected: "Epidemic-affected",
-        AvalancheEvents: "Avalanche events",
-        AvalancheAffected: "Avalanche-affected",
+        earthquake: "Earthquakes",
+        flood: "Floods",
+        famine: "Famines",
+        fire: "Fires",
+        avalanche: "Avalanches",
       };
-      // Top 5 by magnitude.
-      dhSig.sort(([, a], [, b]) => b - a);
-      for (const [k, v] of dhSig.slice(0, 5)) {
+      const fmt = (n) => n.toLocaleString();
+      // Sort by events count descending — countries with more recorded
+      // events go first.
+      const sorted = [...dh].sort((a, b) => b.events - a.events);
+      for (const d of sorted) {
         const li = document.createElement("li");
-        li.textContent = `${labelMap[k] || k}: ${Math.round(v).toLocaleString()}`;
+        const parts = [`${d.events} recorded`];
+        if (d.killed_per_event && d.killed_per_event > 0) {
+          parts.push(`~${fmt(d.killed_per_event)} killed`);
+        }
+        if (d.affected_per_event && d.affected_per_event > 0) {
+          parts.push(`~${fmt(d.affected_per_event)} affected`);
+        }
+        li.innerHTML = `<strong>${labelMap[d.kind] || d.kind}</strong>: ${parts.join(", ")}`;
         ul.appendChild(li);
       }
       ci.appendChild(ul);
@@ -337,10 +422,10 @@ function renderGame() {
     tl.appendChild(li);
   }
 
-  // Pending decision
-  const dArea = $("#decision-area");
+  // Pending decision (#46): pop a modal so the player can't miss it.
+  const modal = $("#decision-modal");
   if (g.pending_event) {
-    dArea.classList.remove("hidden");
+    modal.classList.remove("hidden");
     $("#decision-title").textContent = g.pending_event.title;
     $("#decision-desc").textContent = g.pending_event.description;
     const btns = $("#decision-buttons");
@@ -354,7 +439,7 @@ function renderGame() {
     }
     $("#btn-advance").disabled = true;
   } else {
-    dArea.classList.add("hidden");
+    modal.classList.add("hidden");
     $("#btn-advance").disabled = !c.alive;
   }
 }
@@ -371,7 +456,16 @@ function renderTurn(turn) {
   }
   for (const ev of turn.events) {
     const node = document.createElement("div");
-    node.className = `event ${ev.category}`;
+    // Compute net polarity from deltas + money_delta to color the card
+    // (#45). Positive net → "good" (green tint), negative → "bad" (red),
+    // zero/mixed → category color (existing behavior).
+    let net = 0;
+    if (ev.deltas) {
+      for (const v of Object.values(ev.deltas)) net += v;
+    }
+    if (ev.money_delta) net += ev.money_delta > 0 ? 1 : -1;
+    const polarity = net > 0 ? "good" : net < 0 ? "bad" : "neutral";
+    node.className = `event ${ev.category} polarity-${polarity}`;
     let deltas = "";
     if (ev.deltas) {
       for (const [k, v] of Object.entries(ev.deltas)) {
@@ -386,8 +480,8 @@ function renderTurn(turn) {
     }
     node.innerHTML = `
       <div class="e-title">${ev.title}</div>
-      <div>${ev.summary}</div>
-      ${deltas ? `<div style="margin-top:6px">${deltas}</div>` : ""}
+      <div class="e-summary">${ev.summary}</div>
+      ${deltas ? `<div class="e-deltas">${deltas}</div>` : ""}
     `;
     list.appendChild(node);
   }
@@ -436,36 +530,71 @@ function renderFinances() {
     }
   }
 
-  // Open loans list
+  // Open loans list with manual repay control (#40).
   const loanHost = $("#open-loans");
   loanHost.innerHTML = "";
   const loans = c.loans || [];
   if (loans.length === 0) {
     loanHost.innerHTML = '<p class="placeholder">No open loans.</p>';
   } else {
-    loans.forEach((l) => {
+    loans.forEach((l, i) => {
       const row = document.createElement("div");
       row.className = "holding";
       row.innerHTML = `
         <div class="h-name">${l.name}</div>
         <div class="h-meta">balance <strong>${fmtMoney(l.balance)}</strong>
           · ${(l.interest_rate * 100).toFixed(1)}% APR
-          · ${l.years_remaining} yrs left</div>`;
+          · ${l.years_remaining} yrs left</div>
+        <div class="loan-pay-row">
+          <input type="number" min="1" placeholder="Pay extra" data-pay-input="${i}" />
+          <button class="btn sm" data-pay-loan="${i}">Pay</button>
+        </div>`;
       loanHost.appendChild(row);
+    });
+    loanHost.querySelectorAll("[data-pay-loan]").forEach((b) => {
+      b.onclick = async () => {
+        const i = parseInt(b.dataset.payLoan, 10);
+        const input = loanHost.querySelector(`[data-pay-input="${i}"]`);
+        const amount = parseInt(input.value, 10);
+        if (!amount || amount <= 0) return;
+        try {
+          await payLoan(i, amount);
+        } catch (e) {
+          alert(e.message);
+        }
+      };
     });
   }
 
-  // Loan product dropdown
+  // Loan product dropdown — filter by character age (#37). Family loans
+  // open up at 14, all other loans at 18.
   const loanSel = $("#loan-product");
-  if (loanSel.options.length !== state.loanProducts.length) {
-    loanSel.innerHTML = "";
-    for (const p of state.loanProducts) {
+  const eligible = state.loanProducts.filter((p) => {
+    const minAge = p.name === "family loan" ? 14 : 18;
+    return c.age >= minAge;
+  });
+  loanSel.innerHTML = "";
+  if (eligible.length === 0) {
+    const opt = document.createElement("option");
+    opt.disabled = true;
+    opt.selected = true;
+    opt.textContent = c.age < 14 ? "Too young to borrow" : "Too young for non-family loans";
+    loanSel.appendChild(opt);
+  } else {
+    for (const p of eligible) {
       const opt = document.createElement("option");
       opt.value = p.id;
       opt.textContent = `${p.name} (max ${fmtMoney(p.max_amount)}, ${(p.interest_rate * 100).toFixed(0)}% / ${p.max_years} yrs)`;
       loanSel.appendChild(opt);
     }
   }
+  // Disable the borrow form when no loans are available.
+  const loanForm = $("#loan-form");
+  const loanInput = $("#loan-amount");
+  const loanBtn = loanForm.querySelector("button");
+  const tooYoung = eligible.length === 0;
+  loanInput.disabled = tooYoung;
+  loanBtn.disabled = tooYoung;
 }
 
 function setupFinanceTabs() {
@@ -508,11 +637,39 @@ function setupFinanceTabs() {
 }
 
 // ---------- Country picker ----------
+const REGION_ORDER = ["All", "Africa", "Americas", "Asia", "Europe", "Oceania"];
+
+// Coarse continent buckets in seed.py separate "North America", "South
+// America", "Central America", and "Caribbean" — for the picker filter
+// we collapse all four into a single "Americas" tab to keep the UI tidy.
+function regionBucket(region) {
+  if (["North America", "South America", "Central America", "Caribbean"].includes(region)) {
+    return "Americas";
+  }
+  return region;
+}
+
+const pickerState = {
+  search: "",
+  region: "All",
+};
+
 function renderCountryGrid() {
   const grid = $("#country-grid");
   grid.innerHTML = "";
-  const sorted = [...state.countries].sort((a, b) => a.name.localeCompare(b.name));
-  for (const c of sorted) {
+  const q = pickerState.search.trim().toLowerCase();
+  const filtered = state.countries
+    .filter((c) => pickerState.region === "All" || regionBucket(c.region) === pickerState.region)
+    .filter((c) => !q || c.name.toLowerCase().includes(q) || c.code === q)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (filtered.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No countries match your filter.";
+    grid.appendChild(empty);
+    return;
+  }
+  for (const c of filtered) {
     const tile = document.createElement("button");
     tile.className = "country-tile";
     tile.innerHTML = `<img src="/flags/${c.code}.bmp" alt=""><span>${c.name}</span>`;
@@ -522,14 +679,47 @@ function renderCountryGrid() {
   }
 }
 
+function setupCountryPicker() {
+  // Inject search input + region tabs above the grid (#33).
+  const grid = $("#country-grid");
+  const wrap = document.createElement("div");
+  wrap.className = "picker-controls";
+  wrap.innerHTML = `
+    <input type="search" id="picker-search" placeholder="Search 199 countries…" autocomplete="off" />
+    <div class="region-tabs" id="region-tabs"></div>
+  `;
+  grid.parentNode.insertBefore(wrap, grid);
+
+  const tabs = $("#region-tabs");
+  for (const r of REGION_ORDER) {
+    const btn = document.createElement("button");
+    btn.className = "region-tab" + (r === "All" ? " active" : "");
+    btn.textContent = r;
+    btn.dataset.region = r;
+    btn.onclick = () => {
+      pickerState.region = r;
+      $$(".region-tab").forEach((t) => t.classList.toggle("active", t.dataset.region === r));
+      renderCountryGrid();
+    };
+    tabs.appendChild(btn);
+  }
+
+  $("#picker-search").addEventListener("input", (e) => {
+    pickerState.search = e.target.value;
+    renderCountryGrid();
+  });
+}
+
 // ---------- Bootstrapping ----------
 async function init() {
   $("#btn-advance").addEventListener("click", advanceYear);
   $("#start-random").addEventListener("click", () => newGame(null));
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
+  $("#btn-quit-job").addEventListener("click", quitJob);
   await loadCountries();
   await loadFinanceProducts();
+  setupCountryPicker();
   renderCountryGrid();
   setupFinanceTabs();
 }

@@ -53,27 +53,44 @@
             </div>
           </div>
 
-          <div class="quickstats">
+          <!-- Always-visible essentials (#47) -->
+          <div class="quickstats compact">
             <div class="row"><span>Age</span><strong id="stat-age">0</strong></div>
             <div class="row"><span>Year</span><strong id="stat-year">2007</strong></div>
-            <div class="row"><span>Education</span><strong id="stat-edu">none</strong></div>
-            <div class="row"><span>Job</span><strong id="stat-job">—</strong></div>
-            <div class="row"><span>Salary</span><strong id="stat-salary">—</strong></div>
-            <div class="row"><span>Savings</span><strong id="stat-money">$0</strong></div>
-            <div class="row"><span>Portfolio</span><strong id="stat-portfolio">$0</strong></div>
-            <div class="row"><span>Debt</span><strong id="stat-debt">$0</strong></div>
-            <div class="row"><span>Married</span><strong id="stat-married">no</strong></div>
-            <div class="row"><span>Children</span><strong id="stat-kids">0</strong></div>
+            <div class="row"><span>Money</span><strong id="stat-money">$0</strong></div>
+            <div class="row"><span>Job</span><strong id="stat-job">—</strong> <button id="btn-quit-job" class="btn xs hidden">Quit</button></div>
           </div>
 
-          <h4>Attributes</h4>
-          <div id="attrs" class="attrs"></div>
+          <!-- Headline health bar -->
+          <div id="health-headline" class="health-headline"></div>
 
-          <h4>Health</h4>
-          <div id="diseases" class="diseases"></div>
+          <!-- Collapsible: full stats -->
+          <details class="sidebar-section" open>
+            <summary>More stats</summary>
+            <div class="quickstats">
+              <div class="row"><span>Education</span><strong id="stat-edu">none</strong></div>
+              <div class="row"><span>Salary</span><strong id="stat-salary">—</strong></div>
+              <div class="row"><span>Portfolio</span><strong id="stat-portfolio">$0</strong></div>
+              <div class="row"><span>Debt</span><strong id="stat-debt">$0</strong></div>
+              <div class="row"><span>Married</span><strong id="stat-married">no</strong></div>
+              <div class="row"><span>Children</span><strong id="stat-kids">0</strong></div>
+            </div>
+          </details>
 
-          <h4>Country</h4>
-          <div id="country-info" class="country-info"></div>
+          <details class="sidebar-section">
+            <summary>Attributes</summary>
+            <div id="attrs" class="attrs"></div>
+          </details>
+
+          <details class="sidebar-section">
+            <summary>Health & diseases</summary>
+            <div id="diseases" class="diseases"></div>
+          </details>
+
+          <details class="sidebar-section">
+            <summary>Country</summary>
+            <div id="country-info" class="country-info"></div>
+          </details>
         </aside>
 
         <div class="main-col">
@@ -87,20 +104,15 @@
             </div>
           </section>
 
-          <section id="decision-area" class="panel decision-area hidden">
-            <h3 id="decision-title">A choice…</h3>
-            <p id="decision-desc"></p>
-            <div id="decision-buttons" class="decision-buttons"></div>
-          </section>
 
-          <section class="panel finances-area">
-            <div class="finances-header">
+          <details class="panel finances-area collapsible-panel">
+            <summary>
               <h3>Finances</h3>
-              <div class="tabs">
+              <div class="tabs" onclick="event.stopPropagation()">
                 <button class="tab active" data-tab="investments">Investments</button>
                 <button class="tab" data-tab="loans">Loans</button>
               </div>
-            </div>
+            </summary>
 
             <div id="tab-investments" class="tab-pane">
               <div id="open-investments" class="holdings"></div>
@@ -121,12 +133,12 @@
               </form>
               <p id="loan-msg" class="form-msg"></p>
             </div>
-          </section>
+          </details>
 
-          <section class="panel timeline-area">
-            <h3>Life timeline</h3>
+          <details class="panel timeline-area collapsible-panel">
+            <summary><h3>Life timeline</h3></summary>
             <ol id="timeline" class="timeline"></ol>
-          </section>
+          </details>
         </div>
       </section>
 
@@ -134,11 +146,29 @@
       <section id="screen-death" class="screen panel death hidden">
         <h2>You died.</h2>
         <p id="death-detail" class="muted">—</p>
+
+        <div id="death-summary" class="death-summary"></div>
+
+        <h3 class="death-section-h">Diseases endured</h3>
+        <div id="death-diseases" class="death-diseases"></div>
+
+        <h3 class="death-section-h">Life timeline</h3>
         <ol id="death-timeline" class="timeline"></ol>
+
         <button id="btn-restart" class="btn primary lg">Live a new life</button>
       </section>
 
     </main>
+
+    <!-- Choice event modal (#46) — appears over everything when a CHOICE
+         event fires. Backdrop blocks clicks until the player picks. -->
+    <div id="decision-modal" class="modal-backdrop hidden">
+      <div class="modal-card panel decision-area">
+        <h3 id="decision-title">A choice…</h3>
+        <p id="decision-desc"></p>
+        <div id="decision-buttons" class="decision-buttons"></div>
+      </div>
+    </div>
 
     <footer class="footer">
       <span class="muted">Real Lives 2007 — open-source clean-room rebuild ·
