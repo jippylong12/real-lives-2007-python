@@ -234,6 +234,30 @@ def test_religion_events_present_in_registry():
     assert not missing, f"missing events: {missing}"
 
 
+def test_disease_calibration_anchor_lifetime_rates():
+    """Issue #14: simulated lifetime malaria incidence in Sweden must be
+    < 1%, and in Nigeria must be > 50%. The previous values (~8% Sweden,
+    barely-passing Nigeria) made the difference between rich/poor tropical
+    cohorts feel almost arbitrary."""
+    from src.engine import Game
+    def lifetime_malaria_rate(country_code: str, n_lives: int = 100) -> float:
+        n = 0
+        for seed in range(n_lives):
+            g = Game.new(country_code=country_code, seed=seed)
+            while g.state.character.alive and g.state.character.age < 80:
+                r = g.advance_year()
+                if r.pending_decision:
+                    g.apply_decision(r.pending_decision["choices"][0]["key"])
+            if "malaria" in g.state.character.diseases:
+                n += 1
+        return n / n_lives
+
+    se_rate = lifetime_malaria_rate("se")
+    ng_rate = lifetime_malaria_rate("ng")
+    assert se_rate < 0.01, f"Sweden lifetime malaria {se_rate*100:.1f}% should be <1%"
+    assert ng_rate > 0.50, f"Nigeria lifetime malaria {ng_rate*100:.1f}% should be >50%"
+
+
 def test_rural_nigerian_more_malaria_than_urban_nigerian():
     """Issue #10: malaria is rural-skewed (urban_skew=0.4). Simulating
     many rural and urban Nigerian lives should yield meaningfully more

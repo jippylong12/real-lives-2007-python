@@ -93,7 +93,7 @@ DISEASES: list[Disease] = [
     Disease("hpv",                    "HPV infection",           "sti", 0.0040, 16, 45, 1, 0.0, True, 0, description="Most clear naturally; some strains cause cancer."),
 
     # ===== Tropical / parasitic =====
-    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_mult=8.0, rich_mult=0.05, urban_skew=0.4, description="Mosquito-borne parasitic infection; rural exposure dominates."),
+    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_mult=8.0, rich_mult=0.005, urban_skew=0.4, description="Mosquito-borne parasitic infection; rural exposure dominates."),
     Disease("dengue",           "Dengue fever",     "tropical", 0.0080,  3, 80, 8,  0.02, True, 300, tropical_mult=5.0, rich_mult=0.1, description="Viral fever transmitted by Aedes mosquitoes."),
     Disease("yellow_fever",     "Yellow fever",     "tropical", 0.0010,  5, 70, 12, 0.20, True, 800, tropical_mult=6.0, rich_mult=0.05, description="Viral hemorrhagic fever; vaccine-preventable."),
     Disease("chagas",           "Chagas disease",   "tropical", 0.0008,  5, 80, 5, 0.04, True, 1500, permanent=True, tropical_mult=4.0, rich_mult=0.0, description="Trypanosoma cruzi; chronic cardiac damage."),
@@ -117,14 +117,14 @@ DISEASES: list[Disease] = [
     Disease("wasting",          "Childhood wasting","childhood", 0.0100,  0,  5, 6, 0.02, True, 200, permanent=True, poor_mult=4.0, rich_mult=0.05, description="Acute severe undernutrition."),
 
     # ===== Chronic =====
-    Disease("diabetes_t2",      "Type 2 diabetes",  "chronic", 0.0040, 35, 85, 4, 0.01, True, 1500, permanent=True, rich_mult=1.5, description="Insulin resistance; managed with diet and medication."),
+    Disease("diabetes_t2",      "Type 2 diabetes",  "chronic", 0.0120, 35, 85, 4, 0.01, True, 1500, permanent=True, rich_mult=1.5, description="Insulin resistance; managed with diet and medication."),
     Disease("diabetes_t1",      "Type 1 diabetes",  "chronic", 0.0010,  3, 30, 5, 0.02, True, 2000, permanent=True, description="Autoimmune destruction of insulin-producing cells."),
-    Disease("hypertension",     "Hypertension",     "chronic", 0.0080, 30, 85, 3, 0.02, True, 800, permanent=True, description="Chronic high blood pressure."),
-    Disease("heart_disease",    "Coronary heart disease", "chronic", 0.0030, 40, 90, 9, 0.10, True, 12000, permanent=True, rich_mult=1.2, description="Atherosclerosis of the coronary arteries."),
+    Disease("hypertension",     "Hypertension",     "chronic", 0.0220, 30, 85, 3, 0.02, True, 800, permanent=True, description="Chronic high blood pressure."),
+    Disease("heart_disease",    "Coronary heart disease", "chronic", 0.0095, 40, 90, 9, 0.10, True, 12000, permanent=True, rich_mult=1.2, description="Atherosclerosis of the coronary arteries."),
     Disease("stroke",           "Stroke",           "chronic", 0.0015, 50, 90, 12, 0.20, True, 8000, permanent=True, description="Brain blood-supply interruption; cerebrovascular accident."),
     Disease("asthma",           "Asthma",           "chronic", 0.0040,  3, 80, 3, 0.005, True, 600, permanent=True, urban_skew=1.4, description="Chronic inflammatory airway disease; urban air pollution."),
     Disease("copd",             "COPD",             "chronic", 0.0020, 40, 85, 6, 0.05, True, 1500, permanent=True, urban_skew=1.5, description="Chronic obstructive pulmonary disease; pollution-driven."),
-    Disease("arthritis",        "Arthritis",        "chronic", 0.0050, 40, 90, 3, 0.0, True, 800, permanent=True, description="Joint inflammation; rheumatoid or osteo."),
+    Disease("arthritis",        "Arthritis",        "chronic", 0.0140, 40, 90, 3, 0.0, True, 800, permanent=True, description="Joint inflammation; rheumatoid or osteo."),
     Disease("kidney_disease",   "Chronic kidney disease", "chronic", 0.0015, 45, 85, 7, 0.08, True, 6000, permanent=True, description="Reduced kidney function."),
 
     # ===== Infectious =====
