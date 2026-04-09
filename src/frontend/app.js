@@ -202,10 +202,12 @@ function renderJobBoardList() {
     row.className = `jobboard-row status-${l.status}`;
     const chancePct = Math.round(l.accept_chance * 100);
     const missing = l.missing.length ? `<div class="jr-missing">${l.missing.join(" · ")}</div>` : "";
+    const freelanceTag = l.is_freelance ? '<span class="jr-freelance">freelance · earnings depend on talent</span>' : "";
     row.innerHTML = `
       <div class="jr-main">
-        <div class="jr-name">${l.name}</div>
+        <div class="jr-name">${l.name}${l.is_freelance ? " ⚡" : ""}</div>
         <div class="jr-meta">${l.category || "—"} · ${fmtMoney(l.expected_salary)}/yr</div>
+        ${freelanceTag}
         ${missing}
       </div>
       <div class="jr-actions">

@@ -520,10 +520,12 @@ def test_small_business_investment_has_real_risk():
 
 def test_jobs_table_populated_from_binary():
     """#51: the canonical jobs table is now sourced from jobs.dat (131
-    entries with categories + ladders), not the curated 30-job seed."""
+    binary entries with categories + ladders), plus the synthetic
+    ladder rungs from #59 (~15 extras for athletics/military/arts/etc.)."""
     from src.engine import careers
     jobs = careers.all_jobs()
-    assert len(jobs) == 131
+    assert len(jobs) >= 131  # binary baseline
+    assert len(jobs) <= 200  # sanity cap
     # All categories present
     cats = {j.category for j in jobs if j.category}
     assert {"medical", "stem", "education", "trades", "police", "maritime"}.issubset(cats)
@@ -537,6 +539,102 @@ def test_jobs_table_populated_from_binary():
     assert first_mate.promotes_to == "ship's captain"
     captain = careers.get_job("ship's captain")
     assert captain.promotes_to is None  # terminal
+
+
+def test_synthetic_athletics_ladder_reachable():
+    """#59: the athletics ladder now has 5 rungs from youth athlete to
+    elite athlete instead of just 'professional athlete'."""
+    from src.engine import careers
+    youth = careers.get_job("youth athlete")
+    amateur = careers.get_job("amateur athlete")
+    semipro = careers.get_job("semi-pro athlete")
+    pro = careers.get_job("professional athlete")
+    elite = careers.get_job("elite athlete")
+    assert youth is not None and youth.promotes_to == "amateur athlete"
+    assert amateur is not None and amateur.promotes_to == "semi-pro athlete"
+    assert semipro is not None and semipro.promotes_to == "professional athlete"
+    assert pro is not None and pro.promotes_to == "elite athlete"  # patched
+    assert elite is not None and elite.promotes_to is None  # terminal
+    # The first three are freelance (the talent grind), the top two
+    # are salaried (signed contracts).
+    assert youth.is_freelance
+    assert amateur.is_freelance
+    assert not pro.is_freelance
+
+
+def test_synthetic_writer_ladder_freelance():
+    """#59 + #61: writer category gains junior + published rungs and
+    they're all freelance."""
+    from src.engine import careers
+    junior = careers.get_job("junior writer")
+    writer = careers.get_job("writer")
+    published = careers.get_job("published author")
+    assert junior is not None and junior.promotes_to == "writer"
+    assert writer is not None and writer.promotes_to == "published author"  # patched
+    assert published is not None and published.promotes_to is None
+    for j in (junior, writer, published):
+        assert j.is_freelance, f"{j.name} should be freelance"
+
+
+def test_attribute_drives_promotion_speed():
+    """#60: a high-artistic writer should reach the years_required gate
+    faster than a low-artistic writer in the same role."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+
+    def years_to_promote(artistic_value):
+        char = create_random_character(country, rng)
+        char.age = 22
+        char.education = EducationLevel.SECONDARY
+        char.attributes.artistic = artistic_value
+        char.attributes.intelligence = 70  # clears the IQ gate on 'writer'
+        char.is_urban = True
+        char.job = "junior writer"
+        char.salary = 15000
+        char.years_in_role = 0
+        char.promotion_count = 0
+        for _ in range(50):
+            char.years_in_role += 1
+            years_before = char.years_in_role
+            msg = careers.promote(char, country, rng)
+            if msg:
+                return years_before
+            char.age += 1
+        return None
+
+    high = years_to_promote(95)
+    low = years_to_promote(30)
+    assert high is not None
+    assert low is not None
+    # The high-skill writer should promote at least 2x faster.
+    assert low > high * 2, f"low-artistic took {low}, high-artistic took {high}"
+
+
+def test_freelance_income_scales_with_talent():
+    """#61: a high-artistic freelance writer should out-earn a
+    low-artistic one by at least 3x over 40 simulated years."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    country = get_country("us")
+
+    def lifetime_earnings(artistic_value):
+        rng = random.Random(0)
+        char = create_random_character(country, rng)
+        char.age = 25
+        char.attributes.artistic = artistic_value
+        char.is_urban = True
+        j = careers.get_job("writer")
+        careers._set_job(char, country, j, rng)
+        total = 0
+        for _ in range(40):
+            total += careers.yearly_income(char, country, rng)
+        return total
+
+    high = lifetime_earnings(95)
+    low = lifetime_earnings(25)
+    assert high > low * 3, f"high-talent took home {high}, low-talent {low} — ratio too small"
 
 
 def test_promote_walks_ladder_with_experience():

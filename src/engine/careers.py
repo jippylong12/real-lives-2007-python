@@ -40,11 +40,39 @@ class Job:
     rural_only: bool
     category: str | None
     promotes_to: str | None
+    is_freelance: bool = False
 
 
 def _scale_for_country(country: Country) -> float:
     """A normalized scalar that turns USD-baseline salaries into local-equivalent."""
     return max(0.05, country.gdp_pc / 50000)
+
+
+# Attribute-driven progression (#60). Each category maps to a single
+# character attribute that drives both promotion speed and salary
+# within a role. This is loaded from seed.JOB_CATEGORY_META rather than
+# duplicating the table here.
+def _relevant_attribute(category: str | None) -> str:
+    if category is None:
+        return "intelligence"
+    from ..data.seed import JOB_CATEGORY_META
+    meta = JOB_CATEGORY_META.get(category, {})
+    return meta.get("relevant_attribute", "intelligence")
+
+
+def _skill_factor(character: Character, category: str | None) -> float:
+    """Multiplier representing how the character's relevant attribute
+    compares to a baseline of 60. Capped to [0.5, 2.0] so extreme
+    attribute values don't break the simulation.
+
+    A skill_factor > 1.0 means the character is above-average for the
+    category — promotions come faster, salaries are higher within a
+    role. A skill_factor < 1.0 means below-average — slower climb,
+    lower pay.
+    """
+    attr = _relevant_attribute(category)
+    value = getattr(character.attributes, attr, 60)
+    return max(0.5, min(2.0, value / 60.0))
 
 
 @lru_cache(maxsize=1)
@@ -64,6 +92,7 @@ def all_jobs() -> tuple[Job, ...]:
             rural_only=bool(r["rural_only"]),
             category=r["category"],
             promotes_to=r["promotes_to"],
+            is_freelance=bool(r["is_freelance"]),
         )
         for r in rows
     )
@@ -163,11 +192,20 @@ def _meets_requirements(job: Job, character: Character) -> bool:
 
 def _set_job(character: Character, country: Country, job: Job, rng: random.Random) -> None:
     """Common path for both assign_job and promote — sets job + salary
-    scaled to the country's GDP per capita."""
+    scaled to the country's GDP per capita and the character's
+    category-relevant attribute (#60).
+
+    A high-skill character earns 50-100% more in the same role; a
+    low-skill character earns 25-50% less. The bonus / penalty is
+    centered on attribute=60 (the design baseline)."""
     scale = _scale_for_country(country)
     base = rng.randint(job.salary_low, job.salary_high)
+    skill = _skill_factor(character, job.category)
+    # 0.5 + skill/2 → at skill 1.0, no change; at skill 2.0, +50%; at
+    # skill 0.5, -25%.
+    skill_pay = 0.5 + skill / 2.0
     character.job = job.name
-    character.salary = max(100, int(base * scale))
+    character.salary = max(100, int(base * scale * skill_pay))
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +228,14 @@ class RaiseResult:
 _RAISE_COOLDOWN_YEARS = 2
 
 
+def _years_required_for_promo(character: Character, current: Job) -> int:
+    """Skill-adjusted years_in_role threshold for the next promotion (#60)."""
+    promo_count = character.promotion_count or 0
+    base = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    skill = _skill_factor(character, current.category)
+    return max(2, int(round(base / skill)))
+
+
 def can_request_raise(character: Character) -> tuple[bool, str | None]:
     """Whether the player can press the 'ask for raise' button right now.
     Returns (eligible, reason). Used by the frontend to grey the button."""
@@ -198,8 +244,7 @@ def can_request_raise(character: Character) -> tuple[bool, str | None]:
     current = get_job(character.job)
     if current is None:
         return False, "unknown job"
-    promo_count = character.promotion_count or 0
-    years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    years_required = _years_required_for_promo(character, current)
     if character.years_in_role < years_required:
         return False, f"need {years_required - character.years_in_role} more year(s) in role"
     if character.last_raise_request_age is not None:
@@ -238,12 +283,17 @@ def request_raise(
 
     current = get_job(character.job)  # already validated above
     promo_count = character.promotion_count or 0
-    years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    years_required = _years_required_for_promo(character, current)
     years_past = character.years_in_role - years_required
 
-    perf = (character.attributes.intelligence
+    # Performance: heavily weight the category-relevant attribute (#60)
+    # so an artistic painter can argue for a raise on creative output,
+    # while an engineer's case rests on intelligence.
+    relevant = _relevant_attribute(current.category)
+    relevant_value = getattr(character.attributes, relevant, 60)
+    perf = (relevant_value * 2
             + character.attributes.wisdom
-            + character.attributes.endurance) / 300.0
+            + character.attributes.endurance) / 400.0
     boldness_penalty = 0.10 if character.attributes.conscience > 70 else 0.0
 
     promote_p = 0.10 + perf * 0.20 + years_past * 0.05 - boldness_penalty
@@ -503,6 +553,13 @@ def promote(character: Character, country: Country, rng: random.Random) -> str |
     else:
         years_required = 10
 
+    # Attribute-driven progression speed (#60). A high-skill character
+    # promotes ~half as fast; a low-skill character takes nearly twice
+    # as long. Uses the character's CURRENT job category to pick the
+    # relevant attribute.
+    skill = _skill_factor(character, current.category)
+    years_required = max(2, int(round(years_required / skill)))
+
     if character.years_in_role < years_required:
         return None
     if not _meets_requirements(next_job, character):
@@ -527,12 +584,31 @@ def quit_job(character: Character) -> None:
 
 
 def yearly_income(character: Character, country: Country, rng: random.Random) -> int:
-    """Apply income, expenses, and possibly a small variance for the year."""
+    """Apply income, expenses, and yearly variance.
+
+    Salaried jobs have tight variance (-5% to +10%): a steady paycheck.
+    Freelance jobs (#61) have a much wider luck roll AND scale heavily
+    with the relevant attribute — a high-skill freelance artist thrives,
+    a low-skill one starves.
+    """
     if character.salary <= 0:
         return 0
-    variance = 1.0 + rng.uniform(-0.05, 0.10)
-    income = int(character.salary * variance)
-    expenses = int(income * 0.75)  # rent, food, transport, etc.
+
+    job = get_job(character.job) if character.job else None
+    if job is not None and job.is_freelance:
+        # Freelance: salary is the *baseline* talent rate but each year
+        # is a coin-flip on luck. Talent multiplier centered on 50 means
+        # an artistic-90 freelance writer earns 1.8x baseline; an
+        # artistic-25 one earns 0.5x.
+        attr = _relevant_attribute(job.category)
+        talent = max(0.4, min(2.5, getattr(character.attributes, attr, 50) / 50.0))
+        luck = rng.uniform(0.5, 2.0)
+        income = int(character.salary * talent * luck)
+    else:
+        variance = 1.0 + rng.uniform(-0.05, 0.10)
+        income = int(character.salary * variance)
+
+    expenses = int(income * 0.75) if income > 0 else 0
     net = income - expenses
     character.money += net
     return net

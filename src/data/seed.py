@@ -476,22 +476,91 @@ JOB_CATEGORIES: dict[str, str] = {
 
 
 # Display labels and entry-job hints for each category — used by the
-# vocation picker UI in #48.
+# vocation picker UI in #48 and the attribute-driven progression
+# system in #60. \`relevant_attribute\` decides which character stat
+# accelerates promotions and boosts salary within a role.
 JOB_CATEGORY_META: dict[str, dict] = {
-    "medical":     {"label": "Medical & Health",     "needs_university": True,  "intelligence_floor": 50},
-    "education":   {"label": "Education & Academia", "needs_university": False, "intelligence_floor": 40},
-    "stem":        {"label": "Science & Engineering","needs_university": True,  "intelligence_floor": 55},
-    "government":  {"label": "Government & Law",     "needs_university": True,  "intelligence_floor": 45},
-    "police":      {"label": "Police & Security",    "needs_university": False, "intelligence_floor": 25},
-    "military":    {"label": "Military",             "needs_university": False, "intelligence_floor": 20},
-    "arts":        {"label": "Arts & Creative",      "needs_university": False, "intelligence_floor": 25},
-    "business":    {"label": "Business & Management","needs_university": False, "intelligence_floor": 30},
-    "trades":      {"label": "Skilled Trades",       "needs_university": False, "intelligence_floor": 10},
-    "industrial":  {"label": "Industrial Operations","needs_university": False, "intelligence_floor": 20},
-    "agriculture": {"label": "Agriculture",          "needs_university": False, "intelligence_floor": 0},
-    "maritime":    {"label": "Maritime",             "needs_university": False, "intelligence_floor": 15},
-    "athletics":   {"label": "Athletics",            "needs_university": False, "intelligence_floor": 25},
-    "service":     {"label": "Service & Other",      "needs_university": False, "intelligence_floor": 0},
+    "medical":     {"label": "Medical & Health",     "needs_university": True,  "intelligence_floor": 50, "relevant_attribute": "intelligence"},
+    "education":   {"label": "Education & Academia", "needs_university": False, "intelligence_floor": 40, "relevant_attribute": "intelligence"},
+    "stem":        {"label": "Science & Engineering","needs_university": True,  "intelligence_floor": 55, "relevant_attribute": "intelligence"},
+    "government":  {"label": "Government & Law",     "needs_university": True,  "intelligence_floor": 45, "relevant_attribute": "intelligence"},
+    "police":      {"label": "Police & Security",    "needs_university": False, "intelligence_floor": 25, "relevant_attribute": "strength"},
+    "military":    {"label": "Military",             "needs_university": False, "intelligence_floor": 20, "relevant_attribute": "strength"},
+    "arts":        {"label": "Arts & Creative",      "needs_university": False, "intelligence_floor": 25, "relevant_attribute": "artistic"},
+    "business":    {"label": "Business & Management","needs_university": False, "intelligence_floor": 30, "relevant_attribute": "intelligence"},
+    "trades":      {"label": "Skilled Trades",       "needs_university": False, "intelligence_floor": 10, "relevant_attribute": "strength"},
+    "industrial":  {"label": "Industrial Operations","needs_university": False, "intelligence_floor": 20, "relevant_attribute": "endurance"},
+    "agriculture": {"label": "Agriculture",          "needs_university": False, "intelligence_floor": 0,  "relevant_attribute": "endurance"},
+    "maritime":    {"label": "Maritime",             "needs_university": False, "intelligence_floor": 15, "relevant_attribute": "endurance"},
+    "athletics":   {"label": "Athletics",            "needs_university": False, "intelligence_floor": 25, "relevant_attribute": "athletic"},
+    "service":     {"label": "Service & Other",      "needs_university": False, "intelligence_floor": 0,  "relevant_attribute": "appearance"},
+}
+
+
+# Synthetic job ladders (#59) — extra rungs the binary doesn't ship.
+# Most jobs.dat ladders are deep enough to feel like a career, but a
+# few categories (athletics, military, religious, arts) are 1-2 rungs
+# tall and end with the player at the top of their field on day one.
+# These entries get merged into the canonical \`jobs\` table by build_db
+# alongside the binary jobs.
+#
+# Schema mirrors the binary jobs table:
+#   name, min_education (engine int), min_intelligence, min_age, max_age,
+#   salary_low, salary_high, urban_only, rural_only, category, promotes_to,
+#   is_freelance (#61)
+#
+# Where \`promotes_to\` references an existing binary job name, the new
+# rung slots into the existing chain. Where it references another
+# synthetic job name, both must be defined here.
+SYNTHETIC_JOB_LADDERS: list[dict] = [
+    # ----- Athletics: 5-rung amateur → elite ladder -----
+    {"name": "youth athlete",      "min_education": 0, "min_intelligence":  0, "min_age": 12, "max_age": 22, "salary_low":   2000, "salary_high":   8000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "amateur athlete", "is_freelance": 1},
+    {"name": "amateur athlete",    "min_education": 0, "min_intelligence":  0, "min_age": 16, "max_age": 32, "salary_low":   5000, "salary_high":  18000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "semi-pro athlete", "is_freelance": 1},
+    {"name": "semi-pro athlete",   "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 36, "salary_low":  20000, "salary_high":  60000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "professional athlete", "is_freelance": 0},
+    # 'professional athlete' is the existing binary entry — its promotes_to
+    # is patched in build_db to point at the new 'elite athlete' rung.
+    {"name": "elite athlete",      "min_education": 0, "min_intelligence":  0, "min_age": 22, "max_age": 38, "salary_low": 200000, "salary_high": 800000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": None, "is_freelance": 0},
+
+    # ----- Military: 4-rung deeper ladder -----
+    # 'soldier' → 'military sergeant' (existing binary chain) →
+    # 'military officer' (new) → 'military commander' (new)
+    {"name": "military officer",    "min_education": 4, "min_intelligence": 50, "min_age": 28, "max_age": 60, "salary_low":  60000, "salary_high": 120000, "urban_only": 0, "rural_only": 0, "category": "military", "promotes_to": "military commander", "is_freelance": 0},
+    {"name": "military commander",  "min_education": 4, "min_intelligence": 60, "min_age": 40, "max_age": 65, "salary_low": 100000, "salary_high": 200000, "urban_only": 0, "rural_only": 0, "category": "military", "promotes_to": None, "is_freelance": 0},
+
+    # ----- Religious / spiritual: 4-rung path -----
+    # 'lay practitioner' → 'traditional medicine practitioner' (existing
+    # binary entry, freelance) → 'religious leader' → 'senior religious leader'
+    {"name": "lay practitioner",        "min_education": 0, "min_intelligence": 20, "min_age": 16, "max_age": 80, "salary_low":  6000, "salary_high":  18000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": "traditional medicine practitioner", "is_freelance": 1},
+    {"name": "religious leader",        "min_education": 2, "min_intelligence": 45, "min_age": 25, "max_age": 80, "salary_low": 18000, "salary_high":  45000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": "senior religious leader", "is_freelance": 0},
+    {"name": "senior religious leader", "min_education": 4, "min_intelligence": 55, "min_age": 40, "max_age": 90, "salary_low": 40000, "salary_high":  90000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": None, "is_freelance": 0},
+
+    # ----- Arts: per-discipline 3-rung ladders, all freelance -----
+    # Writing
+    {"name": "junior writer",      "min_education": 2, "min_intelligence": 40, "min_age": 16, "max_age": 70, "salary_low":  10000, "salary_high":  25000, "urban_only": 0, "rural_only": 0, "category": "arts", "promotes_to": "writer", "is_freelance": 1},
+    # 'writer' is the existing binary entry; promotes_to patched at build time.
+    {"name": "published author",   "min_education": 2, "min_intelligence": 60, "min_age": 25, "max_age": 90, "salary_low":  60000, "salary_high": 200000, "urban_only": 0, "rural_only": 0, "category": "arts", "promotes_to": None, "is_freelance": 1},
+
+    # Visual arts
+    {"name": "street artist",      "min_education": 0, "min_intelligence": 20, "min_age": 14, "max_age": 90, "salary_low":   8000, "salary_high":  20000, "urban_only": 1, "rural_only": 0, "category": "arts", "promotes_to": "artist", "is_freelance": 1},
+    # 'artist' existing binary; patched.
+    {"name": "exhibited artist",   "min_education": 0, "min_intelligence": 30, "min_age": 25, "max_age": 90, "salary_low":  40000, "salary_high": 150000, "urban_only": 0, "rural_only": 0, "category": "arts", "promotes_to": None, "is_freelance": 1},
+
+    # Music
+    {"name": "street musician",    "min_education": 0, "min_intelligence": 20, "min_age": 12, "max_age": 90, "salary_low":   6000, "salary_high":  16000, "urban_only": 1, "rural_only": 0, "category": "arts", "promotes_to": "musician", "is_freelance": 1},
+    # 'musician' existing binary; patched.
+    {"name": "recording artist",   "min_education": 0, "min_intelligence": 30, "min_age": 20, "max_age": 80, "salary_low":  50000, "salary_high": 250000, "urban_only": 1, "rural_only": 0, "category": "arts", "promotes_to": None, "is_freelance": 1},
+]
+
+
+# Patches to existing binary jobs' promotes_to so the new synthetic
+# rungs slot into the existing ladders. (#59)
+BINARY_JOB_PROMOTES_TO_PATCHES: dict[str, str] = {
+    "professional athlete": "elite athlete",
+    "military sergeant":    "military officer",
+    "writer":               "published author",
+    "artist":               "exhibited artist",
+    "musician":             "recording artist",
+    "traditional medicine practitioner": "religious leader",
 }
 
 

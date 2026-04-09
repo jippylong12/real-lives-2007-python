@@ -126,7 +126,7 @@ def _career_summary(character) -> dict | None:
         return None
     next_rung = careers.get_job(job.promotes_to) if job.promotes_to else None
     promo_count = character.promotion_count or 0
-    years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    years_required = careers._years_required_for_promo(character, job)
     can_ask, ask_reason = careers.can_request_raise(character)
     return {
         "vocation_field": character.vocation_field,
@@ -419,6 +419,7 @@ def create_app() -> FastAPI:
                 "min_intelligence": l.job.min_intelligence,
                 "urban_only": l.job.urban_only,
                 "rural_only": l.job.rural_only,
+                "is_freelance": l.job.is_freelance,
                 "status": l.status,
                 "accept_chance": round(l.accept_chance, 3),
                 "missing": l.missing,

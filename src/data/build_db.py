@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     urban_only        INTEGER NOT NULL,
     category          TEXT,                    -- vocation category (#51)
     promotes_to       TEXT,                    -- next job name in the ladder (#51)
-    rural_only        INTEGER NOT NULL DEFAULT 0
+    rural_only        INTEGER NOT NULL DEFAULT 0,
+    is_freelance      INTEGER NOT NULL DEFAULT 0  -- freelance flag (#61)
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(category);
 
@@ -371,18 +372,33 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 else:
                     promotes_to = None
 
+                # Apply synthetic-ladder promotion patches (#59) so a binary
+                # job that originally pointed at e.g. None now promotes into
+                # the new synthetic rung above it.
+                if clean_name in seed.BINARY_JOB_PROMOTES_TO_PATCHES:
+                    promotes_to = seed.BINARY_JOB_PROMOTES_TO_PATCHES[clean_name]
+
+                # The 'writer' / 'artist' / 'musician' binary entries are
+                # all freelance — talent + luck careers (#61).
+                is_freelance = 1 if clean_name in (
+                    "writer", "artist", "sculptor", "musician",
+                    "traditional medicine practitioner", "fortune-teller",
+                    "street vendor", "subsistence farmer", "small farmer",
+                    "handicraft worker", "potter",
+                ) else 0
+
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO jobs (
                         name, min_education, min_intelligence, min_age, max_age,
                         salary_low, salary_high, urban_only, rural_only,
-                        category, promotes_to
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        category, promotes_to, is_freelance
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         clean_name, min_education, intelligence, min_age, max_age,
                         salary_low, salary_high, urban_only, rural_only,
-                        category, promotes_to,
+                        category, promotes_to, is_freelance,
                     ),
                 )
                 # Mirror into job_original_stats for the catch-all consumers
@@ -411,6 +427,28 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     ),
                 )
                 jobs_orig_total += 1
+
+        # 3b. Synthetic job ladders (#59) — extra rungs the binary doesn't
+        # ship (athletics amateur/semi-pro/elite, military officers,
+        # religious leaders, arts subdiscipline ladders).
+        for sj in seed.SYNTHETIC_JOB_LADDERS:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO jobs (
+                    name, min_education, min_intelligence, min_age, max_age,
+                    salary_low, salary_high, urban_only, rural_only,
+                    category, promotes_to, is_freelance
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    sj["name"], sj["min_education"], sj["min_intelligence"],
+                    sj["min_age"], sj["max_age"],
+                    sj["salary_low"], sj["salary_high"],
+                    sj["urban_only"], sj["rural_only"],
+                    sj["category"], sj["promotes_to"],
+                    sj.get("is_freelance", 0),
+                ),
+            )
 
         # 4. Investments.
         for inv in seed.INVESTMENTS:
