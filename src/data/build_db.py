@@ -80,6 +80,16 @@ CREATE TABLE IF NOT EXISTS loans (
     max_years       INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS country_cities (
+    country_code  TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    rank          INTEGER NOT NULL,           -- 1 = largest, ascending
+    is_capital    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (country_code, name),
+    FOREIGN KEY (country_code) REFERENCES countries(code)
+);
+CREATE INDEX IF NOT EXISTS idx_country_cities_code ON country_cities(country_code);
+
 -- Recovered original-game schema (for reference / validation).
 CREATE TABLE IF NOT EXISTS dat_schema (
     table_name TEXT NOT NULL,
@@ -178,6 +188,29 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 (ln["name"], ln["max_amount"], ln["interest_rate"], ln["max_years"]),
             )
 
+        # 6. Cities — extracted from world.dat string pool, with capital
+        # fallback for any country whose block didn't yield a usable run.
+        world = parsed_files.get("world")
+        names_by_code = {c["name"]: c["code"] for c in seed.COUNTRIES}
+        cities_total = 0
+        if world is not None:
+            extracted = parse_dat.extract_cities_per_country(
+                world.string_pool, list(names_by_code.keys())
+            )
+        else:
+            extracted = {}
+        for c in seed.COUNTRIES:
+            code = c["code"]
+            capital = c["capital"]
+            cities = [s for s in extracted.get(c["name"], []) if s.lower() != capital.lower()]
+            ordered = [capital] + cities
+            for rank, name in enumerate(ordered, start=1):
+                conn.execute(
+                    "INSERT OR IGNORE INTO country_cities (country_code, name, rank, is_capital) VALUES (?,?,?,?)",
+                    (code, name, rank, 1 if rank == 1 else 0),
+                )
+                cities_total += 1
+
         conn.commit()
 
         return {
@@ -186,6 +219,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             "jobs": len(seed.JOBS),
             "investments": len(seed.INVESTMENTS),
             "loans": len(seed.LOANS),
+            "cities": cities_total,
             "dat_schemas": {name: len(p.schema) for name, p in parsed_files.items()},
             "recovered_strings": {name: len(p.string_pool) for name, p in parsed_files.items()},
         }

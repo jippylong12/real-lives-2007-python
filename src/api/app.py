@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from ..engine import finances
 from ..engine.game import Game, list_games, load_game
-from ..engine.world import all_countries, get_country
+from ..engine.world import all_countries, cities_for, get_country
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -165,7 +165,12 @@ def create_app() -> FastAPI:
         c = get_country(code)
         if c is None:
             raise HTTPException(status_code=404, detail="country not found")
-        return _country_dict(c)
+        d = _country_dict(c)
+        d["cities"] = [
+            {"name": city.name, "rank": city.rank, "is_capital": city.is_capital}
+            for city in cities_for(c.code)
+        ]
+        return d
 
     @app.get("/api/games")
     def games():

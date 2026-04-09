@@ -65,7 +65,9 @@ def eligible_jobs(character: Character, country: Country) -> list[Job]:
             continue
         if character.attributes.intelligence < j.min_intelligence:
             continue
-        if j.urban_only and country.urban_pct < 40:
+        # Urban-only jobs require the character to actually live in a city,
+        # not just a country with a high urban percentage.
+        if j.urban_only and not character.is_urban:
             continue
         out.append(j)
     return out

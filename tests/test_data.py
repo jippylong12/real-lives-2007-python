@@ -40,14 +40,33 @@ def test_build_db_creates_expected_tables():
     report = build_db.build()
     assert report["countries"] > 30
     assert report["jobs"] > 10
+    assert report["cities"] >= report["countries"]
 
     conn = build_db.get_connection()
     try:
         tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        assert {"countries", "jobs", "investments", "loans", "dat_schema", "games"}.issubset(tables)
+        assert {"countries", "jobs", "investments", "loans", "country_cities", "dat_schema", "games"}.issubset(tables)
 
         n_countries = conn.execute("SELECT COUNT(*) FROM countries").fetchone()[0]
         assert n_countries == report["countries"]
+
+        # Cities: every country has at least its capital, and many have more.
+        n_codes_with_cities = conn.execute(
+            "SELECT COUNT(DISTINCT country_code) FROM country_cities"
+        ).fetchone()[0]
+        assert n_codes_with_cities == n_countries
+        n_with_extras = conn.execute(
+            "SELECT COUNT(DISTINCT country_code) FROM country_cities WHERE rank > 1"
+        ).fetchone()[0]
+        assert n_with_extras >= 100, f"only {n_with_extras} countries got >1 city"
+
+        # Spot-check well-known cities
+        rows = conn.execute(
+            "SELECT name FROM country_cities WHERE country_code='us' ORDER BY rank"
+        ).fetchall()
+        names = [r["name"] for r in rows]
+        assert "Washington" in names
+        assert "New York" in names
 
         # The recovered original-game schema is also stored.
         n_world_fields = conn.execute(
@@ -56,3 +75,20 @@ def test_build_db_creates_expected_tables():
         assert n_world_fields >= 100
     finally:
         conn.close()
+
+
+def test_extract_cities_per_country():
+    """Block boundaries are formed by *neighboring* anchors in the seed list,
+    so the function must be called with the full seed country set to give
+    each country a tight, single-country window in the pool."""
+    from src.data.seed import COUNTRIES
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    cities = parse_dat.extract_cities_per_country(
+        parsed.string_pool,
+        [c["name"] for c in COUNTRIES],
+    )
+    assert "New York" in cities["United States"]
+    assert "Tokyo" in cities["Japan"]
+    assert "Sao Paulo" in cities["Brazil"]
+    assert "Lagos" in cities["Nigeria"]
+    assert "Algiers" in cities["Algeria"]

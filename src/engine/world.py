@@ -52,6 +52,23 @@ class Country:
         return f"{self.code}.bmp"
 
 
+@dataclass(frozen=True)
+class City:
+    country_code: str
+    name: str
+    rank: int           # 1 = capital / largest city
+    is_capital: bool
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "City":
+        return cls(
+            country_code=row["country_code"],
+            name=row["name"],
+            rank=row["rank"],
+            is_capital=bool(row["is_capital"]),
+        )
+
+
 @lru_cache(maxsize=1)
 def _all_countries() -> tuple[Country, ...]:
     conn = get_connection()
@@ -60,6 +77,45 @@ def _all_countries() -> tuple[Country, ...]:
     finally:
         conn.close()
     return tuple(Country.from_row(r) for r in rows)
+
+
+@lru_cache(maxsize=1)
+def _cities_by_country() -> dict[str, tuple[City, ...]]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT country_code, name, rank, is_capital FROM country_cities ORDER BY country_code, rank"
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict[str, list[City]] = {}
+    for r in rows:
+        out.setdefault(r["country_code"], []).append(City.from_row(r))
+    return {k: tuple(v) for k, v in out.items()}
+
+
+def cities_for(country_code: str) -> tuple[City, ...]:
+    """All known cities for `country_code` in rank order (capital first)."""
+    return _cities_by_country().get(country_code.lower(), ())
+
+
+def pick_birth_city(country: "Country", rng: random.Random) -> tuple[str, bool]:
+    """Choose a (city_name, is_urban) pair for a newborn in `country`.
+
+    Cities are weighted by inverse rank (largest city most likely). With
+    probability ``1 - urban_pct/100`` the character is instead born in a
+    rural village near a randomly chosen city — those characters get
+    ``is_urban = False`` and miss out on urban-only jobs.
+    """
+    cities = cities_for(country.code)
+    if not cities:
+        return country.capital, country.urban_pct >= 50
+    weights = [1.0 / c.rank for c in cities]
+    chosen = rng.choices(cities, weights=weights, k=1)[0]
+    urban_roll = rng.random() * 100
+    if urban_roll < country.urban_pct:
+        return chosen.name, True
+    return f"a village near {chosen.name}", False
 
 
 def all_countries() -> list[Country]:

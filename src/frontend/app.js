@@ -142,7 +142,8 @@ function renderGame() {
   $("#flag").src = `/flags/${co.code}.bmp`;
   $("#flag").alt = co.name;
   $("#char-name").textContent = c.name;
-  $("#char-where").textContent = `${c.city}, ${co.name}`;
+  const where = `${c.city}, ${co.name}`;
+  $("#char-where").textContent = c.is_urban === false ? `${where} · rural` : where;
 
   $("#stat-age").textContent = c.age;
   $("#stat-year").textContent = g.year;

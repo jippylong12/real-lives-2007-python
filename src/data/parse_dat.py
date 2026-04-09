@@ -184,6 +184,157 @@ def parse_dat(path: str | Path) -> DatFile:
     return parsed
 
 
+_CITY_STOP_TOKENS = {
+    # Religions, languages, ethnic / cultural identifiers, geographic descriptors
+    # — anything that looks like a Capitalized place but isn't.
+    "Muslim", "Catholic", "Protestant", "Christian", "Hindu", "Buddhist", "Jewish",
+    "Orthodox", "Sunni", "Shia", "Shi'a", "Coptic", "Animist", "Roman", "Sikh",
+    "Jain", "Anglican", "Baptist", "Lutheran", "Methodist", "Adventist",
+    "Other", "None", "Indigenous", "Mixed", "Black", "White", "African", "European",
+    "Asian", "Arab", "Persian", "Slav", "Turkic", "Latin", "Mestizo", "Creole",
+    "Spanish", "English", "French", "German", "Italian", "Portuguese", "Russian",
+    "Chinese", "Japanese", "Korean", "Vietnamese", "Hindi", "Urdu", "Arabic",
+    "Turkish", "Bengali", "Pashto", "Dari", "Tajik", "Uzbek", "Hausa", "Yoruba",
+    "Igbo", "Swahili", "Berber", "Tagalog", "Filipino", "Malay", "Thai", "Khmer",
+    "Lao", "Burmese", "Mongolian", "Tibetan", "Uighur", "Maori", "Polynesian",
+    "Melanesian", "Micronesian", "Aboriginal", "Inuit", "Quechua", "Aymara",
+    "Sub-Saharan", "Mediterranean", "Atlantic", "Pacific", "Caribbean", "Sahara",
+    "Sahel", "Northern", "Southern", "Eastern", "Western", "Central",
+    "Africa", "Asia", "Europe", "Oceania", "America",
+    "Major", "Minor", "East", "West", "North", "South",
+    "Region", "Province", "District", "Department", "State", "Republic",
+    "Bantu", "Zulu", "Xhosa", "Ibo", "Akan", "Fula", "Wolof", "Mandingo",
+    "Tutsi", "Hutu", "Maasai", "Kikuyu", "Luo", "Tonga", "Luba", "Mongo",
+    "Tswana", "Bemba", "Shona", "Ndebele", "Bakongo", "Bemba",
+    "Beja", "Dinka", "Nubian", "Kgalagadi", "Basarwa", "Batswana", "Motswana",
+    "Serbo-Croatian", "Serbo-Croation",
+    # Demonyms / nationalities
+    "Albanian", "American", "Argentine", "Australian", "Austrian", "Belgian",
+    "Brazilian", "Britain", "British", "Briton", "Burmese", "Canadian", "Chilean",
+    "Colombian", "Cuban", "Danish", "Dutch", "Egyptian", "Emirian", "Filipino",
+    "Finnish", "Greek", "Haitian", "Hungarian", "Icelandic", "Indian", "Indonesian",
+    "Iranian", "Iraqi", "Irish", "Israeli", "Jamaican", "Jordanian", "Kenyan",
+    "Kuwaiti", "Lebanese", "Libyan", "Malaysian", "Maltese", "Mexican", "Moroccan",
+    "Nepalese", "Nigerian", "Norwegian", "Omani", "Pakistani", "Palestinian",
+    "Panamanian", "Paraguayan", "Peruvian", "Polish", "Qatari", "Romanian",
+    "Rwandan", "Saudi", "Scottish", "Senegalese", "Singaporean", "Slovak",
+    "Slovenian", "Somali", "Sudanese", "Swedish", "Swiss", "Syrian", "Taiwanese",
+    "Tanzanian", "Tunisian", "Turkmen", "Ugandan", "Ukrainian", "Uruguayan",
+    "Venezuelan", "Vietnamese", "Welsh", "Yemeni", "Zambian", "Zimbabwean",
+    "Hispanic", "Caucasian", "Anglo",
+}
+
+
+def _looks_like_city(s: str) -> bool:
+    """Heuristic: a recovered string looks like a real city / place name."""
+    if not s or len(s) < 3 or len(s) > 30:
+        return False
+    if not s[0].isupper():
+        return False
+    if not all(c.isalpha() or c in " -'.()" for c in s):
+        return False
+    words = s.split()
+    if len(words) > 4:
+        return False
+    # Reject strings whose last word is lowercase — these are usually
+    # currency phrases like "Congo francs" rather than place names. Real
+    # multi-word place names use Title Case (or hyphenated lowercase
+    # interior segments, e.g., Mazar-i-Sharif, which have a single word).
+    if len(words) > 1 and words[-1][0].islower():
+        return False
+    for w in words:
+        if w in _CITY_STOP_TOKENS:
+            return False
+    return True
+
+
+# CIA Factbook → seed.py country name aliases. Most country blocks anchor on
+# their seed.py name verbatim, but a handful use older / longer / abbreviated
+# variants in the original .dat file (some are truncated by the parser's
+# 80-char string cap).
+_COUNTRY_NAME_ALIASES = {
+    "Burma": "Myanmar",
+    "Korea, North": "North Korea",
+    "Korea, South": "South Korea",
+    "Cote d'Ivoire": "Ivory Coast",
+    "Cote dIvoire": "Ivory Coast",
+    "Bahamas, The": "Bahamas",
+    "Gambia, The": "Gambia",
+    "Congo, Republic of": "Republic of the Congo",
+    "Congo, Democratic Republic of": "DR Congo",
+    "the Congo Democratic Republic": "DR Congo",
+    "Russian Federation": "Russia",
+    "East Timor": "Timor-Leste",
+    "Yugoslav": "Serbia and Montenegro",
+    "Uzbekist": "Uzbekistan",
+    "the United States": "United States",
+    "the United Kingdom": "United Kingdom",
+    "the United Arab Emirates": "United Arab Emirates",
+    "the Ukraine": "Ukraine",
+    "GreatBri": "United Kingdom",
+    "UntdAE": "United Arab Emirates",
+}
+
+
+def extract_cities_per_country(
+    string_pool: list[str],
+    seed_country_names: list[str],
+) -> dict[str, list[str]]:
+    """Walk the recovered ``world.dat`` string pool and emit per-country city
+    lists.
+
+    The pool is roughly alphabetical (Afghanistan, Albania, Algeria, ...) and
+    each country's block ends with a run of 5–9 city names just before the
+    currency strings. We anchor blocks on the *first* occurrence of each known
+    country name (or alias), then within each block pick the longest run of
+    consecutive city-shaped strings.
+
+    Empty list for any country whose block can't be located or doesn't yield
+    a recognizable city run — callers should fall back to the capital.
+    """
+    name_set = set(seed_country_names)
+    anchors: list[tuple[int, str]] = []
+    seen_anchor: set[str] = set()
+    for i, s in enumerate(string_pool):
+        canon = _COUNTRY_NAME_ALIASES.get(s, s)
+        if canon in name_set and canon not in seen_anchor:
+            anchors.append((i, canon))
+            seen_anchor.add(canon)
+
+    out: dict[str, list[str]] = {n: [] for n in seed_country_names}
+    for j, (pos, name) in enumerate(anchors):
+        end = anchors[j + 1][0] if j + 1 < len(anchors) else len(string_pool)
+        block = string_pool[pos:end]
+        # Find consecutive runs of city-like strings; pick the longest run
+        # with at least two entries (skipping the country name itself).
+        runs: list[list[str]] = []
+        i = 0
+        while i < len(block):
+            if _looks_like_city(block[i]) and block[i] != name:
+                j2 = i
+                while j2 < len(block) and _looks_like_city(block[j2]):
+                    j2 += 1
+                runs.append(block[i:j2])
+                i = j2
+            else:
+                i += 1
+        if not runs:
+            continue
+        runs.sort(key=len, reverse=True)
+        best = runs[0]
+        if len(best) < 2:
+            continue
+        seen_local: set[str] = set()
+        cities = []
+        for s in best:
+            if s == name or s in seen_local:
+                continue
+            seen_local.add(s)
+            cities.append(s)
+        out[name] = cities
+    return out
+
+
 def parse_all(data_dir: str | Path) -> dict[str, DatFile]:
     """Parse every .dat file in `data_dir` and return a dict keyed by basename."""
     d = Path(data_dir)

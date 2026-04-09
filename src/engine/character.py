@@ -148,6 +148,7 @@ class Character:
     age: int
     country_code: str
     city: str
+    is_urban: bool
     attributes: Attributes
     family_wealth: int                 # starting household wealth in USD-equivalent
     money: int = 0                     # current personal savings
@@ -190,6 +191,7 @@ class Character:
             "age": self.age,
             "country_code": self.country_code,
             "city": self.city,
+            "is_urban": self.is_urban,
             "attributes": self.attributes.to_dict(),
             "family_wealth": self.family_wealth,
             "money": self.money,
@@ -227,6 +229,7 @@ class Character:
             age=d["age"],
             country_code=d["country_code"],
             city=d["city"],
+            is_urban=d.get("is_urban", True),
             attributes=attrs,
             family_wealth=d["family_wealth"],
             money=d.get("money", 0),
@@ -291,6 +294,9 @@ def _starting_attributes(country: "Country", rng: random.Random) -> Attributes:
 
 def create_random_character(country: "Country", rng: random.Random | None = None) -> Character:
     """Generate a newborn character in `country`."""
+    # Local import to avoid the engine.character ↔ engine.world import cycle.
+    from .world import pick_birth_city
+
     rng = rng or random.Random()
     gender = Gender(rng.randint(0, 1))
     name = _random_name(gender, rng)
@@ -298,6 +304,7 @@ def create_random_character(country: "Country", rng: random.Random | None = None
     attrs.clamp()
 
     family_wealth = _wealth_for_country(country, rng)
+    city, is_urban = pick_birth_city(country, rng)
 
     # Family members — start with a mother, father, and 0-3 siblings.
     mother = FamilyMember("mother", _random_name(Gender.FEMALE, rng), rng.randint(20, 38), True, Gender.FEMALE)
@@ -313,7 +320,8 @@ def create_random_character(country: "Country", rng: random.Random | None = None
         gender=gender,
         age=0,
         country_code=country.code,
-        city=country.capital,
+        city=city,
+        is_urban=is_urban,
         attributes=attrs,
         family_wealth=family_wealth,
         money=0,
