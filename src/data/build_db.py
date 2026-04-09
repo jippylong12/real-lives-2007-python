@@ -97,6 +97,30 @@ CREATE TABLE IF NOT EXISTS country_descriptions (
     FOREIGN KEY (country_code) REFERENCES countries(code)
 );
 
+-- Original-game job catalogue decoded directly from jobs.dat (#19). The
+-- binary ships 131 jobs vs. the curated seed.JOBS list of ~30. This table
+-- exposes every binary job for cross-reference; the engine still uses the
+-- curated table for now (the binary's salaries / requirements use a
+-- different scale).
+CREATE TABLE IF NOT EXISTS job_original_stats (
+    binary_index            INTEGER PRIMARY KEY,
+    job_name                TEXT NOT NULL,
+    minimum_age             INTEGER,
+    max_age                 INTEGER,
+    education               TEXT,
+    urban_rural             TEXT,
+    self_employed           INTEGER,
+    intelligence            INTEGER,
+    strength                INTEGER,
+    endurance               INTEGER,
+    artistic                INTEGER,
+    musical                 INTEGER,
+    athletic                INTEGER,
+    salary                  REAL,
+    seacoast_only           INTEGER,
+    forest_only             INTEGER
+);
+
 -- Original-game stats decoded directly from world.dat (2007-era values).
 -- This table is independent from the curated `countries` table and is used
 -- for cross-checking the rebuild against the binary data.
@@ -245,6 +269,38 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 )
                 cities_total += 1
 
+        # 6b. Original-game job catalogue decoded directly from jobs.dat (#19).
+        # The generic row decoder works on any .dat file with a fixed-row
+        # data section, not just world.dat.
+        jobs_orig_total = 0
+        jobs_parsed = parsed_files.get("jobs")
+        if jobs_parsed is not None:
+            for i, row in enumerate(parse_dat.decode_all_rows(jobs_parsed)):
+                name = row.get("JobName")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO job_original_stats (
+                        binary_index, job_name, minimum_age, max_age, education,
+                        urban_rural, self_employed, intelligence, strength, endurance,
+                        artistic, musical, athletic, salary, seacoast_only, forest_only
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        i, name.strip(),
+                        row.get("MinimumAge"), row.get("MaxAge"),
+                        row.get("Education"), row.get("UrbanRural"),
+                        1 if row.get("SelfEmployed") else 0,
+                        row.get("Intelligence"), row.get("Strength"), row.get("Endurance"),
+                        row.get("Artistic"), row.get("Musical"), row.get("Athletic"),
+                        row.get("Salary"),
+                        1 if row.get("Seacoast") else 0,
+                        1 if row.get("Forest") else 0,
+                    ),
+                )
+                jobs_orig_total += 1
+
         # 7a. Original-game stats decoded directly from world.dat. The decoder
         # interprets the schema's type/size/offset metadata to pull every
         # field's value out of each fixed-size country row.
@@ -334,6 +390,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             "cities": cities_total,
             "descriptions": descriptions_total,
             "original_stats": original_total,
+            "jobs_original_stats": jobs_orig_total,
             "dat_schemas": {name: len(p.schema) for name, p in parsed_files.items()},
             "recovered_strings": {name: len(p.string_pool) for name, p in parsed_files.items()},
         }

@@ -513,24 +513,58 @@ def extract_descriptions_per_country(
 # Data record decoder (binary -> typed values)
 # ---------------------------------------------------------------------------
 
-# Empirically determined fixed row size for world.dat: 2384 bytes per country.
-# (193 countries × 2384 bytes = 460112 bytes = data section length.)
-WORLD_ROW_SIZE = 2384
-
 
 def _row_size_for(parsed: "DatFile") -> int | None:
-    """Compute the per-row stride for a parsed .dat file by dividing the data
-    section size by a hand-chosen number of rows. Returns None if the file
-    doesn't follow the world.dat row layout."""
+    """Compute the per-row stride for a parsed .dat file.
+
+    Strategy: the data section after the schema records divides cleanly into
+    fixed-size rows. We pick the smallest row size that
+
+      (a) divides the data section evenly,
+      (b) leaves enough room for the largest schema field (offset + slot),
+      (c) puts a 0x01 tag at every string field's offset in the *second* row.
+
+    The (c) check rules out trivial sizes (e.g., row_size = data_section
+    means a single row, which would always pass (a) + (b) but isn't actually
+    a fixed-row layout).
+
+    Works for world.dat (193 × 2384), jobs.dat (131 × 384), and any future
+    .dat file in the same family. Returns None if no plausible size is found.
+    """
+    if not parsed.schema:
+        return None
     blob = parsed.path.read_bytes()
     data_section = len(blob) - HEADER_SIZE - len(parsed.schema) * RECORD_SIZE
-    # world.dat: 193 rows × 2384 bytes
-    if data_section == 193 * WORLD_ROW_SIZE:
-        return WORLD_ROW_SIZE
+    if data_section <= 0:
+        return None
+    # Largest end-of-field offset in the schema (the row must be at least
+    # this big to hold every field's value).
+    min_row = max(f.record_offset + 1 + f.slot_size for f in parsed.schema)
+    string_fields = [f for f in parsed.schema if f.type_code == 1]
+    data_start = HEADER_SIZE + len(parsed.schema) * RECORD_SIZE
+    # The first string field (typically the row's "name" column — Country
+    # for world.dat, JobName for jobs.dat) is always populated in every row.
+    # We use it to verify a candidate row size lines up with row boundaries.
+    primary = string_fields[0] if string_fields else None
+    # Enumerate divisors of data_section in *ascending* row_size order — i.e.,
+    # descending row count. The first one that satisfies (b) + (c) is the
+    # tightest valid fit and is the answer.
+    n_rows_max = data_section // min_row
+    for n in range(n_rows_max, 1, -1):  # require at least 2 rows
+        if data_section % n != 0:
+            continue
+        candidate = data_section // n
+        if candidate < min_row:
+            continue
+        if primary is not None:
+            tag = blob[data_start + candidate + primary.record_offset]
+            if tag != 0x01:
+                continue
+        return candidate
     return None
 
 
-def country_buffer(parsed: "DatFile", country_index: int) -> bytes:
+def row_buffer(parsed: "DatFile", row_index: int) -> bytes:
     """Return the raw byte buffer for one row in a parsed file. Returns an
     empty bytes object if the file doesn't follow a fixed-row layout or if
     the index is out of range.
@@ -540,8 +574,13 @@ def country_buffer(parsed: "DatFile", country_index: int) -> bytes:
         return b""
     blob = parsed.path.read_bytes()
     data_start = HEADER_SIZE + len(parsed.schema) * RECORD_SIZE
-    off = data_start + country_index * row
+    off = data_start + row_index * row
     return blob[off:off + row]
+
+
+# Backwards-compatible alias for the old country-only name.
+def country_buffer(parsed: "DatFile", country_index: int) -> bytes:
+    return row_buffer(parsed, country_index)
 
 
 def decode_value(buf: bytes, field: DatField) -> object:
@@ -573,27 +612,35 @@ def decode_value(buf: bytes, field: DatField) -> object:
     return None
 
 
-def decode_country_record(parsed: "DatFile", country_index: int) -> dict[str, object]:
-    """Decode every schema field for one country into a name -> value dict."""
-    buf = country_buffer(parsed, country_index)
+def decode_row(parsed: "DatFile", row_index: int) -> dict[str, object]:
+    """Decode every schema field for one row into a name -> value dict."""
+    buf = row_buffer(parsed, row_index)
     out: dict[str, object] = {}
     for f in parsed.schema:
         out[f.name] = decode_value(buf, f)
     return out
 
 
-def decode_all_countries(parsed: "DatFile") -> list[dict[str, object]]:
-    """Decode every country's full row into a name → value dict. The list is
-    in the same alphabetical order as the original game's UI ('Afghanistan'
-    first, 'Zimbabwe' last). Returns an empty list if the file doesn't have
-    a recognizable fixed-row layout."""
+def decode_all_rows(parsed: "DatFile") -> list[dict[str, object]]:
+    """Decode every data row in the file into a name → value dict. Order
+    matches the original game's binary ordering. Returns an empty list if
+    the file doesn't have a recognizable fixed-row layout."""
     row = _row_size_for(parsed)
     if row is None:
         return []
     blob = parsed.path.read_bytes()
     data_section_len = len(blob) - HEADER_SIZE - len(parsed.schema) * RECORD_SIZE
-    n_countries = data_section_len // row
-    return [decode_country_record(parsed, i) for i in range(n_countries)]
+    n_rows = data_section_len // row
+    return [decode_row(parsed, i) for i in range(n_rows)]
+
+
+# Backwards-compatible aliases for the old country-only names.
+def decode_country_record(parsed: "DatFile", country_index: int) -> dict[str, object]:
+    return decode_row(parsed, country_index)
+
+
+def decode_all_countries(parsed: "DatFile") -> list[dict[str, object]]:
+    return decode_all_rows(parsed)
 
 
 def parse_all(data_dir: str | Path) -> dict[str, DatFile]:

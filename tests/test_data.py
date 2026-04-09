@@ -156,6 +156,46 @@ def test_country_original_stats_table_populated():
         conn.close()
 
 
+def test_decode_jobs_dat_with_generic_row_decoder():
+    """Issue #19: the generic decoder generalizes from world.dat to any
+    .dat file with a fixed-row data section. jobs.dat decodes into 131
+    rows × 384 bytes."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "jobs.dat")
+    assert parse_dat._row_size_for(parsed) == 384
+
+    rows = parse_dat.decode_all_rows(parsed)
+    assert len(rows) == 131
+
+    # Spot-check the first few jobs against the binary's known content.
+    assert rows[0]["JobName"] == "senior government official"
+    assert rows[0]["Salary"] == 300000.0
+    assert rows[0]["UrbanRural"] == "U"
+    assert rows[1]["JobName"] == "community leader"
+
+    # Sanity: every row's JobName decodes as a non-empty string.
+    for r in rows:
+        assert isinstance(r["JobName"], str) and r["JobName"]
+
+
+def test_job_original_stats_table_populated():
+    """Issue #19: build_db persists the binary-decoded jobs into a
+    job_original_stats table that the engine can cross-reference."""
+    report = build_db.build()
+    assert report.get("jobs_original_stats", 0) == 131
+
+    conn = build_db.get_connection()
+    try:
+        n = conn.execute("SELECT COUNT(*) FROM job_original_stats").fetchone()[0]
+        assert n == 131
+        row = conn.execute(
+            "SELECT * FROM job_original_stats WHERE binary_index = 0"
+        ).fetchone()
+        assert row["job_name"] == "senior government official"
+        assert row["salary"] == 300000.0
+    finally:
+        conn.close()
+
+
 def test_type_4_decodes_as_bool_type_5_as_uint16():
     """Issue #20: type 4 fields are boolean flags, type 5 fields are uint16
     counts/percentages. Verify the decoder honors that distinction."""
