@@ -97,6 +97,27 @@ CREATE TABLE IF NOT EXISTS country_descriptions (
     FOREIGN KEY (country_code) REFERENCES countries(code)
 );
 
+-- Original-game stats decoded directly from world.dat (2007-era values).
+-- This table is independent from the curated `countries` table and is used
+-- for cross-checking the rebuild against the binary data.
+CREATE TABLE IF NOT EXISTS country_original_stats (
+    binary_name             TEXT PRIMARY KEY,
+    country_code            TEXT,                  -- match in `countries`, if any
+    population              INTEGER,
+    birth_rate              REAL,
+    death_rate              REAL,
+    infant_mortality        REAL,
+    male_life_expectancy    REAL,
+    female_life_expectancy  REAL,
+    inflation_rate          REAL,
+    at_war                  INTEGER,
+    aids_rate               REAL,
+    male_literacy           INTEGER,
+    female_literacy         INTEGER,
+    hdi                     REAL
+);
+CREATE INDEX IF NOT EXISTS idx_original_stats_code ON country_original_stats(country_code);
+
 -- Recovered original-game schema (for reference / validation).
 CREATE TABLE IF NOT EXISTS dat_schema (
     table_name TEXT NOT NULL,
@@ -218,7 +239,63 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 )
                 cities_total += 1
 
-        # 7. Country encyclopedia descriptions — recovered from the long-string
+        # 7a. Original-game stats decoded directly from world.dat. The decoder
+        # interprets the schema's type/size/offset metadata to pull every
+        # field's value out of each fixed-size country row.
+        original_total = 0
+        if world is not None:
+            decoded = parse_dat.decode_all_countries(world)
+            # Build a name→code mapping. The binary uses 2007 spellings + a
+            # few "the X" prefixes that we strip before lookup.
+            def to_code(binary_name: str) -> str | None:
+                cleaned = binary_name.strip()
+                if cleaned.startswith("the "):
+                    cleaned = cleaned[4:]
+                # Special-case aliases for binary names that don't match seed.
+                BIN_ALIASES = {
+                    "Burma": "Myanmar",
+                    "Cote d'Ivoire": "Ivory Coast",
+                    "Macedonia": "North Macedonia",
+                    "Swaziland": "Eswatini",
+                    "Runion": "Reunion",
+                    "Congo": "Republic of the Congo",
+                    "Congo Democratic Republic": "DR Congo",
+                }
+                cleaned = BIN_ALIASES.get(cleaned, cleaned)
+                for c in seed.COUNTRIES:
+                    if c["name"] == cleaned:
+                        return c["code"]
+                return None
+
+            for row in decoded:
+                bname = row.get("Country")
+                if not isinstance(bname, str) or not bname.strip():
+                    continue
+                code = to_code(bname)
+                pop = row.get("Population")
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO country_original_stats (
+                        binary_name, country_code, population, birth_rate, death_rate,
+                        infant_mortality, male_life_expectancy, female_life_expectancy,
+                        inflation_rate, at_war, aids_rate, male_literacy,
+                        female_literacy, hdi
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        bname.strip(), code, pop,
+                        row.get("BirthRate"), row.get("DeathRate"),
+                        row.get("InfantMortality"),
+                        row.get("MaleLifeExpectancy"), row.get("FemaleLifeExpectancy"),
+                        row.get("InflationRate"), row.get("AtWar"),
+                        row.get("AIDS"),
+                        row.get("MaleLiteracy"), row.get("FemaleLiteracy"),
+                        row.get("HDI"),
+                    ),
+                )
+                original_total += 1
+
+        # 7b. Country encyclopedia descriptions — recovered from the long-string
         # pool of world.dat. Empty descriptions are skipped; the API just
         # returns null for those countries.
         descriptions_total = 0
@@ -245,6 +322,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             "loans": len(seed.LOANS),
             "cities": cities_total,
             "descriptions": descriptions_total,
+            "original_stats": original_total,
             "dat_schemas": {name: len(p.schema) for name, p in parsed_files.items()},
             "recovered_strings": {name: len(p.string_pool) for name, p in parsed_files.items()},
         }

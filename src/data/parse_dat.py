@@ -4,7 +4,7 @@ Parser for Real Lives 2007 .dat files.
 The original data files are Borland Delphi serialized records (BDE/Paradox-like
 format). Each .dat file is laid out as:
 
-  - 0x000..0x200: file header (metadata, version, timestamp)
+  - 0x000..0x200: file header (magic 0x77 0x08 ..., timestamp, metadata)
   - 0x200 onwards: 768-byte (0x300) records
 
 The first N records are *schema records* — each one declares one field of the
@@ -13,27 +13,23 @@ underlying table. A schema record has this layout:
   off 0x00: uint16  field_id        (1, 2, 3, ...)
   off 0x02: uint8   name_len        (Pascal length byte)
   off 0x03: bytes   field_name      (ASCII)
-  off 0x100..0x300: type metadata + qualified name ("world.<FieldName>")
+  off 0xa4: uint16  type_code       (1=string, 4/5=int16, 6=uint32, 7=double)
+  off 0xa9: uint16  slot_size       (bytes occupied by the value, sans tag)
+  off 0xac: uint32  record_offset   (byte offset of the 0x01 tag inside the
+                                      *concatenated* per-country data buffer)
+  off 0x1e6..    : qualified name "tablename.FieldName" as a Pascal string
 
-After the schema records come *data records*. Each data record packs multiple
-row values for the table. Rows use a tag-stream where each field is preceded
-by a 0x01 marker followed by either a 4-byte little-endian uint32 (for ints)
-or a fixed-width null-padded string (for text).
+After the schema records come *data records*. Each country occupies three
+consecutive 0x300 records, treated as one 0x900 buffer. Inside that buffer
+each field's value is preceded by a 0x01 tag at the offset given by the
+schema's record_offset. The decoder is implemented in
+:func:`decode_country_record`.
 
-The full binary format encodes Delphi extended-precision floats and dynamic
-arrays in ways that are not fully tractable to clean-room reverse-engineer
-inside one project. This parser therefore extracts what it can RELIABLY:
-
-  1. The complete field schema for every .dat file (field id + name)
-  2. Any printable ASCII strings embedded in the data records (job names,
-     country names, city names, etc.)
-
-That recovered schema + string list is enough to (a) anchor the SQLite tables
-to the original game's columns and (b) seed string-typed fields like job
-titles and country names. Numeric fields (population, GDP, life expectancy,
-etc.) are populated from a curated bundled JSON of real-world stats — the
-same statistical sources the original game pulled from in 2007 (CIA World
-Factbook, World Bank, UNICEF, etc.).
+That recovered schema + decoded values + string pool is enough to (a) anchor
+the SQLite tables to the original game's columns, (b) seed string-typed
+fields like job titles and country names, and (c) optionally cross-check the
+curated real-world stats in :mod:`src.data.seed` against the binary's
+2007-era values.
 """
 
 from __future__ import annotations
@@ -56,6 +52,26 @@ class DatField:
     name: str
     qualified_name: str = ""
     raw_offset: int = 0
+    type_code: int = 0
+    slot_size: int = 0
+    record_offset: int = 0  # offset of the 0x01 tag inside the per-row buffer
+
+    @property
+    def python_type(self) -> str:
+        """A short label describing how to decode this field's value."""
+        return _TYPE_NAMES.get(self.type_code, "unknown")
+
+
+# Schema type codes recovered from world.dat / jobs.dat / etc. by examining
+# how each field's slot_size lines up with the bytes the data records actually
+# carry at its declared offset.
+_TYPE_NAMES: dict[int, str] = {
+    1: "string",
+    4: "int16",   # used for boolean-ish flags (AtWar, etc.)
+    5: "int16",
+    6: "uint32",
+    7: "double",
+}
 
 
 @dataclass
@@ -197,12 +213,20 @@ def parse_dat(path: str | Path) -> DatFile:
                     if s and "." in s and s.endswith(name):
                         qualified = s
                         break
+                # Type / size / offset live at fixed positions in the schema
+                # record (recovered by reverse-engineering Algeria + Afghanistan).
+                type_code = struct.unpack_from("<H", rec, 0xa4)[0]
+                slot_size = struct.unpack_from("<H", rec, 0xa9)[0]
+                record_offset = struct.unpack_from("<I", rec, 0xac)[0]
                 parsed.schema.append(
                     DatField(
                         field_id=field_id,
                         name=name,
                         qualified_name=qualified,
                         raw_offset=off,
+                        type_code=type_code,
+                        slot_size=slot_size,
+                        record_offset=record_offset,
                     )
                 )
                 continue
@@ -438,6 +462,91 @@ def extract_descriptions_per_country(
         if pieces:
             out[name] = " ".join(pieces[:4])
     return out
+
+
+# ---------------------------------------------------------------------------
+# Data record decoder (binary -> typed values)
+# ---------------------------------------------------------------------------
+
+# Empirically determined fixed row size for world.dat: 2384 bytes per country.
+# (193 countries × 2384 bytes = 460112 bytes = data section length.)
+WORLD_ROW_SIZE = 2384
+
+
+def _row_size_for(parsed: "DatFile") -> int | None:
+    """Compute the per-row stride for a parsed .dat file by dividing the data
+    section size by a hand-chosen number of rows. Returns None if the file
+    doesn't follow the world.dat row layout."""
+    blob = parsed.path.read_bytes()
+    data_section = len(blob) - HEADER_SIZE - len(parsed.schema) * RECORD_SIZE
+    # world.dat: 193 rows × 2384 bytes
+    if data_section == 193 * WORLD_ROW_SIZE:
+        return WORLD_ROW_SIZE
+    return None
+
+
+def country_buffer(parsed: "DatFile", country_index: int) -> bytes:
+    """Return the raw byte buffer for one row in a parsed file. Returns an
+    empty bytes object if the file doesn't follow a fixed-row layout or if
+    the index is out of range.
+    """
+    row = _row_size_for(parsed)
+    if row is None:
+        return b""
+    blob = parsed.path.read_bytes()
+    data_start = HEADER_SIZE + len(parsed.schema) * RECORD_SIZE
+    off = data_start + country_index * row
+    return blob[off:off + row]
+
+
+def decode_value(buf: bytes, field: DatField) -> object:
+    """Pull a single field's value out of a per-country data buffer.
+
+    Returns the decoded Python value (str / int / float) or None if the field
+    can't be decoded for some reason (offset past end, unknown type code).
+    """
+    off = field.record_offset
+    if off >= len(buf):
+        return None
+    if buf[off] != 0x01:
+        # No tag — value not stored. Common for sparsely-populated fields.
+        return None
+    val_off = off + 1
+    if field.type_code == 1:  # string
+        slot = buf[val_off:val_off + field.slot_size]
+        s = slot.split(b"\x00", 1)[0]
+        # Original game stored Latin-1; emit unicode with the accents intact.
+        return s.decode("latin-1", errors="replace")
+    if field.type_code in (4, 5):  # int16
+        return struct.unpack_from("<H", buf, val_off)[0]
+    if field.type_code == 6:  # uint32
+        return struct.unpack_from("<I", buf, val_off)[0]
+    if field.type_code == 7:  # double
+        return struct.unpack_from("<d", buf, val_off)[0]
+    return None
+
+
+def decode_country_record(parsed: "DatFile", country_index: int) -> dict[str, object]:
+    """Decode every schema field for one country into a name -> value dict."""
+    buf = country_buffer(parsed, country_index)
+    out: dict[str, object] = {}
+    for f in parsed.schema:
+        out[f.name] = decode_value(buf, f)
+    return out
+
+
+def decode_all_countries(parsed: "DatFile") -> list[dict[str, object]]:
+    """Decode every country's full row into a name → value dict. The list is
+    in the same alphabetical order as the original game's UI ('Afghanistan'
+    first, 'Zimbabwe' last). Returns an empty list if the file doesn't have
+    a recognizable fixed-row layout."""
+    row = _row_size_for(parsed)
+    if row is None:
+        return []
+    blob = parsed.path.read_bytes()
+    data_section_len = len(blob) - HEADER_SIZE - len(parsed.schema) * RECORD_SIZE
+    n_countries = data_section_len // row
+    return [decode_country_record(parsed, i) for i in range(n_countries)]
 
 
 def parse_all(data_dir: str | Path) -> dict[str, DatFile]:

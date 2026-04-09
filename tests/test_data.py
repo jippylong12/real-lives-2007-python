@@ -94,6 +94,63 @@ def test_extract_cities_per_country():
     assert "Algiers" in cities["Algeria"]
 
 
+def test_decode_country_record_for_known_countries():
+    """Verify the binary decoder produces realistic 2007-era values for
+    countries we can hand-validate against the CIA World Factbook."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    rows = parse_dat.decode_all_countries(parsed)
+    assert len(rows) == 193, f"expected 193 country rows, got {len(rows)}"
+
+    by_name = {r["Country"]: r for r in rows}
+
+    afghan = by_name["Afghanistan"]
+    assert afghan["Population"] == 31889000
+    assert afghan["InfantMortality"] == 165.0
+    assert afghan["MaleLifeExpectancy"] == 43.0
+    assert afghan["AtWar"] == 1
+
+    us = by_name["the United States"]
+    assert us["Population"] == 301139000
+    assert us["MaleLifeExpectancy"] == 75.0
+    assert us["FemaleLifeExpectancy"] == 81.0
+    assert us["InfantMortality"] == 6.0
+
+    japan = by_name["Japan"]
+    assert japan["Population"] == 127467000
+    assert japan["FemaleLifeExpectancy"] == 85.0
+
+
+def test_schema_carries_type_size_offset():
+    """The schema parser should now extract type_code, slot_size, and
+    record_offset for every field — those are what unblock the data decoder."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    population = next(f for f in parsed.schema if f.name == "Population")
+    assert population.type_code == 6      # uint32
+    assert population.slot_size == 4
+    assert population.record_offset == 0x3e
+
+    male_life = next(f for f in parsed.schema if f.name == "MaleLifeExpectancy")
+    assert male_life.type_code == 7        # double
+    assert male_life.slot_size == 8
+
+
+def test_country_original_stats_table_populated():
+    """The build_db pipeline persists the binary-decoded values into a
+    country_original_stats table that the engine can cross-check against."""
+    report = build_db.build()
+    assert report.get("original_stats", 0) >= 190
+    conn = build_db.get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM country_original_stats WHERE country_code='us'"
+        ).fetchone()
+        assert row is not None
+        assert row["population"] == 301139000
+        assert row["male_life_expectancy"] == 75.0
+    finally:
+        conn.close()
+
+
 def test_extract_descriptions_per_country():
     from src.data.seed import COUNTRIES
     parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
