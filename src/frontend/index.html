@@ -60,6 +60,8 @@
             <div class="row"><span>Job</span><strong id="stat-job">—</strong></div>
             <div class="row"><span>Salary</span><strong id="stat-salary">—</strong></div>
             <div class="row"><span>Savings</span><strong id="stat-money">$0</strong></div>
+            <div class="row"><span>Portfolio</span><strong id="stat-portfolio">$0</strong></div>
+            <div class="row"><span>Debt</span><strong id="stat-debt">$0</strong></div>
             <div class="row"><span>Married</span><strong id="stat-married">no</strong></div>
             <div class="row"><span>Children</span><strong id="stat-kids">0</strong></div>
           </div>
@@ -86,6 +88,36 @@
             <h3 id="decision-title">A choice…</h3>
             <p id="decision-desc"></p>
             <div id="decision-buttons" class="decision-buttons"></div>
+          </section>
+
+          <section class="panel finances-area">
+            <div class="finances-header">
+              <h3>Finances</h3>
+              <div class="tabs">
+                <button class="tab active" data-tab="investments">Investments</button>
+                <button class="tab" data-tab="loans">Loans</button>
+              </div>
+            </div>
+
+            <div id="tab-investments" class="tab-pane">
+              <div id="open-investments" class="holdings"></div>
+              <form id="invest-form" class="finance-form">
+                <select id="invest-product"></select>
+                <input id="invest-amount" type="number" min="1" placeholder="Amount" />
+                <button class="btn primary" type="submit">Invest</button>
+              </form>
+              <p id="invest-msg" class="form-msg"></p>
+            </div>
+
+            <div id="tab-loans" class="tab-pane hidden">
+              <div id="open-loans" class="holdings"></div>
+              <form id="loan-form" class="finance-form">
+                <select id="loan-product"></select>
+                <input id="loan-amount" type="number" min="1" placeholder="Amount" />
+                <button class="btn primary" type="submit">Borrow</button>
+              </form>
+              <p id="loan-msg" class="form-msg"></p>
+            </div>
           </section>
 
           <section class="panel timeline-area">

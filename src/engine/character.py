@@ -119,6 +119,28 @@ class FamilyMember:
 
 
 @dataclass
+class LoanHolding:
+    """A single open loan the player has taken out."""
+    product_id: int
+    name: str
+    principal: int          # original amount borrowed
+    balance: int            # current outstanding balance
+    interest_rate: float    # annual rate (e.g., 0.08)
+    years_remaining: int    # years left on the term
+    opened_year: int        # in-game calendar year of origination
+
+
+@dataclass
+class InvestmentHolding:
+    """A single open investment position the player owns."""
+    product_id: int
+    name: str
+    cost_basis: int         # original cash invested
+    value: int              # current mark-to-market value
+    opened_year: int        # in-game calendar year purchased
+
+
+@dataclass
 class Character:
     id: str
     name: str
@@ -138,6 +160,8 @@ class Character:
     spouse_name: str | None = None
     children: list[FamilyMember] = field(default_factory=list)
     family: list[FamilyMember] = field(default_factory=list)
+    loans: list[LoanHolding] = field(default_factory=list)
+    investments: list[InvestmentHolding] = field(default_factory=list)
     alive: bool = True
     cause_of_death: str | None = None
     moral_ledger: dict[str, int] = field(default_factory=dict)
@@ -178,6 +202,8 @@ class Character:
             "spouse_name": self.spouse_name,
             "children": [asdict(c) for c in self.children],
             "family": [asdict(f) for f in self.family],
+            "loans": [asdict(l) for l in self.loans],
+            "investments": [asdict(i) for i in self.investments],
             "alive": self.alive,
             "cause_of_death": self.cause_of_death,
             "moral_ledger": dict(self.moral_ledger),
@@ -192,6 +218,8 @@ class Character:
         attrs = Attributes(**d["attributes"])
         children = [FamilyMember(**c) for c in d.get("children", [])]
         family = [FamilyMember(**f) for f in d.get("family", [])]
+        loans = [LoanHolding(**l) for l in d.get("loans", [])]
+        investments = [InvestmentHolding(**i) for i in d.get("investments", [])]
         return cls(
             id=d["id"],
             name=d["name"],
@@ -211,6 +239,8 @@ class Character:
             spouse_name=d.get("spouse_name"),
             children=children,
             family=family,
+            loans=loans,
+            investments=investments,
             alive=d.get("alive", True),
             cause_of_death=d.get("cause_of_death"),
             moral_ledger=d.get("moral_ledger", {}),

@@ -8,6 +8,8 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const state = {
   game: null,
   countries: [],
+  investmentProducts: [],
+  loanProducts: [],
 };
 
 // ---------- API ----------
@@ -25,6 +27,39 @@ async function api(path, opts = {}) {
 
 async function loadCountries() {
   state.countries = await api("/api/countries");
+}
+
+async function loadFinanceProducts() {
+  const [inv, ln] = await Promise.all([
+    api("/api/investments"),
+    api("/api/loans"),
+  ]);
+  state.investmentProducts = inv;
+  state.loanProducts = ln;
+}
+
+async function invest(productId, amount) {
+  state.game = await api(`/api/game/${state.game.id}/invest`, {
+    method: "POST",
+    body: JSON.stringify({ product_id: productId, amount }),
+  });
+  renderGame();
+}
+
+async function takeLoan(productId, amount) {
+  state.game = await api(`/api/game/${state.game.id}/loan`, {
+    method: "POST",
+    body: JSON.stringify({ product_id: productId, amount }),
+  });
+  renderGame();
+}
+
+async function sellInvestment(index) {
+  state.game = await api(`/api/game/${state.game.id}/sell_investment`, {
+    method: "POST",
+    body: JSON.stringify({ index }),
+  });
+  renderGame();
 }
 
 async function newGame(countryCode) {
@@ -115,8 +150,11 @@ function renderGame() {
   $("#stat-job").textContent = c.job || "—";
   $("#stat-salary").textContent = c.salary ? fmtMoney(c.salary) + "/yr" : "—";
   $("#stat-money").textContent = fmtMoney(c.money);
+  $("#stat-portfolio").textContent = fmtMoney(g.portfolio_value || 0);
+  $("#stat-debt").textContent = fmtMoney(c.debt || 0);
   $("#stat-married").textContent = c.married ? (c.spouse_name || "yes") : "no";
   $("#stat-kids").textContent = (c.children || []).length;
+  renderFinances();
 
   // Attributes
   const attrEl = $("#attrs");
@@ -223,6 +261,120 @@ function renderTurn(turn) {
   }
 }
 
+// ---------- Finances pane ----------
+function renderFinances() {
+  const c = state.game?.character;
+  if (!c) return;
+
+  // Open investments list
+  const invHost = $("#open-investments");
+  invHost.innerHTML = "";
+  const invs = c.investments || [];
+  if (invs.length === 0) {
+    invHost.innerHTML = '<p class="placeholder">No open investments.</p>';
+  } else {
+    invs.forEach((inv, i) => {
+      const pl = inv.value - inv.cost_basis;
+      const cls = pl >= 0 ? "up" : "down";
+      const row = document.createElement("div");
+      row.className = "holding";
+      row.innerHTML = `
+        <div class="h-name">${inv.name}</div>
+        <div class="h-meta">cost ${fmtMoney(inv.cost_basis)} · value <strong>${fmtMoney(inv.value)}</strong>
+          <span class="delta ${cls}">${pl >= 0 ? "+" : ""}${fmtMoney(pl)}</span></div>
+        <button class="btn sm" data-sell="${i}">Sell</button>`;
+      invHost.appendChild(row);
+    });
+    invHost.querySelectorAll("[data-sell]").forEach((b) => {
+      b.onclick = () => sellInvestment(parseInt(b.dataset.sell, 10));
+    });
+  }
+
+  // Investment product dropdown
+  const invSel = $("#invest-product");
+  if (invSel.options.length !== state.investmentProducts.length) {
+    invSel.innerHTML = "";
+    for (const p of state.investmentProducts) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      const lo = (p.annual_return_low * 100).toFixed(0);
+      const hi = (p.annual_return_high * 100).toFixed(0);
+      opt.textContent = `${p.name} (${lo}% – ${hi}% / yr, min ${fmtMoney(p.min_amount)})`;
+      invSel.appendChild(opt);
+    }
+  }
+
+  // Open loans list
+  const loanHost = $("#open-loans");
+  loanHost.innerHTML = "";
+  const loans = c.loans || [];
+  if (loans.length === 0) {
+    loanHost.innerHTML = '<p class="placeholder">No open loans.</p>';
+  } else {
+    loans.forEach((l) => {
+      const row = document.createElement("div");
+      row.className = "holding";
+      row.innerHTML = `
+        <div class="h-name">${l.name}</div>
+        <div class="h-meta">balance <strong>${fmtMoney(l.balance)}</strong>
+          · ${(l.interest_rate * 100).toFixed(1)}% APR
+          · ${l.years_remaining} yrs left</div>`;
+      loanHost.appendChild(row);
+    });
+  }
+
+  // Loan product dropdown
+  const loanSel = $("#loan-product");
+  if (loanSel.options.length !== state.loanProducts.length) {
+    loanSel.innerHTML = "";
+    for (const p of state.loanProducts) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = `${p.name} (max ${fmtMoney(p.max_amount)}, ${(p.interest_rate * 100).toFixed(0)}% / ${p.max_years} yrs)`;
+      loanSel.appendChild(opt);
+    }
+  }
+}
+
+function setupFinanceTabs() {
+  $$(".finances-area .tab").forEach((t) => {
+    t.onclick = () => {
+      $$(".finances-area .tab").forEach((x) => x.classList.remove("active"));
+      t.classList.add("active");
+      $("#tab-investments").classList.toggle("hidden", t.dataset.tab !== "investments");
+      $("#tab-loans").classList.toggle("hidden", t.dataset.tab !== "loans");
+    };
+  });
+
+  $("#invest-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const productId = parseInt($("#invest-product").value, 10);
+    const amount = parseInt($("#invest-amount").value, 10);
+    const msg = $("#invest-msg");
+    msg.textContent = "";
+    try {
+      await invest(productId, amount);
+      $("#invest-amount").value = "";
+    } catch (err) {
+      msg.textContent = err.message.replace(/^\d+:\s*/, "");
+    }
+  });
+
+  $("#loan-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const productId = parseInt($("#loan-product").value, 10);
+    const amount = parseInt($("#loan-amount").value, 10);
+    const msg = $("#loan-msg");
+    msg.textContent = "";
+    try {
+      await takeLoan(productId, amount);
+      $("#loan-amount").value = "";
+    } catch (err) {
+      msg.textContent = err.message.replace(/^\d+:\s*/, "");
+    }
+  });
+}
+
 // ---------- Country picker ----------
 function renderCountryGrid() {
   const grid = $("#country-grid");
@@ -244,7 +396,9 @@ async function init() {
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
   await loadCountries();
+  await loadFinanceProducts();
   renderCountryGrid();
+  setupFinanceTabs();
 }
 
 init().catch((e) => {

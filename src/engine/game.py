@@ -172,11 +172,27 @@ class Game:
                                  f"Net change to savings this year: ${net:,}.",
                                  money_delta=net))
 
-        # 4. Debt interest
-        interest = finances.accrue_debt_interest(char)
-        if interest:
-            log.append(TurnEvent("debt_interest", "Debt interest", "finance",
-                                 f"Your outstanding debt accrued ${interest:,} in interest."))
+        # 4. Loans + investments yearly tick
+        tick = finances.tick_finances(char, self.rng)
+        if tick.investment_pl:
+            sign = "gained" if tick.investment_pl >= 0 else "lost"
+            log.append(TurnEvent(
+                "investment_return", "Investments", "finance",
+                f"Your portfolio {sign} ${abs(tick.investment_pl):,} this year.",
+                money_delta=0,
+            ))
+        if tick.loan_payments:
+            log.append(TurnEvent(
+                "loan_payment", "Loan payments", "finance",
+                f"Paid ${tick.loan_payments:,} on loans (${tick.loan_interest:,} of it interest).",
+                money_delta=-tick.loan_payments,
+            ))
+        for closed in tick.closed_loans:
+            log.append(TurnEvent("loan_closed", "Loan paid off", "finance",
+                                 f"You paid off your {closed}."))
+        for closed in tick.closed_investments:
+            log.append(TurnEvent("investment_lost", "Investment wiped out", "finance",
+                                 f"Your {closed} position is now worthless."))
 
         # 5. Financial stress
         stress = finances.financial_stress(char, country)
