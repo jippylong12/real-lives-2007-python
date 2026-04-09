@@ -24,9 +24,27 @@ if TYPE_CHECKING:
 
 
 # Country region buckets for tropical-disease modulation. The 2007 Factbook
-# treats tropical diseases as concentrated in Sub-Saharan Africa, Southeast
-# Asia, the Indian subcontinent, and tropical Latin America.
+# treats tropical diseases as concentrated in Sub-Saharan Africa, tropical
+# Latin America, Oceania, and the tropical Asia belt (Indian subcontinent +
+# Southeast Asia). The "Asia" region bucket in seed.py includes both
+# tropical and temperate countries (China, Japan, Korea, Mongolia, the
+# 'stans), so we enumerate the tropical Asian country codes explicitly
+# rather than including the whole region.
 TROPICAL_REGIONS = {"Africa", "Central America", "Caribbean", "South America", "Oceania"}
+TROPICAL_ASIA_CODES = frozenset({
+    # Indian subcontinent
+    "in", "bd", "lk", "np", "bt", "mv", "pk",
+    # Southeast Asia
+    "id", "my", "th", "vn", "kh", "la", "mm", "ph", "sg", "tl", "bn",
+    # Middle East tropical pockets
+    "ye", "om",
+})
+
+
+def is_tropical(country: "Country") -> bool:
+    """Whether a country lies in the tropical-disease belt — used by
+    ``tropical_only`` and the ``tropical_mult`` modifier."""
+    return country.region in TROPICAL_REGIONS or country.code in TROPICAL_ASIA_CODES
 
 
 @dataclass(frozen=True)
@@ -43,6 +61,7 @@ class Disease:
     treatment_cost: int         # USD-equivalent treatment cost
     permanent: bool = False     # condition leaves a lifelong mark even after "cure"
     gender_only: int | None = None  # 0 female, 1 male, None both
+    tropical_only: bool = False # hard-zero outside TROPICAL_REGIONS (#23)
     tropical_mult: float = 1.0  # multiplier for TROPICAL_REGIONS
     poor_mult: float = 1.0      # multiplier when gdp_pc < 5000
     rich_mult: float = 1.0      # multiplier when gdp_pc > 30000
@@ -93,17 +112,21 @@ DISEASES: list[Disease] = [
     Disease("hpv",                    "HPV infection",           "sti", 0.0040, 16, 45, 1, 0.0, True, 0, description="Most clear naturally; some strains cause cancer."),
 
     # ===== Tropical / parasitic =====
-    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_mult=8.0, rich_mult=0.005, urban_skew=0.4, description="Mosquito-borne parasitic infection; rural exposure dominates."),
-    Disease("dengue",           "Dengue fever",     "tropical", 0.0080,  3, 80, 8,  0.02, True, 300, tropical_mult=5.0, rich_mult=0.1, description="Viral fever transmitted by Aedes mosquitoes."),
-    Disease("yellow_fever",     "Yellow fever",     "tropical", 0.0010,  5, 70, 12, 0.20, True, 800, tropical_mult=6.0, rich_mult=0.05, description="Viral hemorrhagic fever; vaccine-preventable."),
-    Disease("chagas",           "Chagas disease",   "tropical", 0.0008,  5, 80, 5, 0.04, True, 1500, permanent=True, tropical_mult=4.0, rich_mult=0.0, description="Trypanosoma cruzi; chronic cardiac damage."),
-    Disease("leishmaniasis",    "Leishmaniasis",    "tropical", 0.0009,  5, 70, 8, 0.10, True, 1200, tropical_mult=5.0, rich_mult=0.0, description="Sandfly-transmitted protozoan disease."),
-    Disease("sleeping_sickness","Sleeping sickness","tropical", 0.0004, 10, 70, 12, 0.40, True, 2000, tropical_mult=10.0, rich_mult=0.0, description="African trypanosomiasis."),
-    Disease("schistosomiasis",  "Schistosomiasis",  "tropical", 0.0050,  5, 70, 4, 0.005, True, 200, sanitation_dependent=True, tropical_mult=6.0, rich_mult=0.0, urban_skew=0.3, description="Snail-borne parasitic worm; rural water exposure."),
-    Disease("onchocerciasis",   "River blindness",  "tropical", 0.0006,  8, 70, 4, 0.005, True, 400, permanent=True, tropical_mult=8.0, rich_mult=0.0, description="Onchocerca volvulus; can cause blindness."),
-    Disease("trichuriasis",     "Whipworm",         "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Soil-transmitted intestinal worm."),
-    Disease("ascariasis",       "Roundworm",        "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Soil-transmitted intestinal worm."),
-    Disease("hookworm",         "Hookworm",         "tropical", 0.0060,  5, 60, 3, 0.005, True, 80, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, urban_skew=0.3, description="Iron-deficiency anemia from blood-feeding worms; rural soil exposure."),
+    # tropical_only=True: hard-zeros incidence outside TROPICAL_REGIONS so we
+    # don't need to balance fragile rich_mult/tropical_mult products to
+    # almost-zero out malaria-in-Stockholm cases. rich_mult restored to
+    # believable values (#23).
+    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_only=True, tropical_mult=8.0, rich_mult=0.3, urban_skew=0.4, description="Mosquito-borne parasitic infection; rural exposure dominates."),
+    Disease("dengue",           "Dengue fever",     "tropical", 0.0080,  3, 80, 8,  0.02, True, 300, tropical_only=True, tropical_mult=5.0, rich_mult=0.3, description="Viral fever transmitted by Aedes mosquitoes."),
+    Disease("yellow_fever",     "Yellow fever",     "tropical", 0.0010,  5, 70, 12, 0.20, True, 800, tropical_only=True, tropical_mult=6.0, rich_mult=0.2, description="Viral hemorrhagic fever; vaccine-preventable."),
+    Disease("chagas",           "Chagas disease",   "tropical", 0.0008,  5, 80, 5, 0.04, True, 1500, permanent=True, tropical_only=True, tropical_mult=4.0, rich_mult=0.1, description="Trypanosoma cruzi; chronic cardiac damage."),
+    Disease("leishmaniasis",    "Leishmaniasis",    "tropical", 0.0009,  5, 70, 8, 0.10, True, 1200, tropical_only=True, tropical_mult=5.0, rich_mult=0.1, description="Sandfly-transmitted protozoan disease."),
+    Disease("sleeping_sickness","Sleeping sickness","tropical", 0.0004, 10, 70, 12, 0.40, True, 2000, tropical_only=True, tropical_mult=10.0, rich_mult=0.05, description="African trypanosomiasis."),
+    Disease("schistosomiasis",  "Schistosomiasis",  "tropical", 0.0050,  5, 70, 4, 0.005, True, 200, sanitation_dependent=True, tropical_only=True, tropical_mult=6.0, rich_mult=0.1, urban_skew=0.3, description="Snail-borne parasitic worm; rural water exposure."),
+    Disease("onchocerciasis",   "River blindness",  "tropical", 0.0006,  8, 70, 4, 0.005, True, 400, permanent=True, tropical_only=True, tropical_mult=8.0, rich_mult=0.05, description="Onchocerca volvulus; can cause blindness."),
+    Disease("trichuriasis",     "Whipworm",         "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_only=True, tropical_mult=4.0, rich_mult=0.2, description="Soil-transmitted intestinal worm."),
+    Disease("ascariasis",       "Roundworm",        "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_only=True, tropical_mult=4.0, rich_mult=0.2, description="Soil-transmitted intestinal worm."),
+    Disease("hookworm",         "Hookworm",         "tropical", 0.0060,  5, 60, 3, 0.005, True, 80, sanitation_dependent=True, tropical_only=True, tropical_mult=4.0, rich_mult=0.2, urban_skew=0.3, description="Iron-deficiency anemia from blood-feeding worms; rural soil exposure."),
 
     # ===== Childhood =====
     Disease("measles",          "Measles",          "childhood", 0.0080,  0, 12, 6, 0.04, True, 50, poor_mult=3.0, rich_mult=0.1, description="Highly contagious viral rash."),
@@ -155,7 +178,7 @@ DISEASES: list[Disease] = [
 
 def _country_modifier(disease: Disease, country: "Country") -> float:
     mult = 1.0
-    if disease.tropical_mult != 1.0 and country.region in TROPICAL_REGIONS:
+    if disease.tropical_mult != 1.0 and is_tropical(country):
         mult *= disease.tropical_mult
     if disease.poor_mult != 1.0 and country.gdp_pc < 5000:
         mult *= disease.poor_mult
@@ -188,6 +211,11 @@ def eligible_diseases(character: "Character", country: "Country") -> list[tuple[
         if character.age < d.age_min or character.age > d.age_max:
             continue
         if d.gender_only is not None and int(character.gender) != d.gender_only:
+            continue
+        # Hard gate: tropical-only diseases (#23) don't appear at all
+        # outside the tropical belt. Avoids fragile rich_mult juggling for
+        # malaria-in-Stockholm.
+        if d.tropical_only and not is_tropical(country):
             continue
         if d.key in active:
             continue

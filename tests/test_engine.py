@@ -234,6 +234,32 @@ def test_religion_events_present_in_registry():
     assert not missing, f"missing events: {missing}"
 
 
+def test_tropical_only_diseases_hard_gated_outside_tropics():
+    """Issue #23: tropical_only=True diseases (malaria, dengue, yellow
+    fever, schistosomiasis, ...) should never even be eligible for
+    characters in non-tropical countries — no more fragile rich_mult
+    juggling to almost-zero out malaria-in-Stockholm."""
+    from src.engine.character import create_random_character
+
+    rng = random.Random(0)
+    sweden = get_country("se")
+    char = create_random_character(sweden, rng)
+    char.age = 30
+    keys = {d.key for d, _ in diseases.eligible_diseases(char, sweden)}
+    for tropical_key in ("malaria", "dengue", "yellow_fever", "schistosomiasis", "hookworm"):
+        assert tropical_key not in keys, (
+            f"{tropical_key} should not be eligible in Sweden"
+        )
+
+    # India is in TROPICAL_ASIA_CODES so tropical-only diseases should fire there.
+    india = get_country("in")
+    char_in = create_random_character(india, rng)
+    char_in.age = 30
+    keys_in = {d.key for d, _ in diseases.eligible_diseases(char_in, india)}
+    assert "malaria" in keys_in
+    assert "dengue" in keys_in
+
+
 def test_disease_calibration_anchor_lifetime_rates():
     """Issue #14: simulated lifetime malaria incidence in Sweden must be
     < 1%, and in Nigeria must be > 50%. The previous values (~8% Sweden,
