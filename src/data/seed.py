@@ -461,14 +461,23 @@ JOBS: list[dict] = [
 
 
 # Investment options.
+#
+# `risk` is the per-year catastrophic-loss probability multiplier (#41) — the
+# yearly tick in finances.tick_finances rolls (risk * 0.10) for total wipeout.
+# So a small business with risk=0.60 has a ~6%/year chance of going to zero,
+# matching real-world small-business failure rates of ~50% over 10 years.
+# Return ranges are tuned so the expected annual return roughly matches the
+# real-world version of each instrument: savings ~2.5%, bonds 3-6%,
+# stock funds 4-7%, high-risk stock 7-10% with high variance, real estate
+# ~5%, small business ~3% with very high variance and crash risk.
 INVESTMENTS: list[dict] = [
     {"name": "savings account",      "annual_return_low":  0.01, "annual_return_high": 0.04, "risk": 0.0,  "min_amount":    100},
     {"name": "government bonds",     "annual_return_low":  0.02, "annual_return_high": 0.06, "risk": 0.05, "min_amount":   1000},
-    {"name": "corporate bonds",      "annual_return_low":  0.03, "annual_return_high": 0.10, "risk": 0.15, "min_amount":   2000},
-    {"name": "low-risk stock fund",  "annual_return_low": -0.05, "annual_return_high": 0.12, "risk": 0.25, "min_amount":   1000},
-    {"name": "high-risk stock",      "annual_return_low": -0.40, "annual_return_high": 0.60, "risk": 0.55, "min_amount":   2500},
-    {"name": "real estate",          "annual_return_low": -0.05, "annual_return_high": 0.15, "risk": 0.30, "min_amount":  20000},
-    {"name": "small business",       "annual_return_low": -0.50, "annual_return_high": 0.80, "risk": 0.60, "min_amount":   5000},
+    {"name": "corporate bonds",      "annual_return_low":  0.01, "annual_return_high": 0.08, "risk": 0.15, "min_amount":   2000},
+    {"name": "low-risk stock fund",  "annual_return_low": -0.10, "annual_return_high": 0.14, "risk": 0.25, "min_amount":   1000},
+    {"name": "high-risk stock",      "annual_return_low": -0.40, "annual_return_high": 0.50, "risk": 0.55, "min_amount":   2500},
+    {"name": "real estate",          "annual_return_low": -0.08, "annual_return_high": 0.14, "risk": 0.30, "min_amount":  20000},
+    {"name": "small business",       "annual_return_low": -0.50, "annual_return_high": 0.45, "risk": 0.60, "min_amount":   5000},
 ]
 
 

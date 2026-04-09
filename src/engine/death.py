@@ -29,21 +29,23 @@ def infant_mortality_chance(country: Country) -> float:
 def background_mortality(character: Character, country: Country) -> float:
     """Per-year background death roll for healthy adults.
 
-    Calibrated so that a healthy adult in a high-HDI country has roughly
-    real-world background mortality (~0.001/year for ages 20-50, with health
-    impairment kicking in only when health drops below 50). Old age is
-    handled by the separate exponential ramp in :func:`old_age_mortality`.
+    Background is HDI-scaled (#31): high-HDI countries (Japan, Sweden,
+    Norway) sit near real-world adult mortality of ~0.0005/year, while
+    low-HDI countries reach ~0.003/year reflecting accidents, infectious
+    disease, and limited healthcare. Below health=50 a *quadratic*
+    low-health ramp adds extra risk — gentle at h=49, sharp at h=5 —
+    so chronically impaired characters have elevated risk without
+    dropping off a cliff (#32 replaced the old binary instant-kill).
+    Old age is the separate exponential ramp in
+    :func:`old_age_mortality`.
     """
     health = max(1, character.attributes.health)
-    base = 0.0008
-    # Health penalty only kicks in below 50 (severely impaired) and ramps
-    # up steeply from there.
+    # HDI ramp: 0.0005 at HDI=1.0 (Norway/Japan), 0.0030 at HDI=0.5
+    # (Sub-Saharan), 0.0055 at HDI=0.0.
+    base = 0.0005 + (1.0 - country.hdi) * 0.005
     if health < 50:
-        base += (50 - health) * 0.0006
-    if country.hdi < 0.6:
-        base *= 1.4
-    if country.health_services_pct < 70:
-        base *= 1.3
+        deficit = 50 - health
+        base += (deficit ** 2) * 0.00003
     return base
 
 
@@ -64,14 +66,26 @@ def total_death_chance(character: Character, country: Country) -> float:
 
 
 def kill_check(character: Character, country: Country, rng: random.Random) -> tuple[bool, str | None]:
-    """Roll for death this year. Returns (died, cause)."""
+    """Roll for death this year. Returns (died, cause).
+
+    There is no longer a binary `health <= 0` instant-kill (#32) — the
+    quadratic ramp in :func:`background_mortality` makes severely
+    impaired characters very likely to die naturally without a cliff.
+
+    Cause labeling (#31): "old age" applies past country life expectancy
+    OR past age 65 if the character isn't severely impaired. Below that,
+    very-low-health deaths label as "poor health"; everything else is
+    "natural causes".
+    """
     if character.age == 0:
         if rng.random() < infant_mortality_chance(country):
             return True, "infant mortality"
-    if character.attributes.health <= 0:
-        return True, "poor health"
     if rng.random() < total_death_chance(character, country):
-        if character.age > country.life_expectancy:
+        if character.age >= country.life_expectancy:
             return True, "old age"
+        if character.age >= 65 and character.attributes.health >= 30:
+            return True, "old age"
+        if character.attributes.health < 25:
+            return True, "poor health"
         return True, "natural causes"
     return False, None

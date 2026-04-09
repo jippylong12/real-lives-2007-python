@@ -227,8 +227,14 @@ class Game:
                     self.state.year, char.age, log, self.state.pending_event,
                     False, None,
                 )
-            outcome = ev.apply(char, country, self.rng)
-            if outcome.summary:
+            result = ev.apply(char, country, self.rng)
+            # apply() can return either a single EventOutcome or a list of
+            # them (#36 — multi-disease years split each diagnosis into its
+            # own log line).
+            outcomes = result if isinstance(result, list) else [result]
+            for outcome in outcomes:
+                if not outcome.summary:
+                    continue
                 if outcome.deltas:
                     char.attributes.adjust(**outcome.deltas)
                 if outcome.money_delta:
@@ -255,17 +261,30 @@ class Game:
         # health drift, every acute disease / minor injury hit accumulates
         # forever and characters die of cumulative attrition long before
         # old age (#24). Drift is stronger in countries with good
-        # healthcare since recovery from injuries / acute illness is faster.
+        # healthcare since recovery from injuries / acute illness is
+        # faster, and stronger still when the character is severely
+        # impaired (the body fights to recover from low-health states
+        # — without this kick, low-HDI characters get stuck on the
+        # quadratic mortality ramp, #32).
         if char.attributes.happiness < 60:
             char.attributes.adjust(happiness=+1)
         elif char.attributes.happiness > 80:
             char.attributes.adjust(happiness=-1)
-        if char.age < 70:
-            heal_target = 60 + int(country.health_services_pct / 5)  # 70-80 in good countries
-            if char.attributes.health < heal_target:
-                # Faster recovery in well-resourced countries.
+        # Health regen target falls with age, regen rate declines too,
+        # but never goes to zero — even in old age the body recovers some
+        # of the previous year's hits if healthcare is available.
+        heal_target = 60 + int(country.health_services_pct / 5)
+        if char.age >= 70:
+            heal_target = max(35, heal_target - (char.age - 70))
+        if char.attributes.health < heal_target:
+            if char.age < 70:
                 regen = 3 if country.health_services_pct >= 80 else 2
-                char.attributes.adjust(health=+regen)
+            else:
+                # Slow decline past 70: 2/yr in good healthcare, 1/yr otherwise.
+                regen = 2 if country.health_services_pct >= 80 else 1
+            if char.attributes.health < 25:
+                regen += 3  # convalescent boost — body fights to recover
+            char.attributes.adjust(health=+regen)
 
         # 10. Death roll — first from active high-lethality diseases, then
         # from the generic age/health curve.
@@ -311,6 +330,8 @@ class Game:
             char.money += choice.money_delta
         for k, v in choice.moral_delta.items():
             char.moral_ledger[k] = char.moral_ledger.get(k, 0) + v
+        if choice.side_effect is not None:
+            choice.side_effect(char)
         line = f"{ev.title}: {choice.summary}"
         char.remember(line)
 

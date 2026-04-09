@@ -340,6 +340,37 @@ def test_cancer_lifetime_rates_in_real_world_ballpark():
     assert prostate >= 0.08, f"US lifetime prostate cancer {prostate*100:.1f}% should be >=8%"
 
 
+def test_average_lifespan_in_real_world_ballpark_for_rich_countries():
+    """Issue #31: simulated average lifespan for rich countries should be
+    within ~5 years of real-world life expectancy. Old age should be the
+    dominant cause of death in healthy nations."""
+    from src.engine import Game
+    from collections import Counter
+
+    def cohort(country_code: str, n: int = 100):
+        ages = []
+        causes = Counter()
+        for s in range(n):
+            g = Game.new(country_code=country_code, seed=s)
+            while g.state.character.alive and g.state.character.age < 100:
+                r = g.advance_year()
+                if r.pending_decision:
+                    g.apply_decision(r.pending_decision["choices"][0]["key"])
+            ages.append(g.state.character.age)
+            causes[g.state.character.cause_of_death] += 1
+        return sum(ages) / len(ages), causes
+
+    # USA: real ~78, target 73-83
+    avg, causes = cohort("us")
+    assert 73 <= avg <= 83, f"US avg lifespan {avg:.1f} not in [73, 83]"
+    assert causes["old age"] >= 50, f"US old-age deaths {causes['old age']}/100 too low"
+
+    # Sweden: real ~83, target 76-86
+    avg, causes = cohort("se")
+    assert 76 <= avg <= 86, f"Sweden avg lifespan {avg:.1f} not in [76, 86]"
+    assert causes["old age"] >= 50, f"Sweden old-age deaths {causes['old age']}/100 too low"
+
+
 def test_disease_calibration_anchor_lifetime_rates():
     """Issue #14: simulated lifetime malaria incidence in Sweden must be
     < 1%, and in Nigeria must be > 50%. The previous values (~8% Sweden,
@@ -445,6 +476,68 @@ def test_military_service_event_uses_conscription_flag():
     char2.gender = Gender.MALE
     char2.age = 19
     assert not MILITARY_SERVICE.eligible(char2, us)
+
+
+def test_small_business_investment_has_real_risk():
+    """Issue #41: small business used to print money — uniform return
+    in [-0.50, +0.80] gave +15% expected/year and characters ended
+    careers as millionaires. Now it has a risk-driven catastrophic-loss
+    roll AND a less skewed return range, so the *median* outcome over
+    long holding periods is at or below the starting value."""
+    from src.engine import finances
+    from src.engine.character import Character, Attributes, InvestmentHolding, Gender, EducationLevel
+
+    sb = next(p for p in finances.list_investments() if p.name == "small business")
+    end_values = []
+    for seed in range(500):
+        rng = random.Random(seed)
+        char = Character(
+            id="test", name="t", gender=Gender.MALE, age=30,
+            country_code="us", city="x", is_urban=True,
+            attributes=Attributes(),
+            family_wealth=0, money=10000,
+        )
+        char.investments.append(InvestmentHolding(
+            product_id=sb.id, name=sb.name,
+            cost_basis=5000, value=5000, opened_year=2000,
+        ))
+        for _ in range(20):  # 20-year hold
+            finances.tick_finances(char, rng)
+            if not char.investments:
+                end_values.append(0)
+                break
+        else:
+            end_values.append(char.investments[0].value)
+
+    n_wiped_out = sum(1 for v in end_values if v == 0)
+    median = sorted(end_values)[len(end_values) // 2]
+
+    # Real small businesses fail more than half the time over a decade.
+    assert n_wiped_out > 100, f"only {n_wiped_out}/500 wiped out — risk too low"
+    # And the median outcome should be at or below the starting investment.
+    assert median <= 5000, f"median end value {median} > starting 5000 — still printing money"
+
+
+def test_pregnancy_event_actually_adds_child():
+    """Issue #39: the had_child event used to apply happiness deltas but
+    forget to append a FamilyMember to character.children, leaving the
+    sidebar 'children' counter at 0 for the entire game."""
+    from src.engine.character import create_random_character
+    from src.engine.events import EVENT_REGISTRY
+
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.married = True
+    char.spouse_name = "Test Spouse"
+    assert len(char.children) == 0
+
+    pregnancy = next(e for e in EVENT_REGISTRY if e.key == "had_child")
+    outcome = pregnancy.apply(char, get_country("us"), rng)
+    assert len(char.children) == 1
+    assert char.children[0].relation == "child"
+    assert char.children[0].age == 0
+    assert outcome.summary  # not blank
 
 
 def test_disease_treatment_cost_drains_family_wealth_after_money():

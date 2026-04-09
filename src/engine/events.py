@@ -38,6 +38,10 @@ class EventChoice:
     money_delta: int = 0
     moral_delta: dict[str, int] = field(default_factory=dict)
     summary: str = ""
+    # Optional callback that runs after deltas/money/moral are applied,
+    # for choices that need to mutate character state directly (e.g.,
+    # education path choice changing in_school / education level).
+    side_effect: Callable[["Character"], None] | None = None
 
 
 @dataclass
@@ -102,27 +106,24 @@ def _choice(
 # ---------------------------------------------------------------------------
 
 def _apply_specific_disease(c, co, rng):
-    """Apply every disease that fires this year (#22) and aggregate the
-    summary lines, attribute deltas, and money cost into one EventOutcome
-    so the engine's per-year event log shows them as a single \"health\"
-    update."""
+    """Apply every disease that fires this year (#22) and return ONE
+    ``EventOutcome`` per disease (#36). Returning a list lets the engine
+    log each diagnosis as its own line in the event feed instead of
+    joining them into one wall-of-text entry."""
     fired = diseases.roll_diseases(c, co, rng)
     if not fired:
         return EventOutcome(summary="")
-    summaries: list[str] = []
-    agg_deltas: dict[str, int] = {}
-    agg_money = 0
+    outcomes: list[EventOutcome] = []
     for d in fired:
         payload = diseases.contract_disease(c, co, d, rng)
-        summaries.append(payload["summary"])
-        for k, v in payload["deltas"].items():
-            agg_deltas[k] = agg_deltas.get(k, 0) + v
-        agg_money += payload["money_delta"]
-    return EventOutcome(
-        summary=" ".join(summaries),
-        deltas=agg_deltas,
-        money_delta=agg_money,
-    )
+        outcomes.append(EventOutcome(
+            summary=payload["summary"],
+            deltas=payload["deltas"],
+            money_delta=payload["money_delta"],
+        ))
+    if len(outcomes) == 1:
+        return outcomes[0]
+    return outcomes
 
 
 def _apply_minor_injury(c, co, rng):
@@ -207,8 +208,20 @@ def _apply_promotion(c, co, rng):
 
 
 def _apply_pregnancy(c, co, rng):
+    """Add a new child to character.children (#39 — was previously
+    decoration only, the kids stat stayed at 0 forever)."""
+    from .character import FamilyMember, Gender, _random_name
+    gender = Gender(rng.randint(0, 1))
+    child = FamilyMember(
+        relation="child",
+        name=_random_name(gender, rng),
+        age=0,
+        alive=True,
+        gender=gender,
+    )
+    c.children.append(child)
     return EventOutcome(
-        summary="You and your spouse welcomed a new child.",
+        summary=f"You and your spouse welcomed a {'son' if gender == Gender.MALE else 'daughter'}, {child.name}.",
         deltas={"happiness": +12, "health": -3},
     )
 
@@ -660,6 +673,126 @@ CONVERSION_OFFER = _choice(
 )
 
 
+def _education_university(c):
+    # Stay in school — education.update_education will auto-promote at 18
+    # to SECONDARY, then to UNIVERSITY at 22.
+    c.in_school = True
+
+
+def _education_vocational(c):
+    # Skip the secondary→university track entirely; jump straight to a
+    # vocational credential.
+    c.education = EducationLevel.VOCATIONAL
+    c.in_school = False
+
+
+def _education_dropout(c):
+    # Leave school. Education stays at whatever level was already
+    # completed (primary or none).
+    c.in_school = False
+
+
+def _accept_proposal(c):
+    from .character import Gender, _random_name
+    import random as _random
+    rng = _random.Random()
+    spouse_gender = Gender.MALE if c.gender == Gender.FEMALE else Gender.FEMALE
+    c.spouse_name = _random_name(spouse_gender, rng)
+    c.married = True
+
+
+LOVE_MARRIAGE = _choice(
+    key="love_marriage",
+    title="A proposal",
+    category="life",
+    description=(
+        "You and someone you've been seeing have grown serious. They want to know "
+        "if you see a future together. The choice is yours — and the answer "
+        "matters."
+    ),
+    when=lambda c, co: (
+        24 <= c.age <= 38
+        and not c.married
+        # Skip in countries where the arranged-marriage choice already
+        # offers this same decision in a different cultural frame.
+        and not (co.primary_religion in ("Hinduism", "Islam") and co.gdp_pc < 25000)
+    ),
+    chance=lambda c, co: 0.10 + c.attributes.appearance * 0.001,
+    choices=[
+        EventChoice(
+            key="accept",
+            label="Say yes",
+            deltas={"happiness": +12, "wisdom": +1},
+            summary="You said yes. The wedding will be soon.",
+            side_effect=_accept_proposal,
+        ),
+        EventChoice(
+            key="decline",
+            label="Decline",
+            deltas={"happiness": -3, "wisdom": +1},
+            summary="You declined. It was hard but it didn't feel right.",
+        ),
+        EventChoice(
+            key="postpone",
+            label="Ask for more time",
+            deltas={"happiness": -1, "wisdom": +2},
+            summary="You asked for more time. They agreed but you both felt the weight of it.",
+        ),
+    ],
+)
+
+
+EDUCATION_PATH = _choice(
+    key="education_path",
+    title="What's next after school?",
+    category="education",
+    description=(
+        "You're nearing the end of secondary school. Your options for what comes "
+        "next depend on your intelligence, your family's resources, and how much "
+        "more time you want to spend in a classroom. The choice will shape your "
+        "career — and what salary range you can reach."
+    ),
+    when=lambda c, co: (
+        c.age == 17
+        and c.in_school
+        and c.education == EducationLevel.PRIMARY
+    ),
+    chance=lambda c, co: 1.0,  # always offer when eligible
+    choices=[
+        EventChoice(
+            key="university",
+            label="Apply to university",
+            deltas={"intelligence": +1, "wisdom": +1},
+            summary=(
+                "You decided to aim for university. The next several years will "
+                "be intensive but the doors it opens are wide."
+            ),
+            side_effect=_education_university,
+        ),
+        EventChoice(
+            key="vocational",
+            label="Vocational training",
+            deltas={"wisdom": +2, "strength": +1},
+            summary=(
+                "You enrolled in a vocational program — a faster path to a paying "
+                "trade than university."
+            ),
+            side_effect=_education_vocational,
+        ),
+        EventChoice(
+            key="dropout",
+            label="Drop out and start working",
+            deltas={"wisdom": +1, "happiness": +2},
+            summary=(
+                "You left school to enter the workforce immediately. Less debt, "
+                "fewer doors — but ready to earn now."
+            ),
+            side_effect=_education_dropout,
+        ),
+    ],
+)
+
+
 RELIGIOUS_SCHOOL = _choice(
     key="religious_school",
     title="A place at religious school",
@@ -1017,6 +1150,8 @@ EVENT_REGISTRY: list[Event] = [
     RELIGIOUS_SCHOOL,
     DOWRY_NEGOTIATION,
     BILINGUAL_SCHOOLING,
+    EDUCATION_PATH,
+    LOVE_MARRIAGE,
 ]
 
 

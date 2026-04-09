@@ -66,11 +66,24 @@ def get_investment_product(product_id: int) -> InvestmentProduct | None:
 # Player actions
 # ---------------------------------------------------------------------------
 
+# Minimum age for non-family loans (#37). Family loans are slightly more
+# permissive — a parent can lend to a teenager — but the standard adult
+# threshold is 18 for everything else.
+LOAN_MIN_AGE = 18
+FAMILY_LOAN_MIN_AGE = 14
+
+
 def take_loan(character: Character, product: LoanProduct, amount: int, year: int) -> LoanHolding:
     """Open a new loan against `product`. Adds the principal to the player's
     cash and tracks the loan as a LoanHolding for per-year repayment.
 
-    Raises ValueError on bad input (over the product's max, non-positive, etc.)."""
+    Raises ValueError on bad input (over the product's max, non-positive,
+    too young to borrow, etc.)."""
+    min_age = FAMILY_LOAN_MIN_AGE if product.name == "family loan" else LOAN_MIN_AGE
+    if character.age < min_age:
+        raise ValueError(
+            f"you must be at least {min_age} to take out a {product.name}"
+        )
     if amount <= 0:
         raise ValueError("loan amount must be positive")
     if amount > product.max_amount:
@@ -122,6 +135,27 @@ def sell_investment(character: Character, index: int) -> int:
     return proceeds
 
 
+def pay_loan(character: Character, index: int, amount: int) -> int:
+    """Apply a manual extra payment to loan `index` (#40). Drains the
+    requested amount from the character's cash and reduces the loan
+    balance by the same amount. If the payment fully clears the loan,
+    the holding is removed. Returns the actual amount applied."""
+    if index < 0 or index >= len(character.loans):
+        raise ValueError("invalid loan index")
+    if amount <= 0:
+        raise ValueError("payment amount must be positive")
+    if amount > character.money:
+        raise ValueError("not enough cash on hand")
+    loan = character.loans[index]
+    applied = min(amount, loan.balance)
+    character.money -= applied
+    loan.balance -= applied
+    if loan.balance <= 0:
+        character.loans.pop(index)
+    character.debt = sum(l.balance for l in character.loans)
+    return applied
+
+
 # ---------------------------------------------------------------------------
 # Yearly tick
 # ---------------------------------------------------------------------------
@@ -154,6 +188,15 @@ def tick_finances(character: Character, rng: random.Random) -> FinanceTick:
     for inv in list(character.investments):
         prod = products.get(inv.product_id)
         if prod is None:
+            continue
+        # Catastrophic-loss roll (#41): the position can go to zero with
+        # probability risk * 0.10 per year. Real small businesses fail
+        # >50% over 10 years; savings accounts never (risk=0). This makes
+        # the `risk` field actually load-bearing instead of decorative.
+        if prod.risk > 0 and rng.random() < prod.risk * 0.10:
+            tick.investment_pl -= inv.value
+            inv.value = 0
+            tick.closed_investments.append(inv.name)
             continue
         roll = rng.uniform(prod.annual_return_low, prod.annual_return_high)
         delta = int(inv.value * roll)

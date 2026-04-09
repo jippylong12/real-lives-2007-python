@@ -92,6 +92,18 @@ def assign_job(character: Character, country: Country, rng: random.Random) -> st
     return f"You started working as a {chosen.name} (salary ~${character.salary:,}/yr)."
 
 
+def quit_job(character: Character) -> None:
+    """Manually quit the current job (#38). Resets job + salary so the
+    next yearly tick re-runs ``assign_job`` and assigns a fresh role.
+
+    Raises ValueError if the character isn't currently employed.
+    """
+    if character.job is None:
+        raise ValueError("you don't have a job to quit")
+    character.job = None
+    character.salary = 0
+
+
 def yearly_income(character: Character, country: Country, rng: random.Random) -> int:
     """Apply income, expenses, and possibly a small variance for the year."""
     if character.salary <= 0:
