@@ -261,6 +261,30 @@ def test_country_original_stats_table_populated():
         conn.close()
 
 
+def test_strings_decode_cp437_not_latin1():
+    """Issue #27: the binary stores strings in CP437 (the IBM PC code page
+    Borland Delphi 7 used by default on Windows 9x), not Latin-1. The only
+    practically-affected entry is Réunion (byte 0x82 = é in CP437)."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    rows = parse_dat.decode_all_rows(parsed)
+    names = {r["Country"] for r in rows}
+    assert "Réunion" in names
+    # The legacy mojibake form should be gone.
+    assert "R\x82union" not in names
+
+    # And the build_db pipeline should map the cp437-decoded name to ISO 're'.
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        row = conn.execute(
+            "SELECT binary_name, country_code FROM country_original_stats WHERE country_code='re'"
+        ).fetchone()
+        assert row is not None
+        assert row["binary_name"] == "Réunion"
+    finally:
+        conn.close()
+
+
 def test_index_field_sanitized_to_uint32():
     """Issue #26: the first schema record in jobs.dat / Investments.dat /
     Loans.dat is an 'IndexField' Delphi row counter and the parser used

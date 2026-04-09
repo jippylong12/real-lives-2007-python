@@ -630,8 +630,11 @@ def decode_value(buf: bytes, field: DatField) -> object:
     if field.type_code == 1:  # string
         slot = buf[val_off:val_off + field.slot_size]
         s = slot.split(b"\x00", 1)[0]
-        # Original game stored Latin-1; emit unicode with the accents intact.
-        return s.decode("latin-1", errors="replace")
+        # Original game stored strings in CP437 (the IBM PC / DOS code page
+        # Borland Delphi 7 used by default on Windows 9x), not Latin-1
+        # (#27). The only practically-affected entry is Réunion (byte 0x82
+        # = é in CP437, vs an undefined control char in Latin-1).
+        return s.decode("cp437", errors="replace")
     if field.type_code == 4:  # bool (stored as uint16; only ever 0 or 1)
         return bool(struct.unpack_from("<H", buf, val_off)[0])
     if field.type_code == 5:  # uint16

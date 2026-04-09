@@ -227,7 +227,8 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     "Cote d'Ivoire": "Ivory Coast",
                     "Macedonia": "North Macedonia",
                     "Swaziland": "Eswatini",
-                    "Runion": "Reunion",
+                    "Réunion": "Reunion",   # CP437-decoded form (#27)
+                    "Runion": "Reunion",    # legacy stripped form, just in case
                     "Congo": "Republic of the Congo",
                     "Congo Democratic Republic": "DR Congo",
                 }
