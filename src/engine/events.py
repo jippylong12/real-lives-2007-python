@@ -25,6 +25,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from . import diseases
 from .character import Character, EducationLevel, Gender
 from .world import Country
 
@@ -100,17 +101,16 @@ def _choice(
 # Event applies
 # ---------------------------------------------------------------------------
 
-def _apply_illness(c, co, rng):
-    severity = rng.randint(5, 20)
-    if c.attributes.resistance > 70:
-        severity = max(2, severity // 2)
-    deltas = {"health": -severity, "happiness": -3}
-    if co.health_services_pct > 90 and c.money + c.family_wealth > 1000:
-        return EventOutcome(
-            summary=f"You caught a serious illness but received good medical care. (-{severity//2} health)",
-            deltas={"health": -severity // 2, "happiness": -2},
-        )
-    return EventOutcome(summary=f"You suffered a serious illness. (-{severity} health)", deltas=deltas)
+def _apply_specific_disease(c, co, rng):
+    disease = diseases.roll_disease(c, co, rng)
+    if disease is None:
+        return EventOutcome(summary="")  # nothing fired this year
+    payload = diseases.contract_disease(c, co, disease, rng)
+    return EventOutcome(
+        summary=payload["summary"],
+        deltas=payload["deltas"],
+        money_delta=payload["money_delta"],
+    )
 
 
 def _apply_minor_injury(c, co, rng):
@@ -315,12 +315,15 @@ MILITARY_SERVICE = _choice(
 
 EVENT_REGISTRY: list[Event] = [
     # --- Health ---
+    # The specific-disease event always rolls every year; the registry's
+    # eligibility wrapper just gates by age and lets diseases.roll_disease
+    # decide whether anything actually fires for this character.
     _passive(
-        "serious_illness", "Serious illness", "health",
-        "An illness lays you low.",
-        when=lambda c, co: c.age >= 1,
-        chance=lambda c, co: 0.04 + (1 - c.attributes.resistance / 100) * 0.05 + (1 - co.health_services_pct / 100) * 0.03,
-        apply=_apply_illness,
+        "specific_disease", "Disease", "health",
+        "A specific health condition strikes.",
+        when=lambda c, co: c.age >= 0,
+        chance=lambda c, co: 1.0,
+        apply=_apply_specific_disease,
     ),
     _passive(
         "minor_injury", "Minor injury", "health",

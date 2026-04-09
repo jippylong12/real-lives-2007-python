@@ -172,6 +172,25 @@ function renderGame() {
     attrEl.appendChild(row);
   }
 
+  // Diseases
+  const diseasesEl = $("#diseases");
+  diseasesEl.innerHTML = "";
+  const ds = c.diseases || {};
+  const entries = Object.entries(ds);
+  if (entries.length === 0) {
+    diseasesEl.innerHTML = '<p class="placeholder">Healthy.</p>';
+  } else {
+    for (const [key, info] of entries) {
+      const li = document.createElement("div");
+      li.className = "disease " + (info.active ? "active" : "resolved");
+      const status = info.active
+        ? (info.permanent ? "chronic" : "active")
+        : "resolved";
+      li.innerHTML = `<span class="d-name">${info.name}</span><span class="d-status">${status}</span>`;
+      diseasesEl.appendChild(li);
+    }
+  }
+
   // Country panel
   const ci = $("#country-info");
   ci.innerHTML = "";

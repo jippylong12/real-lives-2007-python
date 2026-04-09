@@ -166,6 +166,7 @@ class Character:
     alive: bool = True
     cause_of_death: str | None = None
     moral_ledger: dict[str, int] = field(default_factory=dict)
+    diseases: dict[str, dict] = field(default_factory=dict)
     history: list[str] = field(default_factory=list)
     pending_decision: dict | None = None  # event awaiting player choice
 
@@ -209,6 +210,7 @@ class Character:
             "alive": self.alive,
             "cause_of_death": self.cause_of_death,
             "moral_ledger": dict(self.moral_ledger),
+            "diseases": {k: dict(v) for k, v in self.diseases.items()},
             "history": list(self.history),
             "pending_decision": self.pending_decision,
             "life_stage": int(self.life_stage),
@@ -247,6 +249,7 @@ class Character:
             alive=d.get("alive", True),
             cause_of_death=d.get("cause_of_death"),
             moral_ledger=d.get("moral_ledger", {}),
+            diseases=d.get("diseases", {}),
             history=d.get("history", []),
             pending_decision=d.get("pending_decision"),
         )

@@ -5,6 +5,7 @@ import random
 import pytest
 
 from src.engine import Game
+from src.engine import diseases
 from src.engine.character import (
     Attributes, EducationLevel, Gender, create_random_character,
 )
@@ -128,3 +129,74 @@ def test_game_save_load_round_trip():
     assert loaded is not None
     assert loaded.state.character.name == g.state.character.name
     assert loaded.state.character.age == g.state.character.age
+
+
+# ---------- Diseases ----------
+
+def test_disease_registry_size():
+    assert len(diseases.DISEASES) >= 50, f"only {len(diseases.DISEASES)} diseases"
+    keys = [d.key for d in diseases.DISEASES]
+    assert len(keys) == len(set(keys)), "duplicate disease keys"
+
+
+def test_disease_categories_present():
+    cats = {d.category for d in diseases.DISEASES}
+    for required in ("cancer", "sti", "tropical", "childhood", "chronic", "infectious"):
+        assert required in cats
+
+
+def test_tropical_country_gets_more_tropical_diseases():
+    """Smoke test: simulating many lives in a low-income tropical country
+    yields more tropical-disease incidences than the same in a wealthy
+    temperate country."""
+    def tally(country_code: str) -> int:
+        n = 0
+        for seed in range(40):
+            g = Game.new(country_code=country_code, seed=seed)
+            while g.state.character.alive and g.state.character.age < 70:
+                r = g.advance_year()
+                if r.pending_decision:
+                    g.apply_decision(r.pending_decision["choices"][0]["key"])
+            for k in g.state.character.diseases:
+                d = next((dd for dd in diseases.DISEASES if dd.key == k), None)
+                if d and d.category == "tropical":
+                    n += 1
+        return n
+    tropical_low = tally("ng")  # Nigeria
+    temperate_rich = tally("se")  # Sweden
+    assert tropical_low > temperate_rich * 3, (
+        f"expected tropical-low >> temperate-rich, got {tropical_low} vs {temperate_rich}"
+    )
+
+
+def test_gender_only_diseases_respected():
+    """Cervical cancer should only appear in female characters."""
+    rng = random.Random(0)
+    male = create_random_character(get_country("us"), rng)
+    male.gender = Gender.MALE
+    male.age = 50
+    el = diseases.eligible_diseases(male, get_country("us"))
+    keys = {d.key for d, _ in el}
+    assert "cancer_cervix" not in keys
+    assert "cancer_prostate" in keys
+
+    female = create_random_character(get_country("us"), rng)
+    female.gender = Gender.FEMALE
+    female.age = 50
+    el = diseases.eligible_diseases(female, get_country("us"))
+    keys = {d.key for d, _ in el}
+    assert "cancer_cervix" in keys
+    assert "cancer_prostate" not in keys
+
+
+def test_active_disease_persists_through_save_load():
+    g = Game.new(country_code="us", seed=42)
+    diseases.contract_disease(
+        g.state.character, get_country("us"),
+        next(d for d in diseases.DISEASES if d.key == "diabetes_t2"),
+        random.Random(0),
+    )
+    g.save()
+    loaded = Game.load(g.state.id)
+    assert "diabetes_t2" in loaded.state.character.diseases
+    assert loaded.state.character.diseases["diabetes_t2"]["permanent"] is True

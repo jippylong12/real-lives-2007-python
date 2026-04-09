@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import careers, death, education, events, finances, relationships
+from . import careers, death, diseases, education, events, finances, relationships
 from .character import Character, EducationLevel, create_random_character
 from .world import Country, all_countries, get_country, random_country
 from ..data.build_db import get_connection
@@ -242,13 +242,33 @@ class Game:
                 ))
                 char.remember(outcome.summary)
 
-        # 8. Slight happiness drift toward 60 baseline
+        # 8. Chronic disease wear: each active permanent condition costs a
+        # bit of health every year on top of any acute event that fired.
+        chronic_loss, chronic_lines = diseases.chronic_progression(char, country, self.rng)
+        if chronic_loss:
+            char.attributes.adjust(health=-chronic_loss)
+            for line in chronic_lines:
+                log.append(TurnEvent("chronic_disease", "Chronic illness", "health",
+                                     line, deltas={"health": -chronic_loss}))
+
+        # 9. Slight happiness drift toward 60 baseline
         if char.attributes.happiness < 60:
             char.attributes.adjust(happiness=+1)
         elif char.attributes.happiness > 80:
             char.attributes.adjust(happiness=-1)
 
-        # 9. Death roll
+        # 10. Death roll — first from active high-lethality diseases, then
+        # from the generic age/health curve.
+        disease_cause = diseases.disease_kill_check(char, country, self.rng)
+        if disease_cause:
+            char.alive = False
+            char.cause_of_death = disease_cause
+            char.remember(f"Died of {disease_cause}.")
+            log.append(TurnEvent("death", "Death", "life",
+                                 f"You died at age {char.age}. Cause: {disease_cause}."))
+            self._checkpoint_rng()
+            return TurnResult(self.state.year, char.age, log,
+                              self.state.pending_event, True, disease_cause)
         died, cause = death.kill_check(char, country, self.rng)
         if died:
             char.alive = False

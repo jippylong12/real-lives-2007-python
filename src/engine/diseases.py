@@ -1,0 +1,306 @@
+"""
+Disease registry: 50+ named conditions with realistic country/age modulation.
+
+The original Real Lives 2007 binary tracks individual diseases as boolean flags
+on the character (HasMalaria, HadStunting, HasTertiaryNeurologicalSyphilis, ...).
+This module mirrors that resolution: instead of a single generic ``serious_illness``
+event, the engine rolls a specific named condition each year, weighted by the
+country's prevalence profile and the character's age band, and applies it to
+``character.diseases`` so it can be displayed and inherited across years.
+
+Treatment availability follows the country's health services and the player's
+ability to pay; untreated severe cases run a per-year mortality lottery.
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .character import Character
+    from .world import Country
+
+
+# Country region buckets for tropical-disease modulation. The 2007 Factbook
+# treats tropical diseases as concentrated in Sub-Saharan Africa, Southeast
+# Asia, the Indian subcontinent, and tropical Latin America.
+TROPICAL_REGIONS = {"Africa", "Central America", "Caribbean", "South America", "Oceania"}
+
+
+@dataclass(frozen=True)
+class Disease:
+    key: str                    # unique snake_case id
+    name: str                   # display name
+    category: str               # cancer | sti | tropical | childhood | chronic | infectious | respiratory | mental
+    base_chance: float          # annual base probability before modulation
+    age_min: int                # earliest age the disease typically appears
+    age_max: int                # latest typical onset age
+    severity: int               # health points lost per year while active
+    lethality: float            # extra death roll per year while active & untreated
+    treatable: bool             # if True, good health services + money can cure
+    treatment_cost: int         # USD-equivalent treatment cost
+    permanent: bool = False     # condition leaves a lifelong mark even after "cure"
+    gender_only: int | None = None  # 0 female, 1 male, None both
+    tropical_mult: float = 1.0  # multiplier for TROPICAL_REGIONS
+    poor_mult: float = 1.0      # multiplier when gdp_pc < 5000
+    rich_mult: float = 1.0      # multiplier when gdp_pc > 30000
+    sanitation_dependent: bool = False  # bigger penalty in countries with bad water
+    description: str = ""
+
+
+# 50+ diseases. Probabilities are intentionally low — diseases roll alongside
+# every other yearly event, and the CDF over a full lifetime should produce
+# realistic prevalence (e.g., ~13% lifetime risk of breast cancer in women).
+DISEASES: list[Disease] = [
+    # ===== Cancers (16) =====
+    Disease("cancer_bladder",   "Bladder cancer",   "cancer", 0.0006, 50, 90, 8,  0.25, True, 30000, description="Tumor in the bladder lining."),
+    Disease("cancer_breast",    "Breast cancer",    "cancer", 0.0020, 35, 90, 9,  0.20, True, 35000, gender_only=0, description="Tumor in breast tissue."),
+    Disease("cancer_cervix",    "Cervical cancer",  "cancer", 0.0010, 25, 80, 9,  0.25, True, 25000, gender_only=0, poor_mult=2.5, rich_mult=0.5, description="Tumor of the cervix; preventable with screening."),
+    Disease("cancer_colon",     "Colon cancer",     "cancer", 0.0014, 45, 90, 9,  0.25, True, 32000, description="Tumor of the colon."),
+    Disease("cancer_esophagus", "Esophageal cancer","cancer", 0.0005, 50, 85, 10, 0.45, True, 40000, description="Tumor of the esophagus."),
+    Disease("cancer_leukemia",  "Leukemia",         "cancer", 0.0006,  3, 85, 10, 0.30, True, 50000, description="Cancer of blood-forming tissue."),
+    Disease("cancer_liver",     "Liver cancer",     "cancer", 0.0008, 45, 85, 11, 0.50, True, 38000, description="Hepatocellular carcinoma."),
+    Disease("cancer_lung",      "Lung cancer",      "cancer", 0.0015, 45, 90, 11, 0.45, True, 42000, description="Most cases linked to tobacco use."),
+    Disease("cancer_lymphoma",  "Lymphoma",         "cancer", 0.0007, 25, 85, 9,  0.25, True, 38000, description="Cancer of the lymphatic system."),
+    Disease("cancer_melanoma",  "Melanoma",         "cancer", 0.0006, 30, 85, 8,  0.20, True, 28000, description="Skin cancer."),
+    Disease("cancer_mouth",     "Mouth cancer",     "cancer", 0.0005, 40, 85, 8,  0.30, True, 26000, description="Oral cavity tumor."),
+    Disease("cancer_ovary",     "Ovarian cancer",   "cancer", 0.0008, 40, 80, 10, 0.35, True, 35000, gender_only=0, description="Tumor of the ovary."),
+    Disease("cancer_pancreas",  "Pancreatic cancer","cancer", 0.0006, 50, 85, 12, 0.65, True, 45000, description="Highly lethal abdominal cancer."),
+    Disease("cancer_prostate",  "Prostate cancer",  "cancer", 0.0018, 50, 90, 8,  0.18, True, 30000, gender_only=1, description="Most common cancer in older men."),
+    Disease("cancer_stomach",   "Stomach cancer",   "cancer", 0.0006, 45, 85, 10, 0.40, True, 32000, description="Gastric carcinoma."),
+    Disease("cancer_uterus",    "Uterine cancer",   "cancer", 0.0007, 45, 80, 8,  0.25, True, 28000, gender_only=0, description="Endometrial tumor."),
+
+    # ===== Sexually transmitted (with staged syphilis) =====
+    Disease("syphilis_primary",       "Primary syphilis",        "sti", 0.0015, 16, 60, 5, 0.02, True,  500, poor_mult=3.0, rich_mult=0.3, description="Painless chancre at the infection site."),
+    Disease("syphilis_secondary",     "Secondary syphilis",      "sti", 0.0008, 16, 60, 7, 0.05, True, 1000, poor_mult=3.0, description="Rash and systemic symptoms; weeks after primary."),
+    Disease("syphilis_tertiary_cv",   "Cardiovascular syphilis", "sti", 0.0002, 30, 80, 12, 0.30, True, 5000, permanent=True, description="Aortic damage from late syphilis."),
+    Disease("syphilis_tertiary_neuro","Neurological syphilis",   "sti", 0.0002, 30, 80, 12, 0.30, True, 5000, permanent=True, description="Tabes dorsalis or general paresis from late syphilis."),
+    Disease("syphilis_congenital",    "Congenital syphilis",     "sti", 0.0005,  0,  2, 10, 0.40, True,  800, poor_mult=4.0, description="Inherited from mother during pregnancy."),
+    Disease("chlamydia",              "Chlamydia",               "sti", 0.0030, 16, 50, 3, 0.005, True, 200, description="Often asymptomatic; common bacterial STI."),
+    Disease("chlamydia_pid",          "Pelvic inflammatory disease", "sti", 0.0008, 18, 50, 7, 0.03, True, 1500, gender_only=0, permanent=True, description="Untreated chlamydia or gonorrhea complication."),
+    Disease("chlamydia_infertility",  "STI-related infertility", "sti", 0.0004, 20, 45, 0, 0.0, False, 0, permanent=True, description="Tubal damage from prior pelvic infection."),
+    Disease("gonorrhea",              "Gonorrhea",               "sti", 0.0020, 16, 50, 4, 0.01, True, 250, description="Bacterial STI; treatable with antibiotics."),
+    Disease("hiv",                    "HIV/AIDS",                "sti", 0.0010, 16, 60, 7, 0.10, True, 8000, permanent=True, poor_mult=4.0, rich_mult=0.4, description="Lifelong infection; manageable with antiretroviral therapy."),
+    Disease("hpv",                    "HPV infection",           "sti", 0.0040, 16, 45, 1, 0.0, True, 0, description="Most clear naturally; some strains cause cancer."),
+
+    # ===== Tropical / parasitic =====
+    Disease("malaria",          "Malaria",          "tropical", 0.0150,  0, 90, 10, 0.06, True, 100, sanitation_dependent=True, tropical_mult=8.0, rich_mult=0.05, description="Mosquito-borne parasitic infection."),
+    Disease("dengue",           "Dengue fever",     "tropical", 0.0080,  3, 80, 8,  0.02, True, 300, tropical_mult=5.0, rich_mult=0.1, description="Viral fever transmitted by Aedes mosquitoes."),
+    Disease("yellow_fever",     "Yellow fever",     "tropical", 0.0010,  5, 70, 12, 0.20, True, 800, tropical_mult=6.0, rich_mult=0.05, description="Viral hemorrhagic fever; vaccine-preventable."),
+    Disease("chagas",           "Chagas disease",   "tropical", 0.0008,  5, 80, 5, 0.04, True, 1500, permanent=True, tropical_mult=4.0, rich_mult=0.0, description="Trypanosoma cruzi; chronic cardiac damage."),
+    Disease("leishmaniasis",    "Leishmaniasis",    "tropical", 0.0009,  5, 70, 8, 0.10, True, 1200, tropical_mult=5.0, rich_mult=0.0, description="Sandfly-transmitted protozoan disease."),
+    Disease("sleeping_sickness","Sleeping sickness","tropical", 0.0004, 10, 70, 12, 0.40, True, 2000, tropical_mult=10.0, rich_mult=0.0, description="African trypanosomiasis."),
+    Disease("schistosomiasis",  "Schistosomiasis",  "tropical", 0.0050,  5, 70, 4, 0.005, True, 200, sanitation_dependent=True, tropical_mult=6.0, rich_mult=0.0, description="Snail-borne parasitic worm."),
+    Disease("onchocerciasis",   "River blindness",  "tropical", 0.0006,  8, 70, 4, 0.005, True, 400, permanent=True, tropical_mult=8.0, rich_mult=0.0, description="Onchocerca volvulus; can cause blindness."),
+    Disease("trichuriasis",     "Whipworm",         "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Soil-transmitted intestinal worm."),
+    Disease("ascariasis",       "Roundworm",        "tropical", 0.0090,  3, 60, 2, 0.0, True, 50, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Soil-transmitted intestinal worm."),
+    Disease("hookworm",         "Hookworm",         "tropical", 0.0060,  5, 60, 3, 0.005, True, 80, sanitation_dependent=True, tropical_mult=4.0, rich_mult=0.05, description="Iron-deficiency anemia from blood-feeding worms."),
+
+    # ===== Childhood =====
+    Disease("measles",          "Measles",          "childhood", 0.0080,  0, 12, 6, 0.04, True, 50, poor_mult=3.0, rich_mult=0.1, description="Highly contagious viral rash."),
+    Disease("mumps",            "Mumps",            "childhood", 0.0040,  3, 15, 4, 0.005, True, 30, rich_mult=0.2, description="Salivary gland infection."),
+    Disease("rubella",          "Rubella",          "childhood", 0.0030,  3, 15, 3, 0.005, True, 30, rich_mult=0.2, description="German measles; teratogenic in pregnancy."),
+    Disease("polio",            "Polio",            "childhood", 0.0008,  0, 10, 10, 0.10, True, 200, permanent=True, poor_mult=5.0, rich_mult=0.0, description="Viral paralysis; rare since widespread vaccination."),
+    Disease("pertussis",        "Whooping cough",   "childhood", 0.0050,  0,  8, 5, 0.04, True, 80, poor_mult=2.0, rich_mult=0.3, description="Bordetella pertussis; severe in infants."),
+    Disease("diphtheria",       "Diphtheria",       "childhood", 0.0008,  0, 12, 8, 0.15, True, 100, poor_mult=4.0, rich_mult=0.05, description="Throat membrane infection; vaccine-preventable."),
+    Disease("chickenpox",       "Chickenpox",       "childhood", 0.0150,  2, 14, 3, 0.002, True, 30, description="Varicella; usually mild."),
+    Disease("stunting",         "Childhood stunting","childhood", 0.0200, 0,  5, 4, 0.005, False, 0, permanent=True, poor_mult=4.0, rich_mult=0.05, description="Chronic malnutrition impairs growth and cognition."),
+    Disease("wasting",          "Childhood wasting","childhood", 0.0100,  0,  5, 6, 0.02, True, 200, permanent=True, poor_mult=4.0, rich_mult=0.05, description="Acute severe undernutrition."),
+
+    # ===== Chronic =====
+    Disease("diabetes_t2",      "Type 2 diabetes",  "chronic", 0.0040, 35, 85, 4, 0.01, True, 1500, permanent=True, rich_mult=1.5, description="Insulin resistance; managed with diet and medication."),
+    Disease("diabetes_t1",      "Type 1 diabetes",  "chronic", 0.0010,  3, 30, 5, 0.02, True, 2000, permanent=True, description="Autoimmune destruction of insulin-producing cells."),
+    Disease("hypertension",     "Hypertension",     "chronic", 0.0080, 30, 85, 3, 0.02, True, 800, permanent=True, description="Chronic high blood pressure."),
+    Disease("heart_disease",    "Coronary heart disease", "chronic", 0.0030, 40, 90, 9, 0.10, True, 12000, permanent=True, rich_mult=1.2, description="Atherosclerosis of the coronary arteries."),
+    Disease("stroke",           "Stroke",           "chronic", 0.0015, 50, 90, 12, 0.20, True, 8000, permanent=True, description="Brain blood-supply interruption; cerebrovascular accident."),
+    Disease("asthma",           "Asthma",           "chronic", 0.0040,  3, 80, 3, 0.005, True, 600, permanent=True, description="Chronic inflammatory airway disease."),
+    Disease("copd",             "COPD",             "chronic", 0.0020, 40, 85, 6, 0.05, True, 1500, permanent=True, description="Chronic obstructive pulmonary disease."),
+    Disease("arthritis",        "Arthritis",        "chronic", 0.0050, 40, 90, 3, 0.0, True, 800, permanent=True, description="Joint inflammation; rheumatoid or osteo."),
+    Disease("kidney_disease",   "Chronic kidney disease", "chronic", 0.0015, 45, 85, 7, 0.08, True, 6000, permanent=True, description="Reduced kidney function."),
+
+    # ===== Infectious =====
+    Disease("tuberculosis",     "Tuberculosis",     "infectious", 0.0040, 5, 80, 8, 0.07, True, 600, sanitation_dependent=True, poor_mult=4.0, rich_mult=0.1, description="Mycobacterium tuberculosis; airborne."),
+    Disease("hepatitis_a",      "Hepatitis A",      "infectious", 0.0030, 3, 60, 5, 0.005, True, 200, sanitation_dependent=True, poor_mult=3.0, description="Fecal-oral viral hepatitis."),
+    Disease("hepatitis_b",      "Hepatitis B",      "infectious", 0.0020, 5, 70, 6, 0.03, True, 800, permanent=True, poor_mult=2.5, rich_mult=0.4, description="Blood-borne viral hepatitis."),
+    Disease("hepatitis_c",      "Hepatitis C",      "infectious", 0.0015, 18, 70, 7, 0.04, True, 1500, permanent=True, description="Blood-borne; can lead to cirrhosis."),
+    Disease("cholera",          "Cholera",          "infectious", 0.0030, 3, 70, 9, 0.10, True, 100, sanitation_dependent=True, poor_mult=5.0, rich_mult=0.0, description="Severe watery diarrhea from contaminated water."),
+    Disease("typhoid",          "Typhoid fever",    "infectious", 0.0020, 5, 60, 7, 0.06, True, 200, sanitation_dependent=True, poor_mult=3.0, rich_mult=0.05, description="Salmonella Typhi infection."),
+    Disease("meningitis",       "Meningitis",       "infectious", 0.0010, 0, 25, 12, 0.20, True, 1500, description="Inflammation of meninges; can be bacterial or viral."),
+    Disease("pneumonia",        "Pneumonia",        "infectious", 0.0080, 0, 90, 7, 0.05, True, 600, description="Lung infection."),
+    Disease("tetanus",          "Tetanus",          "infectious", 0.0006, 5, 70, 12, 0.25, True, 400, poor_mult=3.0, rich_mult=0.1, description="Clostridium tetani; lockjaw."),
+    Disease("rabies",           "Rabies",           "infectious", 0.0002, 3, 70, 15, 0.95, True, 800, poor_mult=4.0, rich_mult=0.1, description="Almost always fatal once symptomatic."),
+
+    # ===== Respiratory =====
+    Disease("influenza",        "Severe influenza", "respiratory", 0.0150, 1, 90, 4, 0.005, True, 100, description="Seasonal flu, severe enough to need bed rest."),
+    Disease("bronchitis",       "Bronchitis",       "respiratory", 0.0100, 2, 80, 3, 0.002, True, 80, description="Inflammation of bronchial tubes."),
+
+    # ===== Mental health =====
+    Disease("depression",       "Major depression", "mental", 0.0080, 14, 80, 5, 0.02, True, 1500, description="Persistent depressive episode."),
+    Disease("anxiety",          "Anxiety disorder", "mental", 0.0070, 14, 80, 3, 0.0, True, 1000, description="Generalized anxiety or panic disorder."),
+]
+
+
+# ---------------------------------------------------------------------------
+# Roll & apply
+# ---------------------------------------------------------------------------
+
+def _country_modifier(disease: Disease, country: "Country") -> float:
+    mult = 1.0
+    if disease.tropical_mult != 1.0 and country.region in TROPICAL_REGIONS:
+        mult *= disease.tropical_mult
+    if disease.poor_mult != 1.0 and country.gdp_pc < 5000:
+        mult *= disease.poor_mult
+    if disease.rich_mult != 1.0 and country.gdp_pc > 30000:
+        mult *= disease.rich_mult
+    if disease.sanitation_dependent and country.safe_water_pct < 80:
+        mult *= 1.0 + (80 - country.safe_water_pct) * 0.04
+    return mult
+
+
+def eligible_diseases(character: "Character", country: "Country") -> list[tuple[Disease, float]]:
+    """Return (disease, modulated annual chance) pairs the character can newly contract."""
+    out: list[tuple[Disease, float]] = []
+    active = set(character.diseases.keys())
+    for d in DISEASES:
+        if character.age < d.age_min or character.age > d.age_max:
+            continue
+        if d.gender_only is not None and int(character.gender) != d.gender_only:
+            continue
+        if d.key in active:
+            continue
+        chance = d.base_chance * _country_modifier(d, country)
+        # Resistance and health services dampen incidence
+        chance *= max(0.2, 2.0 - character.attributes.resistance / 50)
+        if not d.sanitation_dependent:
+            chance *= max(0.5, 1.5 - country.health_services_pct / 100)
+        out.append((d, chance))
+    return out
+
+
+def roll_disease(character: "Character", country: "Country", rng: random.Random) -> Disease | None:
+    """Sample at most one new disease per year, weighted by per-disease chance."""
+    candidates = eligible_diseases(character, country)
+    if not candidates:
+        return None
+    # Compute the union probability that *any* of the candidate diseases fires.
+    # If one fires, pick which one weighted by its individual chance.
+    total = sum(p for _, p in candidates)
+    if total <= 0:
+        return None
+    # Cap so a single year can't deterministically infect everyone.
+    fire = 1.0 - (1.0 - min(1.0, total)) ** 1.0
+    if rng.random() >= fire:
+        return None
+    weights = [p for _, p in candidates]
+    return rng.choices([d for d, _ in candidates], weights=weights, k=1)[0]
+
+
+def contract_disease(
+    character: "Character", country: "Country", disease: Disease, rng: random.Random
+) -> dict:
+    """Add a disease to the character's record. Returns a serialized event
+    payload (summary, deltas, money_delta) for the engine's turn log."""
+    # Mark active.
+    character.diseases[disease.key] = {
+        "name": disease.name,
+        "category": disease.category,
+        "active": True,
+        "age_acquired": character.age,
+        "permanent": disease.permanent,
+    }
+
+    # Treatment availability: requires good local health services AND the
+    # player can afford the treatment from cash + family wealth.
+    can_pay = character.money + character.family_wealth >= disease.treatment_cost
+    has_services = country.health_services_pct >= 60
+    treatable = disease.treatable and has_services and can_pay
+    cost = 0
+    if treatable and disease.treatment_cost > 0:
+        cost = disease.treatment_cost
+        character.money -= cost
+
+    severity = disease.severity
+    if treatable:
+        severity = max(1, severity // 2)
+        if not disease.permanent:
+            character.diseases[disease.key]["active"] = False
+            character.diseases[disease.key]["age_resolved"] = character.age
+
+    deltas = {"health": -severity, "happiness": -3}
+    if disease.category == "mental":
+        deltas["happiness"] = -8
+        deltas["health"] = -severity // 2
+
+    if treatable:
+        if disease.permanent:
+            summary = (
+                f"You were diagnosed with {disease.name}. "
+                f"Treatment cost ${cost:,} but the condition will require ongoing care."
+            )
+        else:
+            summary = (
+                f"You contracted {disease.name}. Treatment (${cost:,}) cleared the infection."
+            )
+    else:
+        if disease.treatable and not has_services:
+            summary = (
+                f"You contracted {disease.name}, but local health services were too "
+                f"limited to treat it properly."
+            )
+        elif disease.treatable and not can_pay:
+            summary = (
+                f"You contracted {disease.name}, but couldn't afford the ${disease.treatment_cost:,} treatment."
+            )
+        else:
+            summary = f"You developed {disease.name}. There is no straightforward cure."
+
+    return {
+        "summary": summary,
+        "deltas": deltas,
+        "money_delta": -cost,
+        "treatable": treatable,
+    }
+
+
+def chronic_progression(character: "Character", country: "Country", rng: random.Random) -> tuple[int, list[str]]:
+    """Apply per-year wear from any active chronic / permanent conditions and
+    perform a death lottery for severe untreated diseases. Returns (health_loss,
+    notable_summary_lines).
+    """
+    total_loss = 0
+    lines: list[str] = []
+    deaths_pending: list[str] = []
+    for key, state in list(character.diseases.items()):
+        if not state.get("active"):
+            continue
+        d = next((dd for dd in DISEASES if dd.key == key), None)
+        if d is None:
+            continue
+        # Permanent / chronic conditions degrade health each year.
+        wear = max(1, d.severity // 3) if d.permanent else 0
+        total_loss += wear
+        # Death lottery for severe conditions.
+        if d.lethality > 0:
+            if rng.random() < d.lethality * 0.5:  # half rate after acquisition year
+                deaths_pending.append(d.name)
+    if deaths_pending:
+        lines.append(f"Your {deaths_pending[0]} took a turn for the worse this year.")
+    return total_loss, lines
+
+
+def disease_kill_check(character: "Character", country: "Country", rng: random.Random) -> str | None:
+    """Per-year roll: if the character has a high-lethality active disease,
+    they may die from it. Returns the cause-of-death string or None."""
+    for key, state in list(character.diseases.items()):
+        if not state.get("active"):
+            continue
+        d = next((dd for dd in DISEASES if dd.key == key), None)
+        if d is None:
+            continue
+        if d.lethality <= 0:
+            continue
+        if rng.random() < d.lethality * 0.4:
+            return d.name
+    return None
