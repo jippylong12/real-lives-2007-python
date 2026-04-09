@@ -171,6 +171,53 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 .country-info .ci-row { display: flex; justify-content: space-between; padding: 3px 0; }
 .country-info .ci-row span:first-child { color: var(--ink-mute); }
 
+/* ---------- Country binary facts panel (#30) ---------- */
+.country-badges {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 10px;
+}
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.badge-war { color: #c34a4a; background: rgba(195, 74, 74, 0.08); }
+.badge-conscript { color: #c08038; background: rgba(192, 128, 56, 0.08); }
+
+.facts-heading {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+}
+.facts-grid {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-bottom: 6px;
+}
+.fact-flag {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: rgba(195, 74, 74, 0.10);
+  color: #a33f3f;
+  border-radius: 999px;
+  border: 1px solid rgba(195, 74, 74, 0.25);
+}
+.facts-list {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.facts-list li { padding: 1px 0; }
+
 /* ---------- Main column ---------- */
 .main-col { display: flex; flex-direction: column; gap: 24px; }
 .event-area-header {

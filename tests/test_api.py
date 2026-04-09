@@ -33,6 +33,37 @@ def test_country_detail_404(client):
     assert client.get("/api/countries/zz").status_code == 404
 
 
+def test_country_detail_includes_binary_facts(client):
+    """Issue #30: country detail surfaces at_war / military_conscription
+    flags plus a structured binary_facts payload (human rights, military
+    service, disaster history)."""
+    r = client.get("/api/countries/iq")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["at_war"] is True  # Iraq, 2007 binary
+    facts = body["binary_facts"]
+    assert facts is not None
+    assert facts["at_war"] is True
+    assert "Torture" in facts["human_rights"]
+    assert facts["military_service"]["MilitaryConscription"] is True
+    assert facts["disaster_history"]  # Iraq has earthquake history
+
+
+def test_binary_facts_endpoint(client):
+    """The /api/countries/<code>/binary_facts endpoint returns the full
+    raw fact sheet for binary-mappable countries."""
+    r = client.get("/api/countries/us/binary_facts")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["AtWar"] is False
+    assert body["MilitaryConscription"] is False
+    assert "Population" in body
+
+    # Bermuda is a #7 territory addition not in the binary.
+    r = client.get("/api/countries/bm/binary_facts")
+    assert r.status_code == 404
+
+
 def test_full_game_flow(client):
     # 1. New game
     r = client.post("/api/game/new", json={"country_code": "br", "seed": 13})

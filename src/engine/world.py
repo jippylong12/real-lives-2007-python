@@ -117,6 +117,50 @@ def description_for(country_code: str) -> str | None:
     return _descriptions().get(country_code.lower())
 
 
+# Type-4 (bool) fields in world.dat — re-coerced from value_num=0.0/1.0
+# back to Python bool when surfaced through binary_facts_for(). Tracked
+# explicitly because we can't tell a stored 1.0 in country_binary_field
+# from a count-of-1 without consulting the schema.
+_BOOL_BINARY_FIELDS: frozenset[str] = frozenset({
+    "AtWar", "ExtrajudicialExecutions", "PoliticalPrisoners", "Torture",
+    "HumanRightsDefenders", "Journalists", "CruelPunishment", "Impunity",
+    "PrisonConditions", "UnfairTrials", "WomensRights", "ForcibleReturn",
+    "MilitaryConscription", "AlternativeService", "MarketEconomy",
+})
+
+
+def binary_facts_for(country_code: str) -> dict:
+    """Return the country's full binary fact sheet (#30): every field
+    decoded from world.dat as a name → value mapping. Numeric fields come
+    back as float, type-4 boolean flags as Python bool, string fields as
+    strings.
+
+    Returns an empty dict if the country isn't in the binary (the 6
+    territory additions from #7 — Bermuda, Anguilla, French Guiana, etc.).
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT field_name, value_text, value_num "
+            "FROM country_binary_field WHERE country_code = ?",
+            (country_code.lower(),),
+        ).fetchall()
+    finally:
+        conn.close()
+    out: dict = {}
+    for r in rows:
+        name = r["field_name"]
+        if r["value_text"] is not None:
+            out[name] = r["value_text"]
+        elif r["value_num"] is not None:
+            v = r["value_num"]
+            if name in _BOOL_BINARY_FIELDS:
+                out[name] = bool(v)
+            else:
+                out[name] = v
+    return out
+
+
 def pick_birth_city(country: "Country", rng: random.Random) -> tuple[str, bool]:
     """Choose a (city_name, is_urban) pair for a newborn in `country`.
 

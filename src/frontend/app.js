@@ -194,6 +194,23 @@ function renderGame() {
   // Country panel
   const ci = $("#country-info");
   ci.innerHTML = "";
+
+  // Status badges from the 2007 binary (#30): at_war, conscription
+  const badges = [];
+  if (co.at_war) badges.push(["At war", "badge-war"]);
+  if (co.military_conscription) badges.push(["Conscription", "badge-conscript"]);
+  if (badges.length) {
+    const badgeWrap = document.createElement("div");
+    badgeWrap.className = "country-badges";
+    for (const [label, cls] of badges) {
+      const b = document.createElement("span");
+      b.className = `badge ${cls}`;
+      b.textContent = label;
+      badgeWrap.appendChild(b);
+    }
+    ci.appendChild(badgeWrap);
+  }
+
   if (co.description) {
     const desc = document.createElement("p");
     desc.className = "country-desc";
@@ -217,6 +234,95 @@ function renderGame() {
     row.className = "ci-row";
     row.innerHTML = `<span>${k}</span><span>${v}</span>`;
     ci.appendChild(row);
+  }
+
+  // 2007 binary facts: human-rights flags, military service, disaster history.
+  // Surfaced from country_binary_field (#30). Empty for #7 territory additions.
+  if (co.binary_facts) {
+    const facts = co.binary_facts;
+    const hrEntries = Object.entries(facts.human_rights || {}).filter(([, v]) => v === true);
+    if (hrEntries.length) {
+      const h = document.createElement("h5");
+      h.className = "facts-heading";
+      h.textContent = "Human rights concerns (2007)";
+      ci.appendChild(h);
+      const grid = document.createElement("div");
+      grid.className = "facts-grid";
+      const labels = {
+        Torture: "Torture",
+        PoliticalPrisoners: "Political prisoners",
+        ExtrajudicialExecutions: "Extrajudicial executions",
+        CruelPunishment: "Cruel punishment",
+        Impunity: "Impunity for officials",
+        UnfairTrials: "Unfair trials",
+        WomensRights: "Women's rights restricted",
+        ForcibleReturn: "Forcible refugee return",
+        Journalists: "Journalists at risk",
+        HumanRightsDefenders: "Defenders at risk",
+        PrisonConditions: "Poor prison conditions",
+      };
+      for (const [k] of hrEntries) {
+        const item = document.createElement("span");
+        item.className = "fact-flag";
+        item.textContent = labels[k] || k;
+        grid.appendChild(item);
+      }
+      ci.appendChild(grid);
+    }
+
+    const ms = facts.military_service || {};
+    if (ms.MilitaryConscription || ms.AlternativeService) {
+      const h = document.createElement("h5");
+      h.className = "facts-heading";
+      h.textContent = "Military service (2007)";
+      ci.appendChild(h);
+      const lines = [];
+      if (ms.MilitaryConscription) lines.push("Mandatory conscription in effect");
+      if (ms.AlternativeService) lines.push("Alternative civilian service available");
+      if (typeof ms.MonthsService === "number" && ms.MonthsService > 0)
+        lines.push(`Service length: ${ms.MonthsService} months`);
+      const ul = document.createElement("ul");
+      ul.className = "facts-list";
+      for (const line of lines) {
+        const li = document.createElement("li");
+        li.textContent = line;
+        ul.appendChild(li);
+      }
+      ci.appendChild(ul);
+    }
+
+    const dh = facts.disaster_history || {};
+    const dhSig = Object.entries(dh).filter(([, v]) => typeof v === "number" && v > 0);
+    if (dhSig.length) {
+      const h = document.createElement("h5");
+      h.className = "facts-heading";
+      h.textContent = "Disaster history (2007)";
+      ci.appendChild(h);
+      const ul = document.createElement("ul");
+      ul.className = "facts-list";
+      const labelMap = {
+        EarthquakeAffected: "Earthquake-affected",
+        EarthquakeKilled: "Earthquake deaths",
+        FamineKilled: "Famine deaths",
+        FamineAffected: "Famine-affected",
+        FloodKilled: "Flood deaths",
+        FloodAffected: "Flood-affected",
+        DroughtKilled: "Drought deaths",
+        DroughtAffected: "Drought-affected",
+        EpidemicKilled: "Epidemic deaths",
+        EpidemicAffected: "Epidemic-affected",
+        AvalancheEvents: "Avalanche events",
+        AvalancheAffected: "Avalanche-affected",
+      };
+      // Top 5 by magnitude.
+      dhSig.sort(([, a], [, b]) => b - a);
+      for (const [k, v] of dhSig.slice(0, 5)) {
+        const li = document.createElement("li");
+        li.textContent = `${labelMap[k] || k}: ${Math.round(v).toLocaleString()}`;
+        ul.appendChild(li);
+      }
+      ci.appendChild(ul);
+    }
   }
 
   // Year title

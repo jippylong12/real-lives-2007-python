@@ -32,7 +32,9 @@ from pydantic import BaseModel, Field
 
 from ..engine import finances
 from ..engine.game import Game, list_games, load_game
-from ..engine.world import all_countries, cities_for, description_for, get_country
+from ..engine.world import (
+    all_countries, binary_facts_for, cities_for, description_for, get_country,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -75,12 +77,16 @@ class SellInvestmentRequest(BaseModel):
 def _serialize_game(game: Game) -> dict:
     state = game.state
     country = get_country(state.character.country_code)
+    country_dict = None
+    if country:
+        country_dict = _country_dict(country)
+        country_dict["binary_facts"] = _binary_facts_summary(country.code)
     return {
         "id": state.id,
         "year": state.year,
         "started_at": state.started_at,
         "character": state.character.to_dict(),
-        "country": _country_dict(country) if country else None,
+        "country": country_dict,
         "pending_event": state.pending_event,
         "portfolio_value": finances.portfolio_value(state.character),
     }
@@ -109,8 +115,56 @@ def _country_dict(c) -> dict:
         "corruption": c.corruption,
         "safe_water_pct": c.safe_water_pct,
         "health_services_pct": c.health_services_pct,
+        "at_war": bool(c.at_war),
+        "military_conscription": bool(c.military_conscription),
         "flag_url": f"/flags/{c.code}.bmp",
         "description": description_for(c.code),
+    }
+
+
+def _binary_facts_summary(code: str) -> dict | None:
+    """Build a small structured fact sheet from country_binary_field for
+    the country panel (#30). Returns the most useful binary-only fields:
+    human-rights flags, disaster history totals, military service rules.
+    Returns None if the country isn't in the binary."""
+    facts = binary_facts_for(code)
+    if not facts:
+        return None
+    human_rights = {
+        k: facts[k]
+        for k in (
+            "Torture", "PoliticalPrisoners", "ExtrajudicialExecutions",
+            "CruelPunishment", "Impunity", "UnfairTrials", "WomensRights",
+            "ForcibleReturn", "Journalists", "HumanRightsDefenders",
+            "PrisonConditions",
+        )
+        if k in facts
+    }
+    military = {
+        k: facts[k]
+        for k in (
+            "MilitaryConscription", "AlternativeService", "MilitaryVolunteerAge",
+            "MonthsService",
+        )
+        if k in facts
+    }
+    disasters = {
+        k: facts[k]
+        for k in (
+            "EarthquakeAffected", "EarthquakeKilled",
+            "AvalancheEvents", "AvalancheAffected",
+            "FamineKilled", "FamineAffected",
+            "FloodKilled", "FloodAffected",
+            "DroughtKilled", "DroughtAffected",
+            "EpidemicKilled", "EpidemicAffected",
+        )
+        if k in facts
+    }
+    return {
+        "at_war": facts.get("AtWar", False),
+        "human_rights": human_rights,
+        "military_service": military,
+        "disaster_history": disasters,
     }
 
 
@@ -171,7 +225,20 @@ def create_app() -> FastAPI:
             {"name": city.name, "rank": city.rank, "is_capital": city.is_capital}
             for city in cities_for(c.code)
         ]
+        d["binary_facts"] = _binary_facts_summary(c.code)
         return d
+
+    @app.get("/api/countries/{code}/binary_facts")
+    def country_binary_facts(code: str):
+        """Full raw binary fact sheet (#30): every world.dat field for the
+        country, name → value. Returns 404 for countries not in the binary."""
+        c = get_country(code)
+        if c is None:
+            raise HTTPException(status_code=404, detail="country not found")
+        facts = binary_facts_for(c.code)
+        if not facts:
+            raise HTTPException(status_code=404, detail="country not in binary")
+        return facts
 
     @app.get("/api/games")
     def games():
