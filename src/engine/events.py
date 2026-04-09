@@ -321,6 +321,146 @@ def _apply_bar_mitzvah(c, co, rng):
 
 
 # ---------------------------------------------------------------------------
+# Language- and region-gated events (#16)
+# ---------------------------------------------------------------------------
+
+# Languages spoken in former British colonies where cricket is the dominant
+# sport (the binary's primary_language doesn't capture "Commonwealth" so we
+# enumerate the languages that imply cricket-playing heritage).
+_CRICKET_LANGUAGES = {"English", "Hindi", "Urdu", "Bengali", "Sinhala"}
+
+# Languages whose speakers play baseball as a major youth sport.
+_BASEBALL_REGIONS = {"Caribbean", "Central America", "South America"}
+
+
+def _apply_cricket_match(c, co, rng):
+    return EventOutcome(
+        summary="You spent the weekend playing cricket on a dusty pitch with friends. The match ran into the evening.",
+        deltas={"athletic": +3, "endurance": +2, "happiness": +4},
+    )
+
+
+def _apply_baseball_youth(c, co, rng):
+    return EventOutcome(
+        summary="You played baseball with the neighborhood kids — pickup games every weekend.",
+        deltas={"athletic": +3, "strength": +1, "happiness": +4},
+    )
+
+
+def _apply_quinceanera(c, co, rng):
+    return EventOutcome(
+        summary=(
+            "Your quinceañera. Your family threw a big party for your 15th birthday — "
+            "white dress, dancing, and a Mass before the celebration."
+        ),
+        deltas={"happiness": +10, "appearance": +2, "conscience": +2},
+    )
+
+
+def _apply_seijin_shiki(c, co, rng):
+    return EventOutcome(
+        summary=(
+            "You attended Seijin no Hi, the Coming of Age ceremony, in your local town hall. "
+            "Wearing formal kimono or a suit, you officially became an adult."
+        ),
+        deltas={"happiness": +6, "wisdom": +3, "conscience": +2},
+    )
+
+
+def _apply_tea_ceremony(c, co, rng):
+    return EventOutcome(
+        summary="You learned the etiquette of the tea ceremony from an older relative — patience, precision, and respect.",
+        deltas={"wisdom": +3, "artistic": +2, "happiness": +2},
+    )
+
+
+def _apply_vegetarian_household(c, co, rng):
+    return EventOutcome(
+        summary="Your family follows a vegetarian diet — pulses, vegetables, dairy. You've never eaten meat.",
+        deltas={"health": +2, "conscience": +1},
+    )
+
+
+def _apply_fish_heavy_diet(c, co, rng):
+    return EventOutcome(
+        summary="A coastal year of fresh seafood: fish for breakfast, fish for dinner, fish at every festival.",
+        deltas={"health": +2, "happiness": +2},
+    )
+
+
+DOWRY_NEGOTIATION = _choice(
+    key="dowry_negotiation",
+    title="Dowry negotiation",
+    category="life",
+    description=(
+        "Your family is negotiating a dowry as part of your wedding arrangement. "
+        "The custom is expected, but the size of the demand has caused tension."
+    ),
+    when=lambda c, co: (
+        18 <= c.age <= 30
+        and not c.married
+        and co.primary_language in {"Hindi", "Bengali", "Urdu", "Tamil"}
+    ),
+    chance=lambda c, co: 0.06,
+    choices=[
+        EventChoice(
+            key="agree",
+            label="Pay the dowry",
+            deltas={"happiness": -2, "conscience": -1, "wisdom": +1},
+            money_delta=-1500,
+            summary="The dowry was paid. The wedding is on.",
+        ),
+        EventChoice(
+            key="negotiate",
+            label="Negotiate it down",
+            deltas={"wisdom": +3},
+            money_delta=-500,
+            summary="You negotiated the dowry down to a smaller sum. Both families accepted the compromise.",
+        ),
+        EventChoice(
+            key="refuse",
+            label="Refuse on principle",
+            deltas={"conscience": +5, "happiness": -5, "wisdom": +2},
+            summary="You refused. The match was called off and your family was disappointed.",
+        ),
+    ],
+)
+
+
+BILINGUAL_SCHOOLING = _choice(
+    key="bilingual_schooling",
+    title="Bilingual schooling",
+    category="education",
+    description=(
+        "Your parents have a choice: enroll you in the local-language primary school, "
+        "or pay for the English-medium school where you'd learn the international "
+        "lingua franca alongside the standard subjects."
+    ),
+    when=lambda c, co: (
+        c.age == 6
+        and co.primary_language not in {"English"}
+        and co.region in {"Africa", "Asia"}
+    ),
+    chance=lambda c, co: 0.10,
+    choices=[
+        EventChoice(
+            key="english",
+            label="Choose the English-medium school",
+            deltas={"intelligence": +2, "wisdom": +1},
+            money_delta=-200,
+            summary="You enrolled in the English-medium school. Years of bilingual study lie ahead.",
+        ),
+        EventChoice(
+            key="local",
+            label="Stay in the local-language school",
+            deltas={"happiness": +2, "wisdom": +1},
+            summary="You stayed at the local school. Your home language remained your strongest tongue.",
+        ),
+    ],
+)
+
+
+# ---------------------------------------------------------------------------
 # Choices
 # ---------------------------------------------------------------------------
 
@@ -793,6 +933,66 @@ EVENT_REGISTRY: list[Event] = [
         apply=_apply_bar_mitzvah,
     ),
 
+    # --- Language- and region-gated cultural events (#16) ---
+    _passive(
+        "cricket_match", "Cricket match", "life",
+        "A weekend cricket match.",
+        # Cricket is dominant where any cricket-playing language is the primary
+        # tongue (English in former British colonies, Hindi/Urdu in South Asia,
+        # Bengali in Bangladesh, Sinhala in Sri Lanka).
+        when=lambda c, co: 8 <= c.age <= 35 and co.primary_language in _CRICKET_LANGUAGES,
+        chance=lambda c, co: 0.18,
+        apply=_apply_cricket_match,
+    ),
+    _passive(
+        "baseball_youth", "Baseball pickup game", "life",
+        "Pickup baseball with neighborhood kids.",
+        when=lambda c, co: 6 <= c.age <= 22 and (
+            co.primary_language == "Japanese"
+            or co.primary_language == "Korean"
+            or co.region in _BASEBALL_REGIONS
+        ),
+        chance=lambda c, co: 0.18,
+        apply=_apply_baseball_youth,
+    ),
+    _passive(
+        "quinceanera", "Quinceañera", "life",
+        "A 15th-birthday quinceañera celebration.",
+        when=lambda c, co: c.age == 15 and c.gender == Gender.FEMALE and co.primary_language == "Spanish",
+        chance=lambda c, co: 0.55,
+        apply=_apply_quinceanera,
+    ),
+    _passive(
+        "seijin_shiki", "Seijin no Hi", "life",
+        "Coming of Age Day ceremony in Japan.",
+        when=lambda c, co: c.age == 20 and co.primary_language == "Japanese",
+        chance=lambda c, co: 0.85,
+        apply=_apply_seijin_shiki,
+    ),
+    _passive(
+        "tea_ceremony", "Tea ceremony lesson", "life",
+        "An introduction to the etiquette of the tea ceremony.",
+        when=lambda c, co: 10 <= c.age <= 25 and co.primary_language in {"Japanese", "Mandarin", "Cantonese"},
+        chance=lambda c, co: 0.10,
+        apply=_apply_tea_ceremony,
+    ),
+    _passive(
+        "vegetarian_household", "Vegetarian household", "life",
+        "Your family follows a vegetarian diet.",
+        when=lambda c, co: c.age == 5 and co.primary_language == "Hindi",
+        chance=lambda c, co: 0.40,
+        apply=_apply_vegetarian_household,
+    ),
+    _passive(
+        "fish_heavy_diet", "Coastal fish diet", "life",
+        "A coastal year of fresh seafood.",
+        when=lambda c, co: 8 <= c.age <= 60 and (
+            co.primary_language in {"Japanese", "Norwegian", "Icelandic", "Portuguese"}
+        ),
+        chance=lambda c, co: 0.20,
+        apply=_apply_fish_heavy_diet,
+    ),
+
     # --- Choice events ---
     THEFT_CHILD,
     THEFT_ADULT,
@@ -803,6 +1003,8 @@ EVENT_REGISTRY: list[Event] = [
     ARRANGED_MARRIAGE,
     CONVERSION_OFFER,
     RELIGIOUS_SCHOOL,
+    DOWRY_NEGOTIATION,
+    BILINGUAL_SCHOOLING,
 ]
 
 

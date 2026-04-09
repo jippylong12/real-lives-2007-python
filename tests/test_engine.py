@@ -374,6 +374,60 @@ def test_disease_treatment_cost_drains_family_wealth_after_money():
     assert char.family_wealth == 200
 
 
+def test_language_and_region_gated_events_present():
+    """Issue #16: at least one event must be gated on country.primary_language
+    and at least one on country.region (not just primary_religion)."""
+    keys = {e.key for e in EVENT_REGISTRY}
+    expected = {
+        "cricket_match", "baseball_youth", "quinceanera", "seijin_shiki",
+        "tea_ceremony", "vegetarian_household", "fish_heavy_diet",
+        "dowry_negotiation", "bilingual_schooling",
+    }
+    missing = expected - keys
+    assert not missing, f"missing language/region events: {missing}"
+
+
+def test_quinceanera_only_fires_for_spanish_speaking_girls():
+    from src.engine.character import create_random_character
+    quince = next(e for e in EVENT_REGISTRY if e.key == "quinceanera")
+    rng = random.Random(0)
+
+    mexico = get_country("mx")  # Spanish
+    char = create_random_character(mexico, rng)
+    char.gender = Gender.FEMALE
+    char.age = 15
+    assert quince.eligible(char, mexico)
+
+    # Same girl in non-Spanish-speaking country: not eligible.
+    japan = get_country("jp")
+    char2 = create_random_character(japan, rng)
+    char2.gender = Gender.FEMALE
+    char2.age = 15
+    assert not quince.eligible(char2, japan)
+
+    # Spanish-speaking BOY: not eligible.
+    char3 = create_random_character(mexico, rng)
+    char3.gender = Gender.MALE
+    char3.age = 15
+    assert not quince.eligible(char3, mexico)
+
+
+def test_baseball_event_fires_in_baseball_regions_not_europe():
+    from src.engine.character import create_random_character
+    baseball = next(e for e in EVENT_REGISTRY if e.key == "baseball_youth")
+    rng = random.Random(0)
+
+    cuba = get_country("cu")  # Caribbean region
+    char = create_random_character(cuba, rng)
+    char.age = 12
+    assert baseball.eligible(char, cuba)
+
+    germany = get_country("de")
+    char2 = create_random_character(germany, rng)
+    char2.age = 12
+    assert not baseball.eligible(char2, germany)
+
+
 def test_active_disease_persists_through_save_load():
     g = Game.new(country_code="us", seed=42)
     diseases.contract_disease(
