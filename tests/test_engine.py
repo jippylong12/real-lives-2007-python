@@ -1042,7 +1042,11 @@ def test_job_listing_filters_far_too_young_jobs():
 
 
 def test_apply_for_job_qualified_acceptance_high():
-    """#54: a fully qualified candidate should accept >70% of the time."""
+    """A fully qualified candidate for a low-tier job lands near the
+    sigmoid cap (~80%). Mid-tier jobs (engineer, $70k) now sit in the
+    "stretch" band even for over-qualified candidates because of the
+    salary tier penalty — that's intentional, and verified by
+    test_apply_for_job_mid_tier_is_stretch below."""
     from src.engine import careers
     from src.engine.character import create_random_character
     country = get_country("us")
@@ -1050,17 +1054,43 @@ def test_apply_for_job_qualified_acceptance_high():
     for seed in range(200):
         rng = random.Random(seed)
         char = create_random_character(country, rng)
-        # Build a candidate fully qualified for 'engineer':
-        # min_age 20, education >= secondary, IQ >= 60.
+        # Over-qualified candidate for 'nursery school aid' — a real
+        # low-tier job (no education floor, low IQ floor, low salary).
         char.age = 25
         char.education = EducationLevel.UNIVERSITY
         char.attributes.intelligence = 80
         char.is_urban = True
         char.vocation_field = None
-        result = careers.apply_for_job(char, country, "engineer", rng)
+        result = careers.apply_for_job(char, country, "nursery school aid", rng)
         if result.accepted:
             accepted += 1
-    assert accepted > 140, f"qualified accept rate only {accepted}/200"
+    assert accepted > 130, f"qualified accept rate only {accepted}/200"
+
+
+def test_apply_for_job_mid_tier_is_stretch():
+    """A "qualified" candidate for a mid-tier $70k job (engineer) should
+    land in the stretch band (40-60% acceptance), not the cap. This is
+    the spread fix: high-paying jobs are competitive even when minimums
+    are met, replacing the old bimodal 80% / 25% behavior."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    country = get_country("us")
+    accepted = 0
+    for seed in range(400):
+        rng = random.Random(seed)
+        char = create_random_character(country, rng)
+        char.age = 25
+        char.education = EducationLevel.UNIVERSITY
+        char.attributes.intelligence = 80
+        char.is_urban = True
+        char.vocation_field = None
+        if careers.apply_for_job(char, country, "engineer", rng).accepted:
+            accepted += 1
+    rate = accepted / 400
+    assert 0.35 < rate < 0.70, (
+        f"mid-tier acceptance {rate:.2f} outside the stretch band — "
+        f"check that the salary-tier penalty is doing its job"
+    )
 
 
 def test_apply_for_job_long_shot_low_but_nonzero():

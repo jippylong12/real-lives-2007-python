@@ -451,12 +451,103 @@ async function dropOutOfSchool() {
   }
 }
 
-// ---------- Saved games (#72) ----------
+// ---------- Save slots (#79) ----------
+//
+// 5 fixed save slots. The start screen shows one card per slot.
+// Empty/dead slots open a country picker scoped to that slot. Alive
+// slots load directly. State is fetched fresh from /api/slots whenever
+// the start screen renders so the UI stays in sync with the server.
+const slotState = {
+  slots: [],          // last fetched /api/slots payload
+  pendingSlot: null,  // slot the country picker is currently scoped to
+};
+
+async function loadSlots() {
+  try {
+    slotState.slots = await api("/api/slots");
+    log(`loaded ${slotState.slots.length} slots`);
+  } catch (e) {
+    logErr("loadSlots failed", e);
+    slotState.slots = [];
+  }
+}
+
+function renderSlotGrid() {
+  const host = $opt("#slot-grid");
+  if (!host) return;
+  host.innerHTML = "";
+  for (const s of slotState.slots) {
+    const card = document.createElement("button");
+    card.className = `slot-card slot-${s.state}`;
+    if (s.state === "empty") {
+      card.innerHTML = `
+        <div class="slot-num">Slot ${s.slot}</div>
+        <div class="slot-empty-msg">Empty</div>
+        <div class="slot-empty-cta">Click to start a new life</div>`;
+      card.onclick = () => openCountryPickerForSlot(s.slot);
+    } else if (s.state === "alive") {
+      const flag = s.country_code
+        ? `<img class="slot-flag" src="/flags/${s.country_code}.bmp" alt="">` : "";
+      card.innerHTML = `
+        <div class="slot-num">Slot ${s.slot}</div>
+        ${flag}
+        <div class="slot-name">${s.character_name}</div>
+        <div class="slot-meta">${s.country_name || (s.country_code || "").toUpperCase()} · age ${s.age}</div>
+        <div class="slot-cta">Continue</div>`;
+      card.onclick = () => loadGameById(s.game_id);
+    } else { // dead
+      const flag = s.country_code
+        ? `<img class="slot-flag" src="/flags/${s.country_code}.bmp" alt="">` : "";
+      const cause = s.cause_of_death ? ` — ${s.cause_of_death}` : "";
+      card.innerHTML = `
+        <div class="slot-num">Slot ${s.slot}</div>
+        ${flag}
+        <div class="slot-name">${s.character_name}</div>
+        <div class="slot-meta">${s.country_name || (s.country_code || "").toUpperCase()} · died at ${s.age}${cause}</div>
+        <div class="slot-actions">
+          <button class="btn xs" data-view="${s.game_id}">View life</button>
+          <button class="btn xs primary" data-fresh="${s.slot}">Start new life</button>
+        </div>`;
+      // The whole card is also clickable to start a new life — easier on touch.
+      card.onclick = (e) => {
+        const t = e.target;
+        if (t && t.dataset && t.dataset.view) {
+          loadGameById(t.dataset.view);
+          return;
+        }
+        openCountryPickerForSlot(s.slot);
+      };
+    }
+    host.appendChild(card);
+  }
+}
+
+function openCountryPickerForSlot(slot) {
+  log(`openCountryPickerForSlot(${slot})`);
+  slotState.pendingSlot = slot;
+  $opt("#slot-picker-view").classList.add("hidden");
+  $opt("#country-picker-view").classList.remove("hidden");
+  const title = $opt("#country-picker-title");
+  if (title) title.textContent = `Choose a country for slot ${slot}`;
+  // Reset picker filters every time so old searches don't stick around.
+  pickerState.search = "";
+  pickerState.region = "All";
+  const search = $opt("#picker-search");
+  if (search) search.value = "";
+  $$(".region-tab").forEach((t) => t.classList.toggle("active", t.dataset.region === "All"));
+  renderCountryGrid();
+}
+
+function backToSlotPicker() {
+  slotState.pendingSlot = null;
+  $opt("#country-picker-view").classList.add("hidden");
+  $opt("#slot-picker-view").classList.remove("hidden");
+}
+
 async function loadGameById(gameId) {
   log(`loadGameById(${gameId})`);
   try {
     state.game = await api(`/api/game/${gameId}`);
-    try { localStorage.setItem("rl_last_game_id", state.game.id); } catch (e) {}
     // Reset stale UI from any previous render
     $opt("#event-list").innerHTML = '<p class="placeholder">Welcome back. Click "Live another year" to keep going.</p>';
     $opt("#timeline").innerHTML = "";
@@ -465,84 +556,9 @@ async function loadGameById(gameId) {
     renderGame();
     loadPurchases();
     loadHealthcare();
-    closeSavedGames();
   } catch (e) {
     logErr("loadGameById failed", e);
     alert(`Could not load that game: ${e.message}`);
-  }
-}
-
-async function continueLastGame() {
-  let lastId;
-  try { lastId = localStorage.getItem("rl_last_game_id"); } catch (e) {}
-  if (lastId) {
-    await loadGameById(lastId);
-    return;
-  }
-  // Fall back to the most recently updated game from the server.
-  try {
-    const games = await api("/api/games");
-    if (games.length === 0) {
-      alert("No saved games yet. Start a new life!");
-      return;
-    }
-    await loadGameById(games[0].id);
-  } catch (e) {
-    logErr("continueLastGame failed", e);
-    alert(e.message);
-  }
-}
-
-async function openSavedGames() {
-  log("openSavedGames");
-  try {
-    const games = await api("/api/games");
-    const host = $opt("#saved-games-list");
-    host.innerHTML = "";
-    if (games.length === 0) {
-      host.innerHTML = '<p class="muted">No saved games yet.</p>';
-    } else {
-      for (const g of games) {
-        const row = document.createElement("div");
-        row.className = "saved-game-row";
-        const status = g.alive ? `age ${g.age}` : `died at ${g.age}`;
-        row.innerHTML = `
-          <div class="sg-main">
-            <div class="sg-name">${g.character_name}</div>
-            <div class="sg-meta">${g.country_code.toUpperCase()} · ${status} · ${g.updated_at.slice(0, 10)}</div>
-          </div>
-          <button class="btn sm" data-load="${g.id}">${g.alive ? "Continue" : "View"}</button>`;
-        host.appendChild(row);
-      }
-      host.querySelectorAll("[data-load]").forEach((b) => {
-        b.onclick = () => loadGameById(b.dataset.load);
-      });
-    }
-    $opt("#saved-games-modal").classList.remove("hidden");
-  } catch (e) {
-    logErr("openSavedGames failed", e);
-    alert(e.message);
-  }
-}
-
-function closeSavedGames() {
-  $opt("#saved-games-modal")?.classList.add("hidden");
-}
-
-async function refreshContinueButton() {
-  const btn = $opt("#btn-continue");
-  if (!btn) return;
-  let lastId;
-  try { lastId = localStorage.getItem("rl_last_game_id"); } catch (e) {}
-  if (lastId) {
-    btn.classList.remove("hidden");
-    return;
-  }
-  try {
-    const games = await api("/api/games");
-    btn.classList.toggle("hidden", games.length === 0);
-  } catch (e) {
-    btn.classList.add("hidden");
   }
 }
 
@@ -694,16 +710,25 @@ async function requestPromotion() {
 }
 
 async function newGame(countryCode) {
-  log(`newGame(${countryCode || "random"})`);
+  // Always thread the currently-selected slot through (#79). The user
+  // must have picked a slot before getting here — if not, fail loud.
+  const slot = slotState.pendingSlot;
+  if (slot == null) {
+    log("newGame called without a pending slot — bailing");
+    alert("Pick a save slot first.");
+    backToSlotPicker();
+    return;
+  }
+  log(`newGame(slot=${slot}, country=${countryCode || "random"})`);
   try {
-    const body = countryCode ? { country_code: countryCode } : {};
+    const body = { slot };
+    if (countryCode) body.country_code = countryCode;
     state.game = await api("/api/game/new", {
       method: "POST",
       body: JSON.stringify(body),
     });
     log(`new game created: ${state.game.id} — ${state.game.character.name} in ${state.game.country.name}`);
-    // Remember the most recent game for the Continue button (#72).
-    try { localStorage.setItem("rl_last_game_id", state.game.id); } catch (e) {}
+    slotState.pendingSlot = null;
     // Reset stale UI from any previous life (#44). Use $opt for nodes
     // that may be missing on the death screen until first death.
     $opt("#event-list").innerHTML = '<p class="placeholder">Click "Live another year" to begin your life.</p>';
@@ -769,11 +794,18 @@ function showGameScreen() {
   $("#screen-game").classList.remove("hidden");
 }
 
-function showStartScreen() {
+async function showStartScreen() {
   $("#screen-game").classList.add("hidden");
   $("#screen-death").classList.add("hidden");
   $("#screen-start").classList.remove("hidden");
-  refreshContinueButton();
+  // Always return to the slot picker view first; never leave the
+  // user staring at a country grid when they came back from a life.
+  backToSlotPicker();
+  // Refresh slots from the server every time we show the start screen
+  // so the cards reflect the latest state (the life we just exited
+  // may have changed age / died this turn).
+  await loadSlots();
+  renderSlotGrid();
 }
 
 function showDeathScreen(turn) {
@@ -834,6 +866,47 @@ function showDeathScreen(turn) {
     li.textContent = line;
     tl.appendChild(li);
   }
+}
+
+// Collapse consecutive identical-suffix history lines into a range +
+// count (#80). Each line is "Age N: ..." — we strip the age prefix to
+// compare the body and rebuild as "Age N-M: body (Kx)".
+function groupTimelineLines(lines) {
+  const out = [];
+  let i = 0;
+  const re = /^Age (\d+): (.*)$/;
+  while (i < lines.length) {
+    const m = re.exec(lines[i]);
+    if (!m) {
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
+    const startAge = parseInt(m[1], 10);
+    const body = m[2];
+    let j = i + 1;
+    let endAge = startAge;
+    let count = 1;
+    while (j < lines.length) {
+      const mj = re.exec(lines[j]);
+      if (!mj || mj[2] !== body) break;
+      endAge = parseInt(mj[1], 10);
+      count++;
+      j++;
+    }
+    if (count === 1) {
+      out.push(lines[i]);
+    } else if (count === 2) {
+      // Render two-in-a-row as both lines (grouping a pair feels
+      // unnecessary).
+      out.push(lines[i]);
+      out.push(lines[i + 1]);
+    } else {
+      out.push(`Age ${startAge}-${endAge}: ${body} (${count}×)`);
+    }
+    i = j;
+  }
+  return out;
 }
 
 function fmtMoney(n) {
@@ -1145,10 +1218,12 @@ function renderGame() {
   // Year title
   $("#year-title").textContent = `Age ${c.age} · Year ${g.year}`;
 
-  // Timeline
+  // Timeline (#80) — group consecutive identical events into a single
+  // line so a 70-year Diwali run renders as one entry instead of 70.
   const tl = $("#timeline");
   tl.innerHTML = "";
-  for (const line of c.history.slice(-50).reverse()) {
+  const groupedLines = groupTimelineLines(c.history.slice(-100));
+  for (const line of groupedLines.slice(-50).reverse()) {
     const li = document.createElement("li");
     li.textContent = line;
     tl.appendChild(li);
@@ -1224,12 +1299,25 @@ function renderFinances() {
   const c = state.game?.character;
   if (!c) return;
 
+  // Header summary (#81): portfolio + debt + cash one-liner so the
+  // panel always has useful info even when empty.
+  const sumEl = $opt("#finances-summary");
+  if (sumEl) {
+    const portfolio = state.game.portfolio_value || 0;
+    const parts = [
+      `<span class="fs-label">Cash</span> <strong>${fmtMoney(c.money)}</strong>`,
+    ];
+    if (portfolio) parts.push(`<span class="fs-label">Portfolio</span> <strong>${fmtMoney(portfolio)}</strong>`);
+    if (c.debt) parts.push(`<span class="fs-label">Debt</span> <strong>${fmtMoney(c.debt)}</strong>`);
+    sumEl.innerHTML = parts.join(" · ");
+  }
+
   // Open investments list
   const invHost = $("#open-investments");
   invHost.innerHTML = "";
   const invs = c.investments || [];
   if (invs.length === 0) {
-    invHost.innerHTML = '<p class="placeholder">No open investments.</p>';
+    invHost.innerHTML = '<p class="placeholder">No open investments yet — start with a savings account ($100 minimum) and let it compound.</p>';
   } else {
     invs.forEach((inv, i) => {
       const pl = inv.value - inv.cost_basis;
@@ -1286,7 +1374,7 @@ function renderFinances() {
   loanHost.innerHTML = "";
   const loans = c.loans || [];
   if (loans.length === 0) {
-    loanHost.innerHTML = '<p class="placeholder">No open loans.</p>';
+    loanHost.innerHTML = '<p class="placeholder">No open loans. Borrow against future income if you need cash for a big purchase or investment.</p>';
   } else {
     loans.forEach((l, i) => {
       const row = document.createElement("div");
@@ -1472,9 +1560,7 @@ async function init() {
   $("#start-random").addEventListener("click", () => newGame(null));
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
-  $("#btn-continue").addEventListener("click", continueLastGame);
-  $("#btn-saved-games").addEventListener("click", openSavedGames);
-  $("#btn-saved-games-close").addEventListener("click", closeSavedGames);
+  $("#btn-back-to-slots").addEventListener("click", backToSlotPicker);
   $("#btn-quit-job").addEventListener("click", quitJob);
   $("#btn-drop-out").addEventListener("click", dropOutOfSchool);
   $("#btn-find-work").addEventListener("click", openJobBoard);
@@ -1490,7 +1576,11 @@ async function init() {
   setupCountryPicker();
   renderCountryGrid();
   setupFinanceTabs();
-  refreshContinueButton();
+  // Initial slot fetch + render. showStartScreen also does this, but
+  // doing it once during init means the cards are already painted by
+  // the time the user sees them on first load.
+  await loadSlots();
+  renderSlotGrid();
   log("init: ready");
 }
 

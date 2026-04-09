@@ -512,77 +512,99 @@ def _missing_requirements(job: Job, character: Character) -> list[str]:
 
 
 def _accept_logit(job: Job, character: Character) -> float:
-    """Continuous per-requirement logit (#64). Replaces the old 4-bucket
-    ramp with a smooth function so every job's acceptance probability
-    reflects exactly how the character matches up — instead of every
-    application coming back as either 80% or 30%.
+    """Continuous per-requirement logit. Designed to produce a wide
+    spread of acceptance probabilities across the catalogue rather than
+    the bimodal 80%/30% pattern the old curve produced.
 
-    The result is summed into a logit (log odds) and squashed via a
-    sigmoid in :func:`_logit_to_probability`. Each requirement
-    contributes:
+    Each requirement contributes to a logit (log-odds), squashed via a
+    sigmoid in :func:`_logit_to_probability` and clamped to [0.03, 0.85]
+    so neither end is a sure thing.
 
-      - In-window age: small bonus. Out-of-window: linear penalty in
-        years.
-      - Education >= floor: small bonus per level above. Below: bigger
-        penalty per level missing.
-      - Intelligence: small bonus per point above the floor; bigger
-        penalty per point below.
-      - Urban/rural mismatch: flat penalty.
-      - Vocation field mismatch: flat penalty.
+    Major contributors:
+      - Age in window: +0.4. Out of window: -0.3 per year of slip.
+      - Education at floor: +0.5, plus +0.15 per level above (cap +0.45).
+        Below floor: -1.0 per level missing — softer than the old -1.8
+        so a one-level miss leaves the character in the "stretch" band
+        instead of dropping to long_shot.
+      - Intelligence above floor: +0.012 per point (cap +0.30). Below:
+        -0.04 per point capped at -1.5 — capped so a low-IQ candidate
+        applying to an IQ-90 job stays a long shot, not zero.
+      - Urban / rural mismatch: -1.6 (down from -2.5). Still steep.
+      - Vocation field mismatch: -1.0 (down from -1.5).
+      - Salary tier difficulty: -log(salary_mid / 15_000) * 0.65 for
+        any job paying more than $15k. High-paying jobs are competitive
+        even when the candidate meets every minimum — without this the
+        graduate-level character would land in "qualified" for every
+        job in the catalogue, including company president.
     """
-    logit = 0.5  # baseline ~62% before any modifiers
+    logit = -0.2  # baseline ~45% before any modifiers
 
     # Age
     if character.age < job.min_age:
-        logit -= (job.min_age - character.age) * 0.4
+        logit -= (job.min_age - character.age) * 0.3
     elif character.age > job.max_age:
-        logit -= (character.age - job.max_age) * 0.4
+        logit -= (character.age - job.max_age) * 0.3
     else:
-        logit += 0.3
+        logit += 0.4
 
     # Education
     edu_diff = int(character.education) - job.min_education
     if edu_diff < 0:
-        logit -= abs(edu_diff) * 1.8
+        logit -= abs(edu_diff) * 1.0
     else:
-        logit += min(edu_diff * 0.2, 0.6)
+        logit += 0.5 + min(edu_diff * 0.15, 0.45)
 
     # Intelligence
     iq_diff = character.attributes.intelligence - job.min_intelligence
     if iq_diff < 0:
-        logit -= abs(iq_diff) * 0.06
+        logit -= min(abs(iq_diff) * 0.04, 1.5)
     else:
-        logit += min(iq_diff * 0.015, 0.5)
+        logit += min(iq_diff * 0.012, 0.30)
 
     # Urban / rural mismatch
     if job.urban_only and not character.is_urban:
-        logit -= 2.5
+        logit -= 1.6
     if job.rural_only and character.is_urban:
-        logit -= 2.5
+        logit -= 1.6
 
     # Vocation field mismatch — career switching is hard but possible
     if character.vocation_field and job.category and job.category != character.vocation_field:
-        logit -= 1.5
+        logit -= 1.0
+
+    # Salary tier — high-paying jobs are competitive even when minimums
+    # are met. Without this, the high-skill character lands in
+    # "qualified" for everything from beggar to senior gov official.
+    salary_mid = (job.salary_low + job.salary_high) / 2.0
+    if salary_mid > 15_000:
+        logit -= math.log(salary_mid / 15_000) * 0.65
 
     return logit
 
 
 def _logit_to_probability(logit: float) -> float:
-    """Sigmoid + clamp to [0.01, 0.95]."""
+    """Sigmoid + clamp to [0.03, 0.85]. The cap is intentional — there
+    is no such thing as a guaranteed offer, and a 95% ceiling collapsed
+    too many "perfect candidate" rows onto the same number."""
     try:
         p = 1.0 / (1.0 + math.exp(-logit))
     except OverflowError:
         p = 0.0 if logit < 0 else 1.0
-    return max(0.01, min(0.95, p))
+    return max(0.03, min(0.85, p))
 
 
 def _status_for_probability(p: float) -> str:
-    """Display label binned from the continuous probability (#64)."""
-    if p >= 0.55:
+    """Display label binned from the continuous probability.
+
+    The job board hides long_shot + out_of_reach by default; the
+    "Show long shots" toggle reveals them. The 40% line on stretch
+    is intentional — anything under that is a long shot the player
+    has to opt in to seeing.
+    """
+    if p >= 0.60:
         return "qualified"
-    if p >= 0.25:
+    if p >= 0.40:
         return "stretch"
-    if p >= 0.08:
+    if p >= 0.10:
         return "long_shot"
     return "out_of_reach"
 

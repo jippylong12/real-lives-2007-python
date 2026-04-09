@@ -87,24 +87,6 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   border-color: var(--good);
 }
 
-/* Saved games modal (#72) */
-.saved-games { max-width: 520px; }
-.saved-games-list {
-  display: flex; flex-direction: column; gap: 6px;
-  max-height: 60vh; overflow-y: auto;
-  margin-top: 8px;
-}
-.saved-game-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--bg);
-  border-left: 3px solid var(--accent);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
-.sg-name { font-weight: 600; font-size: 14px; }
-.sg-meta { font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { margin: 0; font-style: italic; }
 .brand .muted { font-style: normal; font-weight: 400; color: var(--ink-mute); }
@@ -228,6 +210,110 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 .country-tile:hover { border-color: var(--accent); background: var(--accent-soft); }
 .country-tile img { width: 24px; height: 16px; object-fit: cover; border-radius: 2px; }
 .country-tile span { font-size: 13px; }
+
+/* ---------- Save slot picker (#79) ---------- */
+.slot-picker-view { margin-top: 2.4rem; }
+.country-picker-view { margin-top: 2.4rem; }
+.country-picker-view.hidden,
+.slot-picker-view.hidden { display: none; }
+
+.country-picker-header {
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 14px;
+}
+.country-picker-header h3 {
+  margin: 0; font-size: 1.15rem; font-weight: 600;
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.slot-card {
+  display: flex; flex-direction: column;
+  align-items: flex-start; gap: 6px;
+  padding: 18px 18px 16px;
+  min-height: 168px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  font-family: inherit;
+  text-align: left;
+  position: relative;
+}
+.slot-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: translateY(-2px);
+}
+.slot-card .slot-num {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+}
+.slot-card .slot-flag {
+  width: 36px; height: 24px;
+  object-fit: cover; border-radius: 3px;
+  border: 1px solid var(--line);
+  margin: 4px 0 2px;
+}
+.slot-card .slot-name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-family: var(--serif, var(--sans));
+}
+.slot-card .slot-meta {
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.slot-card .slot-cta {
+  margin-top: auto;
+  padding: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.slot-card .slot-empty-msg {
+  margin-top: 12px;
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: var(--serif, var(--sans));
+}
+.slot-card .slot-empty-cta {
+  margin-top: auto;
+  padding: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.slot-card.slot-empty {
+  border-style: dashed;
+  background: transparent;
+}
+.slot-card.slot-empty:hover {
+  border-style: solid;
+  background: var(--accent-soft);
+}
+.slot-card.slot-dead {
+  background: var(--bg);
+  opacity: 0.92;
+}
+.slot-card.slot-dead .slot-name {
+  color: var(--ink-soft);
+}
+.slot-card .slot-actions {
+  display: flex; gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+}
 
 /* ---------- Game screen ---------- */
 .game { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
@@ -528,6 +614,15 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 .collapsible-panel[open] > summary { border-bottom: 1px solid var(--line-soft); }
 .collapsible-panel > *:not(summary) { padding: 16px 22px; }
 .collapsible-panel.finances-area .tabs { padding: 0 22px 8px; }
+.collapsible-panel.finances-area > summary { gap: 16px; }
+.finances-summary {
+  display: flex; gap: 14px; flex: 1;
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.finances-summary .fs-label { color: var(--ink-mute); margin-right: 4px; }
+.finances-summary strong { color: var(--ink); }
 .event-area-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 0.75rem;
@@ -676,20 +771,20 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 1rem;
 }
-.finances-area .tabs { display: flex; gap: 6px; }
+.finances-area .tabs { display: flex; gap: 4px; }
 .finances-area .tab {
   cursor: pointer;
   font-family: var(--sans);
-  font-size: 13px; font-weight: 500;
-  padding: 6px 14px;
+  font-size: 12px; font-weight: 500;
+  padding: 4px 11px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--bg-elev);
   color: var(--ink-soft);
 }
 .finances-area .tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
-.holdings { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.holdings .placeholder { color: var(--ink-mute); font-size: 13px; margin: 6px 0; }
+.holdings { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.holdings .placeholder { color: var(--ink-mute); font-size: 12px; margin: 6px 0; line-height: 1.5; }
 .holding {
   display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 12px;
   padding: 10px 12px;

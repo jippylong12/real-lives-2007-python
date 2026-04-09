@@ -202,8 +202,14 @@ CREATE TABLE IF NOT EXISTS games (
     id          TEXT PRIMARY KEY,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    state_json  TEXT NOT NULL
+    state_json  TEXT NOT NULL,
+    -- Save slot 1-5 (#79). NULL for legacy auto-saves predating slots.
+    -- Multiple games can share a slot (history of dead lives in that
+    -- slot); the "current" game in slot N is the most recent by
+    -- updated_at.
+    slot        INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_games_slot ON games(slot);
 """
 
 
@@ -341,6 +347,16 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
         #    job_original_stats so the catch-all + the canonical table
         #    stay in sync.
         EDU_CODE_TO_LEVEL = {"N": 0, "P": 1, "H": 2, "C": 2, "G": 4}
+        # Crude / illicit jobs in jobs.dat ship with very young min_age
+        # values (prostitute=13, thief=12). Override to 18 regardless of
+        # the binary value (#78). The other low-min-age jobs like
+        # 'subsistence farmer' (8) and 'beggar' (5) keep their values
+        # since those reflect real economic conditions in low-HDI
+        # countries that the simulation models.
+        CRUDE_JOB_MIN_AGE_OVERRIDE = {
+            "prostitute": 18,
+            "thief": 18,
+        }
         jobs_orig_total = 0
         jobs_parsed = parsed_files.get("jobs")
         if jobs_parsed is not None:
@@ -358,6 +374,10 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 # default working age).
                 if min_age >= 100:
                     min_age = 16
+                # #78: crude / illicit jobs are gated to 18+ regardless of
+                # the binary value.
+                if clean_name in CRUDE_JOB_MIN_AGE_OVERRIDE:
+                    min_age = max(min_age, CRUDE_JOB_MIN_AGE_OVERRIDE[clean_name])
                 max_age = int(row.get("MaxAge") or 65)
                 salary = int(row.get("Salary") or 0)
                 salary_low = int(salary * 0.8)
@@ -613,10 +633,26 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
 
 
 def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    """Open the built database. Builds it on first access if missing."""
+    """Open the built database. Builds it on first access if missing.
+
+    Also runs idempotent ALTER TABLE migrations for additive schema
+    changes so existing DBs (with prior saves) gain new columns without
+    a rebuild that would wipe state."""
     if not db_path.exists():
         build(db_path)
-    return _connect(db_path)
+    conn = _connect(db_path)
+    _migrate(conn)
+    return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply additive schema migrations to an existing DB. Each step is
+    wrapped in a try/except so a column that already exists is a no-op."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(games)")}
+    if "slot" not in cols:
+        conn.execute("ALTER TABLE games ADD COLUMN slot INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_games_slot ON games(slot)")
+        conn.commit()
 
 
 if __name__ == "__main__":

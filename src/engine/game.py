@@ -62,6 +62,7 @@ class GameState:
     year: int                              # in-game calendar year
     started_at: str                        # ISO timestamp
     pending_event: Optional[dict] = None   # full event awaiting decision
+    slot: Optional[int] = None             # save slot 1-5 (#79)
 
     def to_dict(self) -> dict:
         return {
@@ -72,6 +73,7 @@ class GameState:
             "year": self.year,
             "started_at": self.started_at,
             "pending_event": self.pending_event,
+            "slot": self.slot,
         }
 
     @classmethod
@@ -84,6 +86,7 @@ class GameState:
             year=d["year"],
             started_at=d["started_at"],
             pending_event=d.get("pending_event"),
+            slot=d.get("slot"),
         )
 
 
@@ -99,7 +102,13 @@ class Game:
 
     # ----- creation -----
     @classmethod
-    def new(cls, *, country_code: str | None = None, seed: int | None = None) -> "Game":
+    def new(
+        cls,
+        *,
+        country_code: str | None = None,
+        seed: int | None = None,
+        slot: int | None = None,
+    ) -> "Game":
         seed = seed if seed is not None else random.SystemRandom().randint(0, 2**31 - 1)
         rng = random.Random(seed)
         country = get_country(country_code) if country_code else None
@@ -113,6 +122,7 @@ class Game:
             character=character,
             year=2007,                # original game's release year as the in-game start
             started_at=datetime.now(timezone.utc).isoformat(),
+            slot=slot,
         )
         character.remember(f"Born in {country.capital}, {country.name}.")
         return cls(state)
@@ -402,12 +412,13 @@ def save_game(game: Game) -> None:
         state_json = json.dumps(game.state.to_dict())
         conn.execute(
             """
-            INSERT INTO games (id, created_at, updated_at, state_json)
-            VALUES (?,?,?,?)
+            INSERT INTO games (id, created_at, updated_at, state_json, slot)
+            VALUES (?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at,
-                                          state_json = excluded.state_json
+                                          state_json = excluded.state_json,
+                                          slot       = excluded.slot
             """,
-            (game.state.id, now, now, state_json),
+            (game.state.id, now, now, state_json, game.state.slot),
         )
         conn.commit()
     finally:
@@ -446,6 +457,72 @@ def list_games() -> list[dict]:
             "age": s["character"]["age"],
             "alive": s["character"]["alive"],
         })
+    return out
+
+
+# Number of save slots the player picks from on the start screen (#79).
+NUM_SLOTS = 5
+
+
+def list_slots() -> list[dict]:
+    """Return one descriptor per save slot (1..NUM_SLOTS).
+
+    For each slot, the "current" game is the most recently updated row
+    with that slot number. Slots with no rows return state="empty".
+    Otherwise the slot reports the character's name / country / age and
+    whether they're still alive."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT g.id, g.slot, g.created_at, g.updated_at, g.state_json
+            FROM games g
+            JOIN (
+                SELECT slot, MAX(updated_at) AS m
+                FROM games
+                WHERE slot IS NOT NULL
+                GROUP BY slot
+            ) latest ON latest.slot = g.slot AND latest.m = g.updated_at
+            ORDER BY g.slot
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    by_slot: dict[int, dict] = {}
+    for r in rows:
+        s = json.loads(r["state_json"])
+        c = s["character"]
+        by_slot[int(r["slot"])] = {
+            "slot": int(r["slot"]),
+            "state": "alive" if c.get("alive", True) else "dead",
+            "game_id": r["id"],
+            "character_name": c["name"],
+            "country_code": c["country_code"],
+            "country_name": None,  # filled in by API layer if needed
+            "age": c["age"],
+            "year": s.get("year"),
+            "alive": bool(c.get("alive", True)),
+            "cause_of_death": c.get("cause_of_death"),
+            "updated_at": r["updated_at"],
+        }
+    out: list[dict] = []
+    for n in range(1, NUM_SLOTS + 1):
+        if n in by_slot:
+            out.append(by_slot[n])
+        else:
+            out.append({
+                "slot": n,
+                "state": "empty",
+                "game_id": None,
+                "character_name": None,
+                "country_code": None,
+                "country_name": None,
+                "age": None,
+                "year": None,
+                "alive": False,
+                "cause_of_death": None,
+                "updated_at": None,
+            })
     return out
 
 

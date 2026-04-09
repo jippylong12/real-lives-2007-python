@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..engine import careers, finances, healthcare, spending
-from ..engine.game import Game, list_games, load_game
+from ..engine.game import Game, NUM_SLOTS, list_games, list_slots, load_game
 from ..engine.world import (
     all_countries, binary_facts_for, cities_for, description_for, get_country,
 )
@@ -50,6 +50,7 @@ FLAGS_DIR = DATA_DIR / "flags"
 class NewGameRequest(BaseModel):
     country_code: Optional[str] = Field(default=None, description="ISO alpha-2 country code; random if omitted")
     seed: Optional[int] = Field(default=None, description="RNG seed for reproducible runs")
+    slot: Optional[int] = Field(default=None, description="Save slot 1-5 (#79); omit for unslotted save")
 
 
 class DecisionRequest(BaseModel):
@@ -122,6 +123,7 @@ def _serialize_game(game: Game) -> dict:
 
     return {
         "id": state.id,
+        "slot": state.slot,
         "year": state.year,
         "started_at": state.started_at,
         "character": char_dict,
@@ -324,9 +326,33 @@ def create_app() -> FastAPI:
     def games():
         return list_games()
 
+    @app.get("/api/slots")
+    def slots():
+        """Return the 5 save slots (#79). Each slot is one of:
+        empty / alive / dead. Frontend renders this as the start screen."""
+        rows = list_slots()
+        # Backfill country_name from the world catalog so the frontend
+        # doesn't need a second lookup per slot.
+        for row in rows:
+            cc = row.get("country_code")
+            if cc:
+                country = get_country(cc)
+                if country is not None:
+                    row["country_name"] = country.name
+        return rows
+
     @app.post("/api/game/new")
     def new_game(req: NewGameRequest):
-        game = Game.new(country_code=req.country_code, seed=req.seed)
+        if req.slot is not None and not (1 <= req.slot <= NUM_SLOTS):
+            raise HTTPException(
+                status_code=400,
+                detail=f"slot must be between 1 and {NUM_SLOTS}",
+            )
+        game = Game.new(
+            country_code=req.country_code,
+            seed=req.seed,
+            slot=req.slot,
+        )
         game.save()
         return _serialize_game(game)
 
