@@ -50,27 +50,50 @@ When porting a mechanic from the original, the workflow is:
   and `Loans.dat` files are bundled in `data/`. A custom parser
   (`src/data/parse_dat.py`) reads them; see *Data parsing* below.
 
-## Download (macOS)
+## Download
 
-Pre-built `.app` bundles are attached to each [GitHub
-release](https://github.com/jippylong12/real-lives-2007-python/releases). The
-quick path:
+Pre-built binaries are attached to each [GitHub
+release](https://github.com/jippylong12/real-lives-2007-python/releases).
+The build runs automatically on `macos-latest` (Apple Silicon), `macos-13`
+(Intel), `windows-latest`, and `ubuntu-latest` whenever a `v*` tag is
+pushed.
 
-1. Download `RealLives2007-<version>-macos-arm64.zip` (Apple Silicon) or
-   `-macos-x86_64.zip` (Intel) from the latest release.
-2. Unzip — you'll get **Real Lives 2007.app**.
-3. Drag it to `/Applications` (optional) and double-click to launch.
-4. **First launch only**: macOS Gatekeeper will refuse to open the app
-   because it's unsigned. Right-click → **Open** → **Open**. After that
-   it launches normally.
+| Platform | Asset | What you get |
+|---|---|---|
+| macOS Apple Silicon (M1+) | `RealLives2007-<ver>-macos-arm64.zip` | `Real Lives 2007.app` bundle |
+| macOS Intel | `RealLives2007-<ver>-macos-x86_64.zip` | `Real Lives 2007.app` bundle |
+| Windows 10/11 (64-bit) | `RealLives2007-<ver>-windows-x86_64.zip` | folder with `RealLives2007.exe` |
+| Linux x86_64 | `RealLives2007-<ver>-linux-x86_64.tar.gz` | folder with `RealLives2007` binary |
 
-The app starts a local web server on a free port, opens your default
-browser to it, and saves your games to
-`~/Library/Application Support/RealLives2007/`. Quit by closing the
-terminal window the app spawned.
+### macOS
 
-> No code signing or notarization yet — that requires an Apple Developer
-> account. PRs welcome.
+1. Download the appropriate `.zip`, unzip — you get **Real Lives 2007.app**.
+2. Drag it to `/Applications` (optional) and double-click to launch.
+3. **First launch only**: Gatekeeper blocks unsigned apps. Right-click →
+   **Open** → **Open**. Subsequent launches work normally.
+
+The app saves games to `~/Library/Application Support/RealLives2007/`.
+
+### Windows
+
+1. Download the `.zip`, extract somewhere, and double-click `RealLives2007.exe`.
+2. **First launch only**: Windows SmartScreen blocks unsigned apps with
+   "Windows protected your PC". Click **More info** → **Run anyway**.
+
+The app saves games to `%APPDATA%\RealLives2007\`.
+
+### Linux
+
+```bash
+tar -xzf RealLives2007-<ver>-linux-x86_64.tar.gz
+./RealLives2007/RealLives2007
+```
+
+Save games go to `$XDG_DATA_HOME/RealLives2007` (or `~/.local/share/RealLives2007`).
+
+> All platforms ship unsigned. Code signing for Mac and Windows costs
+> money and isn't worth it for a hobby project. PRs welcome from anyone
+> with an Apple Developer ID or Windows code-signing cert.
 
 ## Run from source
 

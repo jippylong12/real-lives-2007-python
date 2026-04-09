@@ -1,0 +1,131 @@
+name: Release
+
+# Build native binaries on macOS, Windows, and Linux when a v* tag is
+# pushed, then attach the artifacts to the matching GitHub Release.
+#
+# Trigger:
+#     git tag v1.2.3 && git push origin v1.2.3
+#
+# Result:
+#     dist/RealLives2007-1.2.3-macos-arm64.zip
+#     dist/RealLives2007-1.2.3-macos-x86_64.zip   (when Intel runner used)
+#     dist/RealLives2007-1.2.3-windows-x86_64.zip
+#     dist/RealLives2007-1.2.3-linux-x86_64.tar.gz
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest          # Apple Silicon
+            artifact_name: macos-arm64
+            archive_ext: zip
+          - os: macos-13              # Intel
+            artifact_name: macos-x86_64
+            archive_ext: zip
+          - os: windows-latest
+            artifact_name: windows-x86_64
+            archive_ext: zip
+          - os: ubuntu-latest
+            artifact_name: linux-x86_64
+            archive_ext: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run tests
+        shell: bash
+        run: pytest -q
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build with PyInstaller
+        shell: bash
+        run: pyinstaller packaging/RealLives2007.spec --clean --noconfirm
+
+      # ---------- macOS packaging ----------
+      - name: Package macOS .app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/Real Lives 2007.app" \
+            "dist/RealLives2007-${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}.zip"
+
+      # ---------- Windows packaging ----------
+      - name: Package Windows folder
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "dist/RealLives2007/*" `
+            -DestinationPath "dist/RealLives2007-${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}.zip"
+
+      # ---------- Linux packaging ----------
+      - name: Package Linux folder
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd dist
+          tar -czf "RealLives2007-${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}.tar.gz" RealLives2007
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/RealLives2007-${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}.*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Resolve version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Real Lives 2007 ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/macos-arm64/*
+            artifacts/macos-x86_64/*
+            artifacts/windows-x86_64/*
+            artifacts/linux-x86_64/*
