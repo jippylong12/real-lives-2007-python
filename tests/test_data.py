@@ -151,6 +151,38 @@ def test_country_original_stats_table_populated():
         conn.close()
 
 
+def test_type_4_decodes_as_bool_type_5_as_uint16():
+    """Issue #20: type 4 fields are boolean flags, type 5 fields are uint16
+    counts/percentages. Verify the decoder honors that distinction."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")
+    rows = parse_dat.decode_all_countries(parsed)
+
+    # Every type-4 field across every country should decode as a bool.
+    type4_fields = [f for f in parsed.schema if f.type_code == 4]
+    assert len(type4_fields) > 0
+    for f in type4_fields:
+        for r in rows:
+            v = r.get(f.name)
+            if v is None:
+                continue
+            assert isinstance(v, bool), f"{f.name} = {v!r} should be bool"
+
+    # Spot-check semantic correctness against hand-validated 2007 facts.
+    by_name = {r["Country"]: r for r in rows}
+    assert by_name["Afghanistan"]["AtWar"] is True
+    assert by_name["Iraq"]["AtWar"] is True
+    assert by_name["Sweden"]["AtWar"] is False
+    assert by_name["the United States"]["AtWar"] is False
+    # USA: all-volunteer force, no conscription. Israel: universal service.
+    assert by_name["the United States"]["MilitaryConscription"] is False
+    assert by_name["Israel"]["MilitaryConscription"] is True
+    # Most type-5 fields are 0..100 percentages
+    sweden = by_name["Sweden"]
+    assert isinstance(sweden["MaleLiteracy"], int)
+    assert sweden["MaleLiteracy"] == 99
+    assert sweden["FemaleLiteracy"] == 99
+
+
 def test_extract_descriptions_per_country():
     from src.data.seed import COUNTRIES
     parsed = parse_dat.parse_dat(DATA_DIR / "world.dat")

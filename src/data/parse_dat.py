@@ -13,7 +13,7 @@ underlying table. A schema record has this layout:
   off 0x00: uint16  field_id        (1, 2, 3, ...)
   off 0x02: uint8   name_len        (Pascal length byte)
   off 0x03: bytes   field_name      (ASCII)
-  off 0xa4: uint16  type_code       (1=string, 4/5=int16, 6=uint32, 7=double)
+  off 0xa4: uint16  type_code       (1=string, 4=bool, 5=uint16, 6=uint32, 7=double)
   off 0xa9: uint16  slot_size       (bytes occupied by the value, sans tag)
   off 0xac: uint32  record_offset   (byte offset of the 0x01 tag inside the
                                       *concatenated* per-country data buffer)
@@ -65,10 +65,16 @@ class DatField:
 # Schema type codes recovered from world.dat / jobs.dat / etc. by examining
 # how each field's slot_size lines up with the bytes the data records actually
 # carry at its declared offset.
+#
+# Type 4 vs 5 distinction (issue #20): both occupy 2 bytes, but enumerating
+# every field's value range across all 193 countries shows that type-4 fields
+# are strictly {0, 1} (AtWar, Torture, MilitaryConscription, MarketEconomy, ...)
+# while type-5 fields range up to thousands (PersonsPerTelevision, percentages,
+# counts). So type 4 = bool, type 5 = uint16.
 _TYPE_NAMES: dict[int, str] = {
     1: "string",
-    4: "int16",   # used for boolean-ish flags (AtWar, etc.)
-    5: "int16",
+    4: "bool",
+    5: "uint16",
     6: "uint32",
     7: "double",
 }
@@ -517,7 +523,9 @@ def decode_value(buf: bytes, field: DatField) -> object:
         s = slot.split(b"\x00", 1)[0]
         # Original game stored Latin-1; emit unicode with the accents intact.
         return s.decode("latin-1", errors="replace")
-    if field.type_code in (4, 5):  # int16
+    if field.type_code == 4:  # bool (stored as uint16; only ever 0 or 1)
+        return bool(struct.unpack_from("<H", buf, val_off)[0])
+    if field.type_code == 5:  # uint16
         return struct.unpack_from("<H", buf, val_off)[0]
     if field.type_code == 6:  # uint32
         return struct.unpack_from("<I", buf, val_off)[0]
