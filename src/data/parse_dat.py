@@ -19,11 +19,47 @@ underlying table. A schema record has this layout:
                                       *concatenated* per-country data buffer)
   off 0x1e6..    : qualified name "tablename.FieldName" as a Pascal string
 
-After the schema records come *data records*. Each country occupies three
-consecutive 0x300 records, treated as one 0x900 buffer. Inside that buffer
-each field's value is preceded by a 0x01 tag at the offset given by the
-schema's record_offset. The decoder is implemented in
-:func:`decode_country_record`.
+After the schema records come *data records*. Each row occupies a fixed-size
+slice of the data section; for world.dat that's 2384 bytes per country, for
+jobs.dat 384 bytes per job. Inside the slice each field's value is preceded
+by a 0x01 tag at the offset given by the schema's record_offset. The decoder
+is implemented in :func:`decode_row`.
+
+## File-by-file row interpretation
+
+Not every .dat file is a master table. The four files this project parses
+have different semantics — important to know before treating them as
+canonical reference data:
+
+  - ``world.dat`` (193 rows × 2384 bytes) — *master country table*. Every
+    sovereign state and territory the original game shipped with, with
+    169 fields per country (population, life expectancy, religion
+    fractions, disaster history, human rights flags, ...). This is the
+    canonical reference for country stats.
+
+  - ``jobs.dat`` (131 rows × 384 bytes) — *master job catalogue*. Every
+    occupation the player can hold, with 32 fields per job (salary,
+    education requirement, urban/rural, intelligence floor, sector
+    frequencies, ...). Canonical reference for job definitions.
+
+  - ``Investments.dat`` (103 rows × 152 bytes) — **NOT a master investment
+    table.** Each row is a *saved player position* — an open investment
+    holding belonging to a specific in-game character. Each row has an
+    ``Owner`` field naming the character who holds it. The 103 rows are
+    the open positions across however many save slots the original
+    game's BDE database happened to contain when these files were
+    extracted. The master investment product list (with annual return
+    ranges, risk levels, minimum amounts) lives in
+    :mod:`src.data.seed.INVESTMENTS`.
+
+  - ``Loans.dat`` (9 rows × 160 bytes) — same shape as Investments.dat:
+    *saved player positions*, not master products. Each row has an
+    ``Owner`` and is a single open loan a specific character has out.
+    Master loan product list lives in :mod:`src.data.seed.LOANS`.
+
+The Investments/Loans files are useful as a *future save-import* path
+(decode them to populate ``Character.investments`` / ``Character.loans``),
+but not as a reference for what investments/loans the engine offers.
 
 That recovered schema + decoded values + string pool is enough to (a) anchor
 the SQLite tables to the original game's columns, (b) seed string-typed
@@ -675,6 +711,31 @@ def decode_country_record(parsed: "DatFile", country_index: int) -> dict[str, ob
 
 def decode_all_countries(parsed: "DatFile") -> list[dict[str, object]]:
     return decode_all_rows(parsed)
+
+
+def decode_saved_holdings(parsed: "DatFile") -> dict[str, list[dict[str, object]]]:
+    """Decode an Investments.dat / Loans.dat save-state file (#25) into
+    open holdings keyed by owner name.
+
+    These files are NOT master tables — each row is a saved position
+    (an open investment or loan) belonging to a specific in-game character.
+    Returns a mapping ``{owner_name: [holding, holding, ...]}``. Each
+    holding is the raw decoded row dict (Investment / Balance / etc.) with
+    the ``IndexField`` book-keeping field stripped.
+
+    Returns an empty dict for files that don't have an ``Owner`` field
+    (e.g. world.dat, jobs.dat — which are real master tables).
+    """
+    if not any(f.name == "Owner" for f in parsed.schema):
+        return {}
+    out: dict[str, list[dict[str, object]]] = {}
+    for row in decode_all_rows(parsed):
+        owner = row.get("Owner")
+        if not isinstance(owner, str) or not owner.strip():
+            continue
+        cleaned = {k: v for k, v in row.items() if k not in ("IndexField", "Owner")}
+        out.setdefault(owner.strip(), []).append(cleaned)
+    return out
 
 
 def parse_all(data_dir: str | Path) -> dict[str, DatFile]:

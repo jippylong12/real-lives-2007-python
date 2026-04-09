@@ -349,6 +349,33 @@ def test_every_schema_field_has_recognized_type():
         assert not unknown, f"{name}: schema fields with unknown type: {unknown}"
 
 
+def test_decode_saved_holdings_groups_investments_by_owner():
+    """Issue #25: Investments.dat is NOT a master table — it's a save-state
+    file holding open investment positions per character. Each row has an
+    Owner field. decode_saved_holdings groups them by owner name."""
+    parsed = parse_dat.parse_dat(DATA_DIR / "Investments.dat")
+    holdings = parse_dat.decode_saved_holdings(parsed)
+    # 103 rows total, distributed across multiple owners.
+    assert len(holdings) > 1
+    total = sum(len(positions) for positions in holdings.values())
+    assert total == 103
+    # Pick any owner and verify their holdings shape.
+    first_owner, positions = next(iter(holdings.items()))
+    assert isinstance(first_owner, str) and first_owner
+    assert all("Investment" in p and "Balance" in p for p in positions)
+    # IndexField and Owner are stripped from the per-position dicts.
+    assert all("IndexField" not in p for p in positions)
+    assert all("Owner" not in p for p in positions)
+
+
+def test_decode_saved_holdings_returns_empty_for_master_tables():
+    """world.dat and jobs.dat are master tables, not save-state files
+    — they have no Owner field, so decode_saved_holdings returns {}."""
+    for fname in ("world.dat", "jobs.dat"):
+        parsed = parse_dat.parse_dat(DATA_DIR / fname)
+        assert parse_dat.decode_saved_holdings(parsed) == {}
+
+
 def test_decode_jobs_dat_with_generic_row_decoder():
     """Issue #19: the generic decoder generalizes from world.dat to any
     .dat file with a fixed-row data section. jobs.dat decodes into 131
