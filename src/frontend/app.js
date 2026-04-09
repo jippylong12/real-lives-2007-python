@@ -82,6 +82,222 @@ function pulseSaveIndicator() {
   saveIndicatorTimer = setTimeout(() => el.classList.remove("pulsing"), 700);
 }
 
+// =====================================================================
+// Dialog + toast system
+// =====================================================================
+//
+// Drop-in replacement for the browser's native alert() / confirm() that
+// matches the editorial palette. Returns Promises so call sites read
+// linearly:
+//
+//   await showAlert({ title: "Couldn't load", body: e.message });
+//   if (!(await showConfirm({ title: "Quit job?", body: "..." }))) return;
+//
+// Toasts are non-blocking — fire-and-forget for lightweight feedback
+// (purchase succeeded, slot loaded, etc.) so we don't pop a modal for
+// every trivial event.
+
+const DIALOG_ICONS = {
+  default: "i",
+  info:    "i",
+  success: "\u2713",  // ✓
+  danger:  "!",
+  warning: "!",
+};
+
+let _dialogStack = [];  // tracks open dialogs for ESC handling
+
+function _renderDialog({ title, body, kind, buttons, dismissible }) {
+  const host = document.getElementById("rl-dialog-host");
+  if (!host) {
+    // Fail loud-but-soft: log and fall back to native so we never
+    // silently swallow a critical message.
+    console.error("[RL] dialog host missing");
+    return null;
+  }
+  const backdrop = document.createElement("div");
+  backdrop.className = "rl-dialog-backdrop";
+  backdrop.setAttribute("role", "presentation");
+
+  const card = document.createElement("div");
+  card.className = "rl-dialog" + (kind && kind !== "default" ? ` ${kind}` : "");
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  if (title) card.setAttribute("aria-labelledby", "rl-dialog-title");
+
+  const iconGlyph = DIALOG_ICONS[kind || "default"] || DIALOG_ICONS.default;
+  const iconHtml = `<div class="rl-dialog-icon" aria-hidden="true">${iconGlyph}</div>`;
+  const titleHtml = title ? `<h3 id="rl-dialog-title" class="rl-dialog-title">${escapeHtml(title)}</h3>` : "";
+  const bodyHtml  = body ? `<div class="rl-dialog-body">${escapeHtml(body)}</div>` : "";
+  const actionsHtml = `<div class="rl-dialog-actions"></div>`;
+
+  card.innerHTML = iconHtml + titleHtml + bodyHtml + actionsHtml;
+  backdrop.appendChild(card);
+  host.appendChild(backdrop);
+
+  const actions = card.querySelector(".rl-dialog-actions");
+  for (const b of buttons) {
+    const btn = document.createElement("button");
+    btn.className = "rl-dialog-btn" + (b.variant ? ` ${b.variant}` : "");
+    btn.textContent = b.label;
+    btn.addEventListener("click", () => b.onClick && b.onClick());
+    actions.appendChild(btn);
+  }
+
+  // Click-outside dismiss for non-destructive dialogs.
+  if (dismissible) {
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) {
+        const cancelBtn = buttons.find((b) => b.role === "cancel") || buttons[buttons.length - 1];
+        cancelBtn && cancelBtn.onClick && cancelBtn.onClick();
+      }
+    });
+  }
+
+  // Focus the primary button so Enter confirms immediately.
+  const primaryBtn = actions.querySelector(".rl-dialog-btn.primary, .rl-dialog-btn.danger") ||
+                     actions.querySelector(".rl-dialog-btn");
+  if (primaryBtn) setTimeout(() => primaryBtn.focus(), 30);
+
+  const handle = { backdrop, card, buttons, dismissible };
+  _dialogStack.push(handle);
+  return handle;
+}
+
+function _closeDialog(handle) {
+  if (!handle || !handle.backdrop) return;
+  handle.backdrop.classList.add("closing");
+  setTimeout(() => {
+    if (handle.backdrop && handle.backdrop.parentNode) {
+      handle.backdrop.parentNode.removeChild(handle.backdrop);
+    }
+    _dialogStack = _dialogStack.filter((h) => h !== handle);
+  }, 170);
+}
+
+// Global ESC handler — closes the topmost dialog if it's dismissible.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || _dialogStack.length === 0) return;
+  const top = _dialogStack[_dialogStack.length - 1];
+  if (!top.dismissible) return;
+  const cancelBtn = top.buttons.find((b) => b.role === "cancel") || top.buttons[top.buttons.length - 1];
+  cancelBtn && cancelBtn.onClick && cancelBtn.onClick();
+});
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Show a single-button informational dialog. Resolves when dismissed.
+ * Replacement for `alert(msg)`.
+ *
+ *   await showAlert("Couldn't load that game: " + e.message);
+ *   await showAlert({ title: "Saved", body: "Your progress is safe.", kind: "success" });
+ */
+function showAlert(opts) {
+  if (typeof opts === "string") opts = { body: opts };
+  const { title = "", body = "", kind = "info", confirmText = "OK" } = opts || {};
+  return new Promise((resolve) => {
+    let handle = null;
+    const close = () => { _closeDialog(handle); resolve(); };
+    handle = _renderDialog({
+      title: title || _defaultTitleForKind(kind),
+      body, kind, dismissible: true,
+      buttons: [{ label: confirmText, variant: "primary", role: "confirm", onClick: close }],
+    });
+  });
+}
+
+/**
+ * Show a two-button confirm dialog. Resolves true on confirm, false on
+ * cancel (incl. ESC and click-outside if dismissible). Replacement for
+ * `confirm(msg)`.
+ *
+ *   if (!(await showConfirm({ title: "Quit job?", body: "...", confirmText: "Quit" }))) return;
+ *   await showConfirm({ ..., destructive: true })  // red confirm button
+ */
+function showConfirm(opts) {
+  if (typeof opts === "string") opts = { body: opts };
+  const {
+    title = "Are you sure?",
+    body = "",
+    kind,
+    confirmText = "Confirm",
+    cancelText = "Cancel",
+    destructive = false,
+    dismissible = !destructive,
+  } = opts || {};
+  const dialogKind = kind || (destructive ? "danger" : "default");
+  return new Promise((resolve) => {
+    let handle = null;
+    const finish = (val) => { _closeDialog(handle); resolve(val); };
+    handle = _renderDialog({
+      title, body, kind: dialogKind, dismissible,
+      buttons: [
+        { label: cancelText, variant: "", role: "cancel", onClick: () => finish(false) },
+        {
+          label: confirmText,
+          variant: destructive ? "danger" : "primary",
+          role: "confirm",
+          onClick: () => finish(true),
+        },
+      ],
+    });
+  });
+}
+
+function _defaultTitleForKind(kind) {
+  switch (kind) {
+    case "success": return "Done";
+    case "danger":  return "Heads up";
+    case "warning": return "Heads up";
+    default:        return "Notice";
+  }
+}
+
+/**
+ * Fire-and-forget toast notification. Stacks top-right, auto-dismisses
+ * after 4s. Use for lightweight confirmations that don't need to block
+ * the player.
+ *
+ *   showToast("Saved your progress.");
+ *   showToast("Bought a vacation for $2,000.", { kind: "success" });
+ *   showToast("Couldn't reach the server.", { kind: "error", duration: 6000 });
+ */
+const TOAST_ICONS = { success: "\u2713", error: "!", info: "i" };
+
+function showToast(message, opts = {}) {
+  const host = document.getElementById("rl-toast-host");
+  if (!host) { console.error("[RL] toast host missing"); return; }
+  const { kind = "info", duration = 4000 } = opts;
+  const toast = document.createElement("div");
+  toast.className = `rl-toast ${kind}`;
+  toast.setAttribute("role", "status");
+  toast.innerHTML =
+    `<span class="rl-toast-icon" aria-hidden="true">${TOAST_ICONS[kind] || TOAST_ICONS.info}</span>` +
+    `<span class="rl-toast-msg">${escapeHtml(message)}</span>` +
+    `<button class="rl-toast-close" aria-label="Dismiss">\u00d7</button>`;
+  host.appendChild(toast);
+
+  let timer = null;
+  const close = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!toast.parentNode) return;
+    toast.classList.add("closing");
+    setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 200);
+  };
+  toast.querySelector(".rl-toast-close").addEventListener("click", close);
+  if (duration > 0) timer = setTimeout(close, duration);
+  return { close };
+}
+
 async function loadCountries() {
   state.countries = await api("/api/countries");
 }
@@ -216,7 +432,7 @@ function renderSpendTab() {
   list.querySelectorAll("[data-buy]").forEach((b) => {
     b.onclick = () => {
       const blocked = b.dataset.blocked;
-      if (blocked) { alert(blocked); return; }
+      if (blocked) { showToast(blocked, { kind: "info" }); return; }
       buyPurchase(b.dataset.buy);
     };
   });
@@ -291,9 +507,10 @@ async function cancelSubscription(key) {
     state.game = res.game;
     await loadPurchases();
     renderGame();
+    if (res.message) showToast(res.message, { kind: "success" });
   } catch (e) {
     logErr("cancelSubscription failed", e);
-    alert(e.message);
+    showToast(e.message, { kind: "error" });
   }
 }
 
@@ -358,14 +575,14 @@ function renderHealthcareActions() {
 
   host.innerHTML = html;
 
-  // Wire clicks. Blocked buttons just alert their reason. Live buttons
-  // call the action.
+  // Wire clicks. Blocked buttons surface their reason as a toast,
+  // live buttons call the action.
   function wireAction(id, action) {
     const btn = $opt("#" + id);
     if (!btn) return;
     btn.addEventListener("click", () => {
       const blocked = btn.dataset.blocked;
-      if (blocked) { alert(blocked); return; }
+      if (blocked) { showToast(blocked, { kind: "info" }); return; }
       action();
     });
   }
@@ -374,7 +591,7 @@ function renderHealthcareActions() {
   host.querySelectorAll("[data-treat-disease]").forEach((b) => {
     b.onclick = () => {
       const blocked = b.dataset.blocked;
-      if (blocked) { alert(blocked); return; }
+      if (blocked) { showToast(blocked, { kind: "info" }); return; }
       treatDisease(b.dataset.treatDisease);
     };
   });
@@ -385,12 +602,12 @@ async function buyCheckup() {
   try {
     const res = await api(`/api/game/${state.game.id}/buy_checkup`, { method: "POST" });
     state.game = res.game;
-    alert(res.message);
+    showToast(res.message, { kind: "success" });
     await loadHealthcare();
     renderGame();
   } catch (e) {
     logErr("buyCheckup failed", e);
-    alert(e.message);
+    showToast(e.message, { kind: "error" });
   }
 }
 
@@ -399,12 +616,12 @@ async function buyMajorTreatment() {
   try {
     const res = await api(`/api/game/${state.game.id}/buy_major_treatment`, { method: "POST" });
     state.game = res.game;
-    alert(res.message);
+    showToast(res.message, { kind: "success" });
     await loadHealthcare();
     renderGame();
   } catch (e) {
     logErr("buyMajorTreatment failed", e);
-    alert(e.message);
+    showToast(e.message, { kind: "error" });
   }
 }
 
@@ -416,29 +633,43 @@ async function treatDisease(diseaseKey) {
       body: JSON.stringify({ disease_key: diseaseKey }),
     });
     state.game = res.game;
-    alert(res.message);
+    showToast(res.message, { kind: "success" });
     await loadHealthcare();
     renderGame();
   } catch (e) {
     logErr("treatDisease failed", e);
-    alert(e.message);
+    showToast(e.message, { kind: "error" });
   }
 }
 
 async function quitJob() {
-  if (!confirm("Quit your current job? You'll need to find a new one.")) return;
+  const ok = await showConfirm({
+    title: "Quit your current job?",
+    body: "You'll need to find a new one — and there's no guarantee a better offer is waiting.",
+    confirmText: "Quit job",
+    cancelText: "Stay",
+    destructive: true,
+  });
+  if (!ok) return;
   log("quitJob");
   try {
     state.game = await api(`/api/game/${state.game.id}/quit_job`, { method: "POST" });
     renderGame();
   } catch (e) {
     logErr("quitJob failed", e);
-    alert(`Could not quit job: ${e.message}`);
+    showToast(`Could not quit job: ${e.message}`, { kind: "error" });
   }
 }
 
 async function dropOutOfSchool() {
-  if (!confirm("Drop out of school to start working? You can't go back.")) return;
+  const ok = await showConfirm({
+    title: "Drop out of school?",
+    body: "You'll start looking for work right away. This decision is permanent — you can't re-enroll later.",
+    confirmText: "Drop out",
+    cancelText: "Stay in school",
+    destructive: true,
+  });
+  if (!ok) return;
   log("dropOutOfSchool");
   try {
     state.game = await api(`/api/game/${state.game.id}/drop_out_of_school`, { method: "POST" });
@@ -447,7 +678,7 @@ async function dropOutOfSchool() {
     loadHealthcare();
   } catch (e) {
     logErr("dropOutOfSchool failed", e);
-    alert(`Could not drop out: ${e.message}`);
+    showToast(`Could not drop out: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -558,7 +789,7 @@ async function loadGameById(gameId) {
     loadHealthcare();
   } catch (e) {
     logErr("loadGameById failed", e);
-    alert(`Could not load that game: ${e.message}`);
+    showToast(`Could not load that game: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -581,7 +812,7 @@ async function openJobBoard() {
     $("#jobboard-modal").classList.remove("hidden");
   } catch (e) {
     logErr("openJobBoard failed", e);
-    alert(`Could not load the job board: ${e.message}`);
+    showToast(`Could not load the job board: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -675,37 +906,49 @@ async function applyJob(jobName) {
     }
   } catch (e) {
     logErr("applyJob failed", e);
-    alert(`Apply failed: ${e.message}`);
+    showToast(`Apply failed: ${e.message}`, { kind: "error" });
   }
 }
 
 async function requestRaise() {
-  if (!confirm("Ask for a salary raise? You could get one — or you could be let go.")) return;
+  const ok = await showConfirm({
+    title: "Ask for a raise?",
+    body: "You could get one — or you could be let go. Approach with care.",
+    confirmText: "Ask anyway",
+    cancelText: "Not now",
+  });
+  if (!ok) return;
   log("requestRaise");
   try {
     const res = await api(`/api/game/${state.game.id}/request_raise`, { method: "POST" });
     state.game = res.game;
     log(`raise outcome: ${res.outcome} — ${res.message}`);
-    alert(res.message);
+    showToast(res.message, { kind: res.outcome === "fired" ? "error" : "success" });
     renderGame();
   } catch (e) {
     logErr("requestRaise failed", e);
-    alert(`Could not request raise: ${e.message}`);
+    showToast(`Could not request raise: ${e.message}`, { kind: "error" });
   }
 }
 
 async function requestPromotion() {
-  if (!confirm("Ask for a promotion? You could move up — or you could be let go.")) return;
+  const ok = await showConfirm({
+    title: "Ask for a promotion?",
+    body: "You could move up — or you could be let go. Don't ask unless you've earned it.",
+    confirmText: "Ask anyway",
+    cancelText: "Not now",
+  });
+  if (!ok) return;
   log("requestPromotion");
   try {
     const res = await api(`/api/game/${state.game.id}/request_promotion`, { method: "POST" });
     state.game = res.game;
     log(`promotion outcome: ${res.outcome} — ${res.message}`);
-    alert(res.message);
+    showToast(res.message, { kind: res.outcome === "fired" ? "error" : "success" });
     renderGame();
   } catch (e) {
     logErr("requestPromotion failed", e);
-    alert(`Could not request promotion: ${e.message}`);
+    showToast(`Could not request promotion: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -715,7 +958,7 @@ async function newGame(countryCode) {
   const slot = slotState.pendingSlot;
   if (slot == null) {
     log("newGame called without a pending slot — bailing");
-    alert("Pick a save slot first.");
+    showToast("Pick a save slot first.", { kind: "info" });
     backToSlotPicker();
     return;
   }
@@ -743,7 +986,7 @@ async function newGame(countryCode) {
     loadHealthcare();
   } catch (e) {
     logErr("newGame failed", e);
-    alert(`Could not start a new life: ${e.message}`);
+    showToast(`Could not start a new life: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -766,7 +1009,7 @@ async function advanceYear() {
     loadHealthcare();
   } catch (e) {
     logErr("advanceYear failed", e);
-    alert(`Failed to advance year: ${e.message}`);
+    showToast(`Failed to advance year: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -783,7 +1026,7 @@ async function decide(choiceKey) {
     renderTurn(res.turn);
   } catch (e) {
     logErr("decide failed", e);
-    alert(`Failed to apply decision: ${e.message}`);
+    showToast(`Failed to apply decision: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -996,11 +1239,17 @@ function renderGame() {
       careerEl.classList.remove("hidden");
       const ladderProgress = Math.min(100, Math.round(100 * career.years_in_role / career.years_to_promote));
       let nextLine = "";
+      let gatesLine = "";
       if (career.next_job) {
-        const ageGate = career.next_min_age && c.age < career.next_min_age ? `, age ${career.next_min_age}+` : "";
-        const iqGate = career.next_min_intelligence > c.attributes.intelligence
-          ? `, IQ ${career.next_min_intelligence}+` : "";
-        nextLine = `<div class="career-next">Next: <strong>${career.next_job}</strong> (${career.years_to_promote} yrs in role${ageGate}${iqGate})</div>`;
+        nextLine = `<div class="career-next">Next: <strong>${escapeHtml(career.next_job)}</strong> (${career.years_to_promote} yrs in role)</div>`;
+        // Surface every requirement the player is currently failing
+        // for the next rung — education, IQ, age, urban/rural — so
+        // they aren't forced to click to discover the gate.
+        const missing = career.next_missing_requirements || [];
+        if (missing.length) {
+          const chips = missing.map((m) => `<span class="gate-chip">${escapeHtml(m)}</span>`).join("");
+          gatesLine = `<div class="career-gates">Needs ${chips}</div>`;
+        }
       } else {
         nextLine = `<div class="career-next muted">Top of the ladder.</div>`;
       }
@@ -1008,20 +1257,23 @@ function renderGame() {
       const eligibleByYears = career.years_in_role >= career.years_to_promote;
 
       // Two buttons (#63): salary raise and promotion. Each shows enabled
-      // when can_request_*, disabled with tooltip when years_in_role
-      // crosses the threshold but the gate is something else.
-      let raiseBtn = "";
-      if (career.can_request_raise) {
-        raiseBtn = `<button id="btn-ask-raise" class="btn xs">Ask for raise</button>`;
-      } else if (eligibleByYears) {
-        raiseBtn = `<button class="btn xs" disabled title="${career.raise_blocked_reason || ""}">Ask for raise</button>`;
-      }
-      let promoBtn = "";
-      if (career.can_request_promotion) {
-        promoBtn = `<button id="btn-ask-promo" class="btn xs">Ask for promotion</button>`;
-      } else if (eligibleByYears && career.next_job) {
-        promoBtn = `<button class="btn xs" disabled title="${career.promotion_blocked_reason || ""}">Ask for promotion</button>`;
-      }
+      // when can_request_*, OR a clickable .blocked variant that toasts
+      // the reason on click. Disabled <button>s swallow clicks silently
+      // and leave the player wondering why nothing happens — always show
+      // a clickable button with feedback on the blocked path.
+      const raiseLive    = !!career.can_request_raise;
+      const promoLive    = !!career.can_request_promotion;
+      const showRaiseBtn = raiseLive || eligibleByYears;
+      const showPromoBtn = promoLive || (eligibleByYears && career.next_job);
+
+      const raiseBtn = !showRaiseBtn ? "" :
+        raiseLive
+          ? `<button id="btn-ask-raise" class="btn xs">Ask for raise</button>`
+          : `<button id="btn-ask-raise-blocked" class="btn xs blocked" data-reason="${escapeHtml(career.raise_blocked_reason || "not eligible")}">Ask for raise</button>`;
+      const promoBtn = !showPromoBtn ? "" :
+        promoLive
+          ? `<button id="btn-ask-promo" class="btn xs">Ask for promotion</button>`
+          : `<button id="btn-ask-promo-blocked" class="btn xs blocked" data-reason="${escapeHtml(career.promotion_blocked_reason || "not eligible")}">Ask for promotion</button>`;
 
       careerEl.innerHTML = `
         <div class="career-head">
@@ -1031,12 +1283,17 @@ function renderGame() {
         <div class="career-bar"><span style="width:${ladderProgress}%"></span></div>
         <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role</div>
         ${nextLine}
+        ${gatesLine}
         ${(raiseBtn || promoBtn) ? `<div class="career-actions">${raiseBtn} ${promoBtn}</div>` : ""}
       `;
       const rb = $opt("#btn-ask-raise");
       if (rb) rb.addEventListener("click", requestRaise);
       const pb = $opt("#btn-ask-promo");
       if (pb) pb.addEventListener("click", requestPromotion);
+      const rbBlocked = $opt("#btn-ask-raise-blocked");
+      if (rbBlocked) rbBlocked.addEventListener("click", () => showToast(rbBlocked.dataset.reason, { kind: "info" }));
+      const pbBlocked = $opt("#btn-ask-promo-blocked");
+      if (pbBlocked) pbBlocked.addEventListener("click", () => showToast(pbBlocked.dataset.reason, { kind: "info" }));
     }
   }
 
@@ -1399,7 +1656,7 @@ function renderFinances() {
         try {
           await payLoan(i, amount);
         } catch (e) {
-          alert(e.message);
+          showToast(e.message, { kind: "error" });
         }
       };
     });
@@ -1586,5 +1843,12 @@ async function init() {
 
 init().catch((e) => {
   logErr("init failed", e);
-  alert("Failed to load: " + e.message);
+  // Init failures are fatal — surface them in a real dialog so the user
+  // sees an actionable error rather than a blank page.
+  showAlert({
+    title: "Failed to load",
+    body: e.message,
+    kind: "danger",
+    confirmText: "Reload",
+  }).then(() => window.location.reload());
 });

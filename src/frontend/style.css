@@ -422,6 +422,22 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 }
 .pr-cost { font-size: 12px; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
 
+/* Effect chips on each purchase row (#77) — small pills showing the
+   per-buy or per-year deltas, so the player sees what their money is
+   actually doing before they click Buy. */
+.pr-effects {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 6px;
+}
+.pr-effects .delta {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
 /* Always-visible headline health bar (#47) */
 .health-headline {
   margin: 10px 0;
@@ -479,6 +495,29 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   line-height: 1.3;
 }
 .career-next strong { color: var(--ink); }
+
+/* Promotion gate chips — every requirement the player is currently
+   failing for the next rung, surfaced inline so they don't have to
+   click the disabled button to discover what's missing. */
+.career-gates {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--ink-mute);
+  line-height: 1.3;
+}
+.gate-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  background: #f7e0d9;
+  color: var(--bad);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 .career-actions {
   display: flex; flex-wrap: wrap; gap: 6px;
   margin-top: 8px;
@@ -895,6 +934,204 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 /* ---------- Footer ---------- */
 .footer { padding: 24px; text-align: center; font-size: 12px; }
 
+/* =====================================================================
+   Dialog + toast system. Replaces native alert() / confirm() with sleek
+   modal cards that match the editorial palette. Notion-adjacent: white
+   card on dimmed backdrop, generous padding, serif title, clean typography.
+   ===================================================================== */
+
+/* Backdrop dims the page and centers the dialog. Animates in with a
+   short fade so the entrance feels deliberate, not abrupt. */
+.rl-dialog-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(20, 18, 14, 0.46);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  z-index: 2000;
+  opacity: 0;
+  animation: rl-backdrop-in 0.18s ease-out forwards;
+}
+.rl-dialog-backdrop.closing { animation: rl-backdrop-out 0.16s ease-in forwards; }
+
+@keyframes rl-backdrop-in  { to { opacity: 1; } }
+@keyframes rl-backdrop-out { to { opacity: 0; } }
+
+/* The card itself. Mimics the .panel aesthetic but tighter, with more
+   shadow because it's floating above everything else. */
+.rl-dialog {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow:
+    0 1px 3px rgba(20,18,14,0.04),
+    0 12px 24px rgba(20,18,14,0.12),
+    0 32px 64px rgba(20,18,14,0.16);
+  width: 100%;
+  max-width: 460px;
+  padding: 28px 28px 22px;
+  transform: translateY(8px) scale(0.985);
+  opacity: 0;
+  animation: rl-dialog-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.rl-dialog-backdrop.closing .rl-dialog {
+  animation: rl-dialog-out 0.16s ease-in forwards;
+}
+@keyframes rl-dialog-in {
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes rl-dialog-out {
+  to { transform: translateY(4px) scale(0.99); opacity: 0; }
+}
+
+/* The little colored icon dot above the title. Each variant tints
+   it differently. The icon glyph itself is set inline so we can swap
+   it per dialog. */
+.rl-dialog-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  font-size: 20px;
+  margin-bottom: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.rl-dialog.danger    .rl-dialog-icon { background: #f7e0d9; color: var(--bad); }
+.rl-dialog.success   .rl-dialog-icon { background: #dff0e3; color: var(--good); }
+.rl-dialog.info      .rl-dialog-icon { background: #e6efff; color: #2e63b3; }
+
+.rl-dialog-title {
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--ink);
+  margin: 0 0 6px 0;
+}
+.rl-dialog-body {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 22px 0;
+  white-space: pre-wrap;       /* preserves engine-side line breaks */
+}
+.rl-dialog-body:empty { display: none; margin: 0; }
+
+.rl-dialog-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Dialog buttons share the .btn base look but with their own padding +
+   weight calibrated for a modal context. */
+.rl-dialog-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.06s ease;
+}
+.rl-dialog-btn:hover  { background: var(--line-soft); border-color: var(--line); }
+.rl-dialog-btn:active { transform: translateY(1px); }
+.rl-dialog-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rl-dialog-btn.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+.rl-dialog-btn.primary:hover { background: #2c2c28; border-color: #2c2c28; }
+.rl-dialog-btn.danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+.rl-dialog-btn.danger:hover { background: #9c331f; border-color: #9c331f; }
+
+/* Optional input row when the dialog needs a value (rare; reserved
+   for future prompts). */
+.rl-dialog-input {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  margin: 0 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+}
+.rl-dialog-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ---------- Toasts ---------- */
+/* Stack of small notifications that appear top-right and auto-dismiss.
+   Used for non-blocking confirmations (purchase succeeded, slot loaded,
+   etc.) so we don't pop a full modal for trivial events. */
+.rl-toast-host {
+  position: fixed;
+  top: 18px; right: 18px;
+  z-index: 1900;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+  max-width: calc(100vw - 36px);
+}
+.rl-toast {
+  pointer-events: auto;
+  display: flex; align-items: flex-start; gap: 10px;
+  min-width: 220px; max-width: 360px;
+  padding: 11px 14px 11px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px rgba(20,18,14,0.04),
+    0 8px 24px rgba(20,18,14,0.10);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  transform: translateX(12px);
+  opacity: 0;
+  animation: rl-toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.rl-toast.closing { animation: rl-toast-out 0.18s ease-in forwards; }
+.rl-toast.success { border-left-color: var(--good); }
+.rl-toast.error   { border-left-color: var(--bad); }
+.rl-toast.info    { border-left-color: #2e63b3; }
+.rl-toast-icon {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  font-size: 13px;
+  margin-top: 1px;
+}
+.rl-toast.success .rl-toast-icon { color: var(--good); }
+.rl-toast.error   .rl-toast-icon { color: var(--bad); }
+.rl-toast.info    .rl-toast-icon { color: #2e63b3; }
+.rl-toast-msg { flex: 1 1 auto; }
+.rl-toast-close {
+  flex: 0 0 auto;
+  background: none; border: none; padding: 0 0 0 6px;
+  color: var(--ink-mute); cursor: pointer; font-size: 14px;
+}
+.rl-toast-close:hover { color: var(--ink); }
+
+@keyframes rl-toast-in  { to { transform: translateX(0); opacity: 1; } }
+@keyframes rl-toast-out { to { transform: translateX(12px); opacity: 0; } }
+
 /* ---------- Mobile ---------- */
 @media (max-width: 900px) {
   .game { grid-template-columns: 1fr; }
@@ -903,4 +1140,7 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   .layout { padding: 16px; }
   .panel { padding: 18px 18px; }
   .topbar { padding: 12px 16px; }
+  .rl-dialog { padding: 24px 22px 18px; border-radius: 14px; }
+  .rl-toast-host { top: 12px; right: 12px; left: 12px; max-width: none; }
+  .rl-toast { max-width: none; }
 }

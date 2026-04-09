@@ -149,6 +149,17 @@ def _career_summary(character) -> dict | None:
     years_required = careers._years_required_for_promo(character, job)
     can_raise, raise_reason = careers.can_request_salary_raise(character)
     can_promote, promote_reason = careers.can_request_promotion(character)
+    # Surface the full list of gates the player is failing for the
+    # next rung, plus its education requirement, so the career card
+    # can show them up-front instead of forcing the player to click to
+    # discover them.
+    next_missing: list[str] = []
+    next_min_education_label: str | None = None
+    if next_rung is not None:
+        next_missing = careers._missing_requirements(next_rung, character)
+        edu_labels = ["none", "primary", "secondary", "vocational", "university"]
+        if 0 <= next_rung.min_education < len(edu_labels):
+            next_min_education_label = edu_labels[next_rung.min_education]
     return {
         "vocation_field": character.vocation_field,
         "category": job.category,
@@ -159,6 +170,9 @@ def _career_summary(character) -> dict | None:
         "next_job": next_rung.name if next_rung else None,
         "next_min_age": next_rung.min_age if next_rung else None,
         "next_min_intelligence": next_rung.min_intelligence if next_rung else None,
+        "next_min_education": next_rung.min_education if next_rung else None,
+        "next_min_education_label": next_min_education_label,
+        "next_missing_requirements": next_missing,
         # #63: split raise vs promotion
         "can_request_raise": can_raise,
         "raise_blocked_reason": raise_reason,

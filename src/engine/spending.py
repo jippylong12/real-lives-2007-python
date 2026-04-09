@@ -356,13 +356,15 @@ def buy(character: Character, country: Country, purchase_key: str, year: int) ->
     # Apply attribute deltas immediately for one-time purchases. For
     # subscriptions, the deltas are applied yearly by the yearly tick
     # so we don't double-credit them on the buy day.
+    scaled_family_wealth = 0
     if p.category != "subscription":
         if p.deltas:
             character.attributes.adjust(**p.deltas)
         if p.happiness_delta:
             character.attributes.adjust(happiness=p.happiness_delta)
         if p.family_wealth_delta:
-            character.family_wealth += int(p.family_wealth_delta * _scale_for_country(country))
+            scaled_family_wealth = int(p.family_wealth_delta * _scale_for_country(country))
+            character.family_wealth += scaled_family_wealth
         character.purchases.append({
             "key": p.key,
             "name": p.name,
@@ -384,6 +386,30 @@ def buy(character: Character, country: Country, purchase_key: str, year: int) ->
         msg = f"You bought a {p.name} for ${cost:,}."
     else:
         msg = f"You acquired a {p.name}."
+
+    # #77: write a timeline entry for one-time purchases with the effect
+    # summary, so gifts / charity / vacations don't vanish into a
+    # transient toast. Subscriptions get yearly entries via
+    # apply_subscription_effects, so we skip them here.
+    if p.category != "subscription":
+        effect_bits = []
+        if p.deltas:
+            for k, v in p.deltas.items():
+                if not v:
+                    continue
+                sign = "+" if v > 0 else ""
+                effect_bits.append(f"{sign}{v} {k}")
+        if p.happiness_delta:
+            sign = "+" if p.happiness_delta > 0 else ""
+            effect_bits.append(f"{sign}{p.happiness_delta} happiness")
+        if scaled_family_wealth:
+            effect_bits.append(f"+${scaled_family_wealth:,} family wealth")
+        suffix = f" ({', '.join(effect_bits)})" if effect_bits else ""
+        if cost > 0:
+            character.remember(f"Bought a {p.name} for ${cost:,}{suffix}.")
+        else:
+            character.remember(f"Acquired a {p.name}{suffix}.")
+
     return BuyResult(True, msg, cost=cost)
 
 
