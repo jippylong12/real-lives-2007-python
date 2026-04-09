@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..engine import finances
+from ..engine import careers, finances
 from ..engine.game import Game, list_games, load_game
 from ..engine.world import (
     all_countries, binary_facts_for, cities_for, description_for, get_country,
@@ -68,6 +68,11 @@ class LoanRequest(BaseModel):
 
 class SellInvestmentRequest(BaseModel):
     index: int
+
+
+class PayLoanRequest(BaseModel):
+    index: int
+    amount: int
 
 
 # ---------------------------------------------------------------------------
@@ -148,18 +153,25 @@ def _binary_facts_summary(code: str) -> dict | None:
         )
         if k in facts
     }
-    disasters = {
-        k: facts[k]
-        for k in (
-            "EarthquakeAffected", "EarthquakeKilled",
-            "AvalancheEvents", "AvalancheAffected",
-            "FamineKilled", "FamineAffected",
-            "FloodKilled", "FloodAffected",
-            "DroughtKilled", "DroughtAffected",
-            "EpidemicKilled", "EpidemicAffected",
-        )
-        if k in facts
-    }
+    # Disaster fields come in triples: <Type>Events / <Type>Killed /
+    # <Type>Affected. Killed and Affected are *average per recorded event*
+    # (not cumulative totals), based on cross-checking China earthquakes
+    # (30 killed per event, not the 250k+ Tangshan total) and Bangladesh
+    # floods (20M affected per event, matching typical Bangladeshi flooding).
+    # Group them into structured records for the frontend (#34).
+    disasters = []
+    for kind in ("Earthquake", "Flood", "Famine", "Fire", "Avalanche"):
+        events_n = facts.get(f"{kind}Events")
+        killed_n = facts.get(f"{kind}Killed")
+        affected_n = facts.get(f"{kind}Affected")
+        if not isinstance(events_n, (int, float)) or events_n <= 0:
+            continue
+        disasters.append({
+            "kind": kind.lower(),
+            "events": int(events_n),
+            "killed_per_event": int(killed_n) if isinstance(killed_n, (int, float)) else None,
+            "affected_per_event": int(affected_n) if isinstance(affected_n, (int, float)) else None,
+        })
     return {
         "at_war": facts.get("AtWar", False),
         "human_rights": human_rights,
@@ -321,6 +333,30 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="loan product not found")
         try:
             finances.take_loan(game.state.character, product, req.amount, game.state.year)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        game.save()
+        return _serialize_game(game)
+
+    @app.post("/api/game/{game_id}/quit_job")
+    def quit_job(game_id: str):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        try:
+            careers.quit_job(game.state.character)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        game.save()
+        return _serialize_game(game)
+
+    @app.post("/api/game/{game_id}/pay_loan")
+    def pay_loan(game_id: str, req: PayLoanRequest):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        try:
+            finances.pay_loan(game.state.character, req.index, req.amount)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         game.save()

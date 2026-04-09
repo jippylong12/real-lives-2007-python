@@ -36,7 +36,8 @@ def test_country_detail_404(client):
 def test_country_detail_includes_binary_facts(client):
     """Issue #30: country detail surfaces at_war / military_conscription
     flags plus a structured binary_facts payload (human rights, military
-    service, disaster history)."""
+    service, disaster history). Issue #34: disaster history is structured
+    as a list of per-event records."""
     r = client.get("/api/countries/iq")
     assert r.status_code == 200
     body = r.json()
@@ -46,7 +47,14 @@ def test_country_detail_includes_binary_facts(client):
     assert facts["at_war"] is True
     assert "Torture" in facts["human_rights"]
     assert facts["military_service"]["MilitaryConscription"] is True
+    # Disaster history shape (#34): list of {kind, events, killed_per_event,
+    # affected_per_event} records.
+    assert isinstance(facts["disaster_history"], list)
     assert facts["disaster_history"]  # Iraq has earthquake history
+    quake = next(d for d in facts["disaster_history"] if d["kind"] == "earthquake")
+    assert quake["events"] > 0
+    assert "killed_per_event" in quake
+    assert "affected_per_event" in quake
 
 
 def test_binary_facts_endpoint(client):
@@ -108,27 +116,39 @@ def test_list_finance_products(client):
 
 
 def test_invest_and_sell_round_trip(client):
-    # New game with deterministic seed; advance to give player some money to invest.
+    # New game with deterministic seed; advance to adulthood so loans are
+    # legal (#37: minimum age 18 for non-family loans).
     g = client.post("/api/game/new", json={"country_code": "us", "seed": 7}).json()
     gid = g["id"]
+    while g["character"]["age"] < 20:
+        rr = client.post(f"/api/game/{gid}/advance").json()
+        if rr["turn"]["pending_decision"]:
+            ck = rr["turn"]["pending_decision"]["choices"][0]["key"]
+            client.post(f"/api/game/{gid}/decision", json={"choice_key": ck})
+        g = rr["game"]
+        if rr["turn"]["died"]:
+            pytest.skip("character died before reaching loan-eligible age")
+
     # Hand the character some money via loan, then invest it.
+    money_before = g["character"]["money"]
     loans = client.get("/api/loans").json()
     personal = next(p for p in loans if p["name"] == "personal loan")
     r = client.post(f"/api/game/{gid}/loan", json={"product_id": personal["id"], "amount": 5000})
     assert r.status_code == 200
     g = r.json()
-    assert g["character"]["money"] >= 5000
+    assert g["character"]["money"] == money_before + 5000
     assert g["character"]["debt"] == 5000
     assert len(g["character"]["loans"]) == 1
 
     invs = client.get("/api/investments").json()
     bonds = next(p for p in invs if "bonds" in p["name"])
+    money_before_invest = g["character"]["money"]
     r = client.post(f"/api/game/{gid}/invest", json={"product_id": bonds["id"], "amount": 2000})
     assert r.status_code == 200
     g = r.json()
     assert g["portfolio_value"] == 2000
     assert len(g["character"]["investments"]) == 1
-    assert g["character"]["money"] >= 3000  # 5000 - 2000 invested
+    assert g["character"]["money"] == money_before_invest - 2000
 
     # Sell the investment back
     r = client.post(f"/api/game/{gid}/sell_investment", json={"index": 0})
@@ -146,6 +166,84 @@ def test_loan_validation(client):
     # Over the cap
     r = client.post(f"/api/game/{gid}/loan", json={"product_id": family["id"], "amount": 10**9})
     assert r.status_code == 400
+
+
+def test_quit_job_clears_employment(client):
+    """Issue #38: a player should be able to quit a job and roll for
+    a new one next year."""
+    g = client.post("/api/game/new", json={"country_code": "us", "seed": 7}).json()
+    gid = g["id"]
+    # Advance until they get a job
+    for _ in range(40):
+        rr = client.post(f"/api/game/{gid}/advance").json()
+        if rr["turn"]["pending_decision"]:
+            client.post(f"/api/game/{gid}/decision", json={"choice_key": rr["turn"]["pending_decision"]["choices"][0]["key"]})
+        g = rr["game"]
+        if g["character"]["job"]:
+            break
+        if rr["turn"]["died"]:
+            pytest.skip("character died before getting a job")
+    if not g["character"]["job"]:
+        pytest.skip("character never got a job in 40 years")
+
+    # Quit
+    g = client.post(f"/api/game/{gid}/quit_job").json()
+    assert g["character"]["job"] is None
+    assert g["character"]["salary"] == 0
+
+    # Quitting again should 400
+    r = client.post(f"/api/game/{gid}/quit_job")
+    assert r.status_code == 400
+
+
+def test_pay_loan_endpoint_clears_balance(client):
+    """Issue #40: a player should be able to pay extra against an open
+    loan to clear it early."""
+    g = client.post("/api/game/new", json={"country_code": "us", "seed": 7}).json()
+    gid = g["id"]
+    while g["character"]["age"] < 25:
+        rr = client.post(f"/api/game/{gid}/advance").json()
+        if rr["turn"]["pending_decision"]:
+            client.post(f"/api/game/{gid}/decision", json={"choice_key": rr["turn"]["pending_decision"]["choices"][0]["key"]})
+        g = rr["game"]
+        if rr["turn"]["died"]:
+            pytest.skip("character died young")
+
+    # Take a personal loan
+    loans = client.get("/api/loans").json()
+    personal = next(p for p in loans if p["name"] == "personal loan")
+    g = client.post(f"/api/game/{gid}/loan", json={"product_id": personal["id"], "amount": 5000}).json()
+    assert len(g["character"]["loans"]) == 1
+    initial_balance = g["character"]["loans"][0]["balance"]
+
+    # Pay 1000 extra against it
+    g = client.post(f"/api/game/{gid}/pay_loan", json={"index": 0, "amount": 1000}).json()
+    assert g["character"]["loans"][0]["balance"] == initial_balance - 1000
+
+    # Pay the exact remaining balance — should clear the loan entirely.
+    remaining = g["character"]["loans"][0]["balance"]
+    available_cash = g["character"]["money"]
+    if available_cash >= remaining:
+        g = client.post(f"/api/game/{gid}/pay_loan", json={"index": 0, "amount": remaining}).json()
+        assert len(g["character"]["loans"]) == 0
+        assert g["character"]["debt"] == 0
+
+
+def test_loan_age_gate(client):
+    """Issue #37: a 0-year-old shouldn't be able to take out a mortgage."""
+    g = client.post("/api/game/new", json={"country_code": "us", "seed": 99}).json()
+    gid = g["id"]
+    loans = client.get("/api/loans").json()
+    mortgage = next(p for p in loans if p["name"] == "mortgage")
+    family = next(p for p in loans if p["name"] == "family loan")
+
+    # Newborn → no loans at all.
+    r = client.post(f"/api/game/{gid}/loan", json={"product_id": mortgage["id"], "amount": 1000})
+    assert r.status_code == 400
+    assert "18" in r.json()["detail"]
+    r = client.post(f"/api/game/{gid}/loan", json={"product_id": family["id"], "amount": 100})
+    assert r.status_code == 400
+    assert "14" in r.json()["detail"]
 
 
 def test_invest_validation_insufficient_funds(client):
