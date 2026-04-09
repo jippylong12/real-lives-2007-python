@@ -2,8 +2,42 @@
  * Single-file SPA. Talks to /api/* endpoints exposed by FastAPI.
  */
 
-const $ = (sel) => document.querySelector(sel);
+// ---------- Logging ----------
+//
+// All flow milestones go through log() so issues are visible in the
+// browser DevTools console without having to scatter console.log calls
+// every time something breaks. Errors print red with their stack.
+const LOG_PREFIX = "%c[RL]%c";
+const LOG_PREFIX_STYLE = "color:#bf6b3a;font-weight:600";
+const LOG_RESET = "color:inherit;font-weight:normal";
+
+function log(...args) {
+  console.log(LOG_PREFIX, LOG_PREFIX_STYLE, LOG_RESET, ...args);
+}
+function logErr(label, err) {
+  console.error(LOG_PREFIX, LOG_PREFIX_STYLE, "color:#c34a4a;font-weight:600", label, err);
+  if (err && err.stack) console.error(err.stack);
+}
+
+// Catch any unhandled promise rejection (the most common cause of
+// "I clicked a button and nothing happened" — an async function threw
+// and the click handler swallowed the error).
+window.addEventListener("unhandledrejection", (e) => {
+  logErr("UNHANDLED PROMISE REJECTION:", e.reason);
+});
+window.addEventListener("error", (e) => {
+  logErr("UNCAUGHT ERROR:", e.error || e.message);
+});
+
+const $ = (sel) => {
+  const el = document.querySelector(sel);
+  if (!el) log(`querySelector("${sel}") returned null`);
+  return el;
+};
 const $$ = (sel) => document.querySelectorAll(sel);
+
+// Variant that doesn't log when the element is intentionally optional.
+const $opt = (sel) => document.querySelector(sel);
 
 const state = {
   game: null,
@@ -14,14 +48,24 @@ const state = {
 
 // ---------- API ----------
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
+  const method = opts.method || "GET";
+  log(`→ ${method} ${path}`);
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+  } catch (e) {
+    logErr(`${method} ${path} failed (network)`, e);
+    throw e;
+  }
   if (!res.ok) {
     const text = await res.text();
+    log(`← ${method} ${path} ${res.status}`, text);
     throw new Error(`${res.status}: ${text}`);
   }
+  log(`← ${method} ${path} ${res.status}`);
   return res.json();
 }
 
@@ -72,45 +116,75 @@ async function payLoan(index, amount) {
 
 async function quitJob() {
   if (!confirm("Quit your current job? You'll need to find a new one.")) return;
-  state.game = await api(`/api/game/${state.game.id}/quit_job`, { method: "POST" });
-  renderGame();
+  log("quitJob");
+  try {
+    state.game = await api(`/api/game/${state.game.id}/quit_job`, { method: "POST" });
+    renderGame();
+  } catch (e) {
+    logErr("quitJob failed", e);
+    alert(`Could not quit job: ${e.message}`);
+  }
 }
 
 async function newGame(countryCode) {
-  const body = countryCode ? { country_code: countryCode } : {};
-  state.game = await api("/api/game/new", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-  // Reset stale UI from any previous life (#44).
-  $("#event-list").innerHTML = '<p class="placeholder">Click "Live another year" to begin your life.</p>';
-  $("#timeline").innerHTML = "";
-  $("#decision-area").classList.add("hidden");
-  $("#death-timeline").innerHTML = "";
-  if ($("#death-summary")) $("#death-summary").innerHTML = "";
-  if ($("#death-diseases")) $("#death-diseases").innerHTML = "";
-  showGameScreen();
-  renderGame();
+  log(`newGame(${countryCode || "random"})`);
+  try {
+    const body = countryCode ? { country_code: countryCode } : {};
+    state.game = await api("/api/game/new", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    log(`new game created: ${state.game.id} — ${state.game.character.name} in ${state.game.country.name}`);
+    // Reset stale UI from any previous life (#44). Use $opt for nodes
+    // that may be missing on the death screen until first death.
+    $opt("#event-list").innerHTML = '<p class="placeholder">Click "Live another year" to begin your life.</p>';
+    $opt("#timeline").innerHTML = "";
+    $opt("#decision-modal")?.classList.add("hidden");
+    $opt("#death-timeline").innerHTML = "";
+    $opt("#death-summary") && ($opt("#death-summary").innerHTML = "");
+    $opt("#death-diseases") && ($opt("#death-diseases").innerHTML = "");
+    showGameScreen();
+    renderGame();
+  } catch (e) {
+    logErr("newGame failed", e);
+    alert(`Could not start a new life: ${e.message}`);
+  }
 }
 
 async function advanceYear() {
-  if (!state.game) return;
-  const res = await api(`/api/game/${state.game.id}/advance`, { method: "POST" });
-  state.game = res.game;
-  renderGame();
-  renderTurn(res.turn);
-  if (res.turn.died) showDeathScreen(res.turn);
+  if (!state.game) {
+    log("advanceYear called with no game");
+    return;
+  }
+  log(`advanceYear (age ${state.game.character.age})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/advance`, { method: "POST" });
+    state.game = res.game;
+    log(`advanced to age ${res.game.character.age} — ${res.turn.events.length} events, decision=${!!res.turn.pending_decision}, died=${res.turn.died}`);
+    renderGame();
+    renderTurn(res.turn);
+    if (res.turn.died) showDeathScreen(res.turn);
+  } catch (e) {
+    logErr("advanceYear failed", e);
+    alert(`Failed to advance year: ${e.message}`);
+  }
 }
 
 async function decide(choiceKey) {
   if (!state.game) return;
-  const res = await api(`/api/game/${state.game.id}/decision`, {
-    method: "POST",
-    body: JSON.stringify({ choice_key: choiceKey }),
-  });
-  state.game = res.game;
-  renderGame();
-  renderTurn(res.turn);
+  log(`decide(${choiceKey})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ choice_key: choiceKey }),
+    });
+    state.game = res.game;
+    renderGame();
+    renderTurn(res.turn);
+  } catch (e) {
+    logErr("decide failed", e);
+    alert(`Failed to apply decision: ${e.message}`);
+  }
 }
 
 // ---------- Rendering ----------
@@ -712,19 +786,23 @@ function setupCountryPicker() {
 
 // ---------- Bootstrapping ----------
 async function init() {
+  log("init: wiring event listeners");
   $("#btn-advance").addEventListener("click", advanceYear);
   $("#start-random").addEventListener("click", () => newGame(null));
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
   $("#btn-quit-job").addEventListener("click", quitJob);
+  log("init: loading countries + finance products");
   await loadCountries();
   await loadFinanceProducts();
+  log(`init: loaded ${state.countries.length} countries, ${state.investmentProducts.length} investments, ${state.loanProducts.length} loans`);
   setupCountryPicker();
   renderCountryGrid();
   setupFinanceTabs();
+  log("init: ready");
 }
 
 init().catch((e) => {
-  console.error(e);
+  logErr("init failed", e);
   alert("Failed to load: " + e.message);
 });
