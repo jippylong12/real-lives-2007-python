@@ -5,6 +5,170 @@ All notable changes to Real Lives 2007 (Python rebuild).
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-04-09
+
+Money matters now, and so does where you save your life. v1.3.0 turns
+discretionary spending into a real game system, replaces the silent
+auto-save model with five explicit save slots, adds pay-for-healthcare,
+forces aged-out athletes to retire, and rewrites the job acceptance
+heuristic so the job board produces a real spread of probabilities
+instead of bimodal 80% / 25% cliffs.
+
+Plus a clutch of UX fixes the user surfaced while playing: investment
+clarity, treatment buttons that actually explain why they're disabled,
+spend tab affordability checks, timeline grouping for repeated events,
+and a finances panel that always shows useful info.
+
+### Added
+
+- **Discretionary spending registry** — 16 purchases across houses,
+  cars, vacations, subscriptions, charity, and gifts. Each item has a
+  country-scaled price, eligibility gates, and (for subscriptions) a
+  yearly recurring cost that's deducted from income with named effect
+  log entries every year
+  ([#66](https://github.com/jippylong12/real-lives-2007-python/issues/66),
+   [#76](https://github.com/jippylong12/real-lives-2007-python/issues/76),
+   [#77](https://github.com/jippylong12/real-lives-2007-python/issues/77)).
+- **Pay-for-healthcare** — Checkup, Major treatment, and per-disease
+  cures sit under the health bar. Each action has a country-scaled
+  cost, an age multiplier (full effect ≤60, falls to 0.2× by 90),
+  and a country effectiveness scalar. Permanent diseases get
+  *managed* (capped progression) instead of cured
+  ([#67](https://github.com/jippylong12/real-lives-2007-python/issues/67)).
+- **Save slot system (5 slots)** — start screen rebuilt as a 5-slot
+  picker. Each slot holds one current life; clicking an empty/dead
+  slot opens a country picker scoped to that slot. Multiple games
+  can share a slot (history of dead lives), and `list_slots()`
+  returns the most-recent game per slot. Replaces the old auto-save
+  modal entirely. New `GET /api/slots` endpoint and `slot` param on
+  `POST /api/game/new`. `games` table gains a `slot` column with an
+  idempotent ALTER TABLE migration so existing saves survive
+  ([#79](https://github.com/jippylong12/real-lives-2007-python/issues/79)).
+- **Investment year-over-year delta** — `InvestmentHolding.last_year_delta`
+  is tracked in `tick_finances`. Holdings now show two chips:
+  lifetime P/L *and* "this yr" delta. Players can finally see the
+  year-over-year change directly, instead of staring at a lifetime
+  total that hovers near zero
+  ([#74](https://github.com/jippylong12/real-lives-2007-python/issues/74)).
+- **Auto-retirement at job's max_age** — `game.advance_year` checks
+  if the character has aged past their job's `max_age` and forces
+  retirement: job=None, salary=0, years_in_role=0. Athletes retire
+  at 38-40, soldiers at 55, doctors at 80. `promotion_count` is
+  preserved (you earned those promotions) but the seniority clock
+  resets if you re-enter a career
+  ([#75](https://github.com/jippylong12/real-lives-2007-python/issues/75)).
+- **Drop out of school** button — visible when the character is in
+  school AND has reached the country's minimum working age. Quitting
+  school early sets `in_school = False` so the work-eligibility gate
+  clears; the previous education level stays
+  ([#69](https://github.com/jippylong12/real-lives-2007-python/issues/69)).
+- **Investment age gates** — savings opens at 14, all other products
+  at 18 (matches the loan age gate). Stops 5-year-olds from buying
+  index funds
+  ([#68](https://github.com/jippylong12/real-lives-2007-python/issues/68)).
+- **Timeline grouping for repeated events** — `groupTimelineLines()`
+  collapses runs of identical "Age N: text" entries into "Age N-M:
+  text (Kx)". A 4-year Diwali streak now renders as one line
+  instead of four
+  ([#80](https://github.com/jippylong12/real-lives-2007-python/issues/80)).
+- **Finances panel header summary** — Cash · Portfolio · Debt
+  rendered inline on the collapsed panel summary so the panel is
+  never empty space
+  ([#81](https://github.com/jippylong12/real-lives-2007-python/issues/81)).
+
+### Changed
+
+- **Job acceptance heuristic — real probability spread**. The old
+  logit was bimodal: every match slammed to ~80%, every miss to
+  ~25%. Rewrite produces a smooth distribution across the 30-80%
+  band. Sample for a 25yo university grad with IQ 89: 81% scavenger
+  / 76% stall salesperson / 75% soldier / 71% secretary / 64%
+  mineral processing operator / 51% marketing director / 47%
+  software dept manager / 35% doctor / 30% elite athlete. Lowers
+  the baseline (0.5 → -0.2), softens education / IQ / urban-rural
+  / vocation penalties, adds a salary tier difficulty
+  (`-log(salary_mid / 15_000) * 0.65`) so high-paying jobs are
+  competitive even when minimums are met, and tightens the
+  probability clamp from `[0.01, 0.95]` to `[0.03, 0.85]`. Status
+  thresholds: qualified ≥60%, stretch 40-60%, long_shot 10-40%
+  — the 40% line means the job board's default view (hide long
+  shots) shows only realistic options.
+- **Investment expected returns** bumped to real-world means.
+  Low-risk stock fund averaged 2% before — well below the actual
+  S&P 500 long-run ~7%. New means: savings 2.5%, gov bonds 4%,
+  corp bonds 5%, low-risk stock fund 6.5%, high-risk fund 10%,
+  real estate 6%
+  ([#74](https://github.com/jippylong12/real-lives-2007-python/issues/74)).
+- **Crude job minimum age** — prostitute and thief in `jobs.dat`
+  ship with `min_age` 13 and 12. Override to 18 in `build_db.py`
+  via `CRUDE_JOB_MIN_AGE_OVERRIDE` regardless of the binary value.
+  Other low-min-age jobs (subsistence farmer, beggar, scavenger)
+  keep their values since those reflect real economic conditions
+  in low-HDI countries that the simulation models
+  ([#78](https://github.com/jippylong12/real-lives-2007-python/issues/78)).
+- **Healthcare action buttons** now use a `blocked` visual class
+  + click-to-alert pattern instead of `disabled`. The button stays
+  clickable, dims to 55% opacity, and pops an alert with the
+  blocked reason on click. Touch devices have no tooltip equivalent
+  for `disabled`-only buttons, so the user kept tapping "Major
+  treatment" and getting nothing. Same pattern reused for the
+  Spend tab Buy buttons
+  ([#71](https://github.com/jippylong12/real-lives-2007-python/issues/71)).
+- **Spend listing affordability check** — `spending.list_purchases`
+  now returns an `affordable` flag rolled into `eligible`. Frontend
+  disables Buy when the character can't actually pay. Stops the
+  silent 400 the user hit when they tried to buy a $50k home with
+  $5k cash
+  ([#73](https://github.com/jippylong12/real-lives-2007-python/issues/73)).
+- **Finances tab styling tightened** — smaller padding and font
+  on the segmented control, better empty-state copy that explains
+  the value proposition instead of just "no holdings"
+  ([#81](https://github.com/jippylong12/real-lives-2007-python/issues/81)).
+
+### Removed
+
+- **Saved games modal** and topbar button. Replaced entirely by the
+  slot picker on the start screen
+  ([#79](https://github.com/jippylong12/real-lives-2007-python/issues/79)).
+- **Auto-save indicator pulse** is still there for feedback, but it
+  no longer drives a separate "Continue last life" button — the
+  slot picker is the source of truth.
+
+### Technical
+
+- `games` table gains a `slot INTEGER` column. New `_migrate()` step
+  in `get_connection()` runs an idempotent ALTER TABLE so existing
+  DBs gain the column without a rebuild that would wipe state.
+- `GameState.slot` round-trips through `to_dict` / `from_dict`.
+  `Game.new(slot=...)` accepts an optional slot.
+- `careers._accept_logit` redesigned around a wider sigmoid spread
+  with a salary-tier difficulty modifier.
+- New `careers._logit_to_probability` clamp [0.03, 0.85] (was
+  [0.01, 0.95]).
+- New `engine.spending` module — 16-purchase registry with
+  ownership tracking, `buy()` function, `apply_subscription_effects()`
+  returning records for the event log.
+- New `engine.healthcare` module — `buy_checkup`, `buy_major_treatment`,
+  `treat_disease` with age multiplier and country effectiveness.
+
+### Test coverage
+
+99 tests passing (was 87 in v1.2.0). New tests:
+
+- `test_apply_for_job_mid_tier_is_stretch` — locks in the new
+  acceptance spread by asserting that engineer for an over-qualified
+  candidate lands in 35-70% (not 80%+).
+- `test_apply_for_job_qualified_acceptance_high` updated to use
+  `nursery school aid` (a true low-tier match) since engineer is
+  intentionally no longer a slam-dunk under the new heuristic.
+- Plus tests added throughout the v1.3 batch for spending, healthcare,
+  retirement, drop-out, age gates, etc.
+
+### Issues closed
+
+15 issues closed since v1.2.0: #66, #67, #68, #69, #71, #72, #73, #74,
+#75, #76, #77, #78, #79, #80, #81.
+
 ## [1.2.0] — 2026-04-09
 
 Career system overhaul. The career loop in v1.1.0 was a single random

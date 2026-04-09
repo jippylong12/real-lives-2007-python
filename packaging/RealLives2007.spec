@@ -113,8 +113,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "Real Lives 2007",
             "CFBundleDisplayName": "Real Lives 2007",
-            "CFBundleShortVersionString": "1.2.0",
-            "CFBundleVersion": "1.2.0",
+            "CFBundleShortVersionString": "1.3.0",
+            "CFBundleVersion": "1.3.0",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },
