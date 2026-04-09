@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Real Lives 2007 — Web Edition</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <h1>Real Lives <span class="muted">/ web</span></h1>
+      </div>
+      <div class="topbar-actions" id="topbar-actions">
+        <button id="btn-new" class="btn primary">New life</button>
+      </div>
+    </header>
+
+    <main id="app" class="layout">
+
+      <!-- ============ START SCREEN ============ -->
+      <section id="screen-start" class="screen panel start">
+        <div class="start-inner">
+          <div class="hero">
+            <h2>Live a randomly generated human life,<br/>anywhere on Earth.</h2>
+            <p class="lede">
+              You will be born somewhere on Earth, weighted by population. The country
+              you wake up in determines your starting health, education, life
+              expectancy, the events you face, and the choices you'll be given.
+              Open source. Real-world data. One year per turn.
+            </p>
+          </div>
+          <div class="start-actions">
+            <button id="start-random" class="btn primary lg">Start a random life</button>
+            <div class="or">or pick a country</div>
+            <div id="country-grid" class="country-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ GAME SCREEN ============ -->
+      <section id="screen-game" class="screen game hidden">
+        <aside class="sidebar panel">
+          <div class="character-card">
+            <img id="flag" class="flag" alt="" />
+            <div class="character-meta">
+              <h3 id="char-name">—</h3>
+              <p id="char-where" class="muted">—</p>
+            </div>
+          </div>
+
+          <div class="quickstats">
+            <div class="row"><span>Age</span><strong id="stat-age">0</strong></div>
+            <div class="row"><span>Year</span><strong id="stat-year">2007</strong></div>
+            <div class="row"><span>Education</span><strong id="stat-edu">none</strong></div>
+            <div class="row"><span>Job</span><strong id="stat-job">—</strong></div>
+            <div class="row"><span>Salary</span><strong id="stat-salary">—</strong></div>
+            <div class="row"><span>Savings</span><strong id="stat-money">$0</strong></div>
+            <div class="row"><span>Married</span><strong id="stat-married">no</strong></div>
+            <div class="row"><span>Children</span><strong id="stat-kids">0</strong></div>
+          </div>
+
+          <h4>Attributes</h4>
+          <div id="attrs" class="attrs"></div>
+
+          <h4>Country</h4>
+          <div id="country-info" class="country-info"></div>
+        </aside>
+
+        <div class="main-col">
+          <section id="event-area" class="panel event-area">
+            <div class="event-area-header">
+              <h2 id="year-title">Age 0</h2>
+              <button id="btn-advance" class="btn primary">Live another year →</button>
+            </div>
+            <div id="event-list" class="event-list">
+              <p class="placeholder">Click "Live another year" to begin your life.</p>
+            </div>
+          </section>
+
+          <section id="decision-area" class="panel decision-area hidden">
+            <h3 id="decision-title">A choice…</h3>
+            <p id="decision-desc"></p>
+            <div id="decision-buttons" class="decision-buttons"></div>
+          </section>
+
+          <section class="panel timeline-area">
+            <h3>Life timeline</h3>
+            <ol id="timeline" class="timeline"></ol>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============ DEATH SCREEN ============ -->
+      <section id="screen-death" class="screen panel death hidden">
+        <h2>You died.</h2>
+        <p id="death-detail" class="muted">—</p>
+        <ol id="death-timeline" class="timeline"></ol>
+        <button id="btn-restart" class="btn primary lg">Live a new life</button>
+      </section>
+
+    </main>
+
+    <footer class="footer">
+      <span class="muted">Real Lives 2007 — open-source clean-room rebuild ·
+        <a href="https://github.com">repo</a></span>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
