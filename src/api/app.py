@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..engine import careers, finances
+from ..engine import careers, finances, healthcare, spending
 from ..engine.game import Game, list_games, load_game
 from ..engine.world import (
     all_countries, binary_facts_for, cities_for, description_for, get_country,
@@ -77,6 +77,18 @@ class PayLoanRequest(BaseModel):
 
 class ApplyJobRequest(BaseModel):
     job_name: str
+
+
+class BuyRequest(BaseModel):
+    purchase_key: str
+
+
+class CancelSubscriptionRequest(BaseModel):
+    key: str
+
+
+class TreatDiseaseRequest(BaseModel):
+    disease_key: str
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +518,145 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         game.save()
         return _serialize_game(game)
+
+    # ---------- Discretionary spending (#66) ----------
+    @app.get("/api/game/{game_id}/purchases")
+    def list_purchases(game_id: str):
+        """List every purchase in the spending registry annotated with
+        the character's eligibility, country-scaled price, and ownership
+        / subscription state."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        return spending.list_purchases(game.state.character, country)
+
+    @app.post("/api/game/{game_id}/buy")
+    def buy(game_id: str, req: BuyRequest):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = spending.buy(
+            game.state.character, country, req.purchase_key, game.state.year
+        )
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "success": True,
+            "message": result.message,
+            "cost": result.cost,
+            "game": _serialize_game(game),
+        }
+
+    @app.post("/api/game/{game_id}/cancel_subscription")
+    def cancel_subscription(game_id: str, req: CancelSubscriptionRequest):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        result = spending.cancel_subscription(game.state.character, req.key)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "success": True,
+            "message": result.message,
+            "game": _serialize_game(game),
+        }
+
+    # ---------- Pay-for-healthcare (#67) ----------
+    @app.get("/api/game/{game_id}/healthcare")
+    def healthcare_options(game_id: str):
+        """List available medical actions: checkup, major treatment,
+        per-disease cures. Each entry includes scaled cost + eligibility."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        char = game.state.character
+        country = get_country(char.country_code)
+        scale = max(0.05, country.gdp_pc / 50000)
+
+        checkup_eligible, checkup_reason = healthcare.can_buy_checkup(char)
+        major_eligible, major_reason = healthcare.can_buy_major_treatment(char)
+
+        treatable = []
+        for d in healthcare.treatable_diseases(char):
+            treatable.append({
+                "disease_key": d.key,
+                "name": d.name,
+                "permanent": d.permanent,
+                "cost": max(100, int(d.treatment_cost * scale)),
+            })
+
+        return {
+            "checkup": {
+                "cost": max(50, int(2_000 * scale)),
+                "eligible": checkup_eligible,
+                "reason": checkup_reason,
+            },
+            "major": {
+                "cost": max(500, int(15_000 * scale)),
+                "eligible": major_eligible,
+                "reason": major_reason,
+            },
+            "diseases": treatable,
+        }
+
+    @app.post("/api/game/{game_id}/buy_checkup")
+    def buy_checkup(game_id: str):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = healthcare.buy_checkup(game.state.character, country)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "success": True,
+            "message": result.message,
+            "cost": result.cost,
+            "health_delta": result.health_delta,
+            "game": _serialize_game(game),
+        }
+
+    @app.post("/api/game/{game_id}/buy_major_treatment")
+    def buy_major_treatment(game_id: str):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = healthcare.buy_major_treatment(game.state.character, country)
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "success": True,
+            "message": result.message,
+            "cost": result.cost,
+            "health_delta": result.health_delta,
+            "game": _serialize_game(game),
+        }
+
+    @app.post("/api/game/{game_id}/treat_disease")
+    def treat_disease(game_id: str, req: TreatDiseaseRequest):
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = healthcare.treat_disease(
+            game.state.character, country, req.disease_key
+        )
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "success": True,
+            "message": result.message,
+            "cost": result.cost,
+            "game": _serialize_game(game),
+        }
 
     @app.post("/api/game/{game_id}/sell_investment")
     def sell_investment(game_id: str, req: SellInvestmentRequest):

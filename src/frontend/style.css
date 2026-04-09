@@ -214,6 +214,86 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 .quickstats span { color: var(--ink-mute); }
 .quickstats strong { color: var(--ink); font-weight: 500; }
 
+/* Healthcare actions row (#67) — sits below the health bar with
+   contextual treatment buttons. */
+.healthcare-actions {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin: 4px 0 8px;
+}
+.healthcare-actions:empty { display: none; }
+.healthcare-actions .btn { font-size: 10px; }
+
+/* Spend tab (#66) — purchase categories, subscription list, rows */
+.active-subs { margin-bottom: 12px; }
+.active-subs h5 { margin: 0 0 6px; }
+.sub-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-elev);
+  border-radius: var(--radius-sm);
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.purchase-tabs {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-bottom: 10px;
+}
+.purchase-tab {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: transparent;
+  color: var(--ink-mute);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.purchase-tab:hover { color: var(--ink); border-color: var(--ink-mute); }
+.purchase-tab.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.purchase-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.purchase-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-left: 3px solid var(--line);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.purchase-row.disabled { opacity: 0.55; }
+.purchase-row.owned { border-left-color: var(--good); background: rgba(82, 145, 95, 0.06); }
+.pr-name { font-weight: 600; font-size: 13px; }
+.pr-desc { font-size: 11px; color: var(--ink-mute); margin-top: 2px; line-height: 1.4; }
+.pr-blocked { font-size: 11px; color: var(--bad); margin-top: 2px; }
+.pr-owned {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--good);
+  color: #fff;
+  border-radius: 999px;
+  margin-left: 6px;
+}
+.pr-actions {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 4px; min-width: 80px;
+}
+.pr-cost { font-size: 12px; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+
 /* Always-visible headline health bar (#47) */
 .health-headline {
   margin: 10px 0;

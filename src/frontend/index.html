@@ -66,8 +66,9 @@
             </div>
           </div>
 
-          <!-- Headline health bar -->
+          <!-- Headline health bar + treatment actions (#67) -->
           <div id="health-headline" class="health-headline"></div>
+          <div id="healthcare-actions" class="healthcare-actions"></div>
 
           <!-- Career card (#51) — only shown when employed -->
           <div id="career-card" class="career-card hidden"></div>
@@ -118,6 +119,7 @@
             <div class="tabs">
               <button class="tab active" data-tab="investments">Investments</button>
               <button class="tab" data-tab="loans">Loans</button>
+              <button class="tab" data-tab="spend">Spend</button>
             </div>
 
             <div id="tab-investments" class="tab-pane">
@@ -138,6 +140,13 @@
                 <button class="btn primary" type="submit">Borrow</button>
               </form>
               <p id="loan-msg" class="form-msg"></p>
+            </div>
+
+            <div id="tab-spend" class="tab-pane hidden">
+              <div id="active-subscriptions" class="active-subs"></div>
+              <div id="purchase-categories" class="purchase-tabs"></div>
+              <div id="purchase-list" class="purchase-list"></div>
+              <p id="spend-msg" class="form-msg"></p>
             </div>
           </details>
 

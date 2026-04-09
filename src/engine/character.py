@@ -177,6 +177,17 @@ class Character:
     diseases: dict[str, dict] = field(default_factory=dict)
     history: list[str] = field(default_factory=list)
     pending_decision: dict | None = None  # event awaiting player choice
+    # Lifestyle subscriptions and recurring costs (#66). Each entry:
+    #   {key: {"name": str, "monthly_cost": int, "started_year": int,
+    #          "effects": dict}}
+    # The yearly_income tick deducts (12 * monthly_cost) from money.
+    subscriptions: dict[str, dict] = field(default_factory=dict)
+    # One-time purchases the character has made (#66). Used to enforce
+    # "you already own a house" gates and to render the death retrospective.
+    purchases: list[dict] = field(default_factory=list)
+    # Per-treatment cooldown trackers (#67). Maps treatment kind →
+    # last age the character bought it.
+    last_treatment: dict[str, int] = field(default_factory=dict)
 
     @property
     def life_stage(self) -> LifeStage:
@@ -226,6 +237,9 @@ class Character:
             "history": list(self.history),
             "pending_decision": self.pending_decision,
             "life_stage": int(self.life_stage),
+            "subscriptions": {k: dict(v) for k, v in self.subscriptions.items()},
+            "purchases": [dict(p) for p in self.purchases],
+            "last_treatment": dict(self.last_treatment),
         }
         return d
 
@@ -268,6 +282,9 @@ class Character:
             diseases=d.get("diseases", {}),
             history=d.get("history", []),
             pending_decision=d.get("pending_decision"),
+            subscriptions=d.get("subscriptions", {}),
+            purchases=d.get("purchases", []),
+            last_treatment=d.get("last_treatment", {}),
         )
 
 

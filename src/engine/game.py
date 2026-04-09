@@ -293,6 +293,9 @@ class Game:
                 regen = 2 if country.health_services_pct >= 80 else 1
             if char.attributes.health < 25:
                 regen += 3  # convalescent boost — body fights to recover
+            # Premium healthcare subscription doubles regen (#67).
+            if "sub_premium_health" in (char.subscriptions or {}):
+                regen *= 2
             char.attributes.adjust(health=+regen)
 
         # 10. Death roll — first from active high-lethality diseases, then

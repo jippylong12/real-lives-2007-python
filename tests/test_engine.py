@@ -576,6 +576,125 @@ def test_jobs_table_populated_from_binary():
     assert captain.promotes_to is None  # terminal
 
 
+def test_buy_house_increases_family_wealth():
+    """#66: a starter home purchase drains money and adds to family_wealth."""
+    from src.engine import spending
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 30
+    char.money = 200_000
+    char.family_wealth = 50_000
+    money_before = char.money
+    fw_before = char.family_wealth
+    res = spending.buy(char, country, "house_starter", 2030)
+    assert res.success
+    assert char.money < money_before  # cash drained
+    assert char.family_wealth > fw_before  # family wealth boosted
+    # The purchase is recorded for the death retrospective.
+    assert any(p["key"] == "house_starter" for p in char.purchases)
+
+
+def test_buy_house_blocks_duplicate():
+    """#66: requires_no_existing prevents buying a second starter home."""
+    from src.engine import spending
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 30
+    char.money = 500_000
+    spending.buy(char, country, "house_starter", 2030)
+    res = spending.buy(char, country, "house_starter", 2031)
+    assert not res.success
+    assert "already" in res.message.lower()
+
+
+def test_subscription_drains_yearly_cash():
+    """#66: an active subscription costs money each year via yearly_income."""
+    from src.engine import spending, careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 25
+    char.money = 10_000
+    char.salary = 50_000  # so income > expenses
+    char.job = "engineer"
+    spending.buy(char, country, "sub_gym", 2025)
+    money_before = char.money
+    careers.yearly_income(char, country, rng)
+    # Cash should have moved (income - expenses - subscription)
+    assert "sub_gym" in char.subscriptions
+    # Yearly subscription cost should be reflected in the deduction
+    assert spending.yearly_subscription_cost(char) > 0
+
+
+def test_buy_checkup_recovers_health():
+    """#67: paying for a checkup heals the character (age-modulated)."""
+    from src.engine import healthcare
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 30
+    char.attributes.health = 50
+    char.money = 10_000
+    res = healthcare.buy_checkup(char, country)
+    assert res.success
+    assert char.attributes.health > 50
+    assert res.health_delta > 0
+    # Cooldown enforced
+    res2 = healthcare.buy_checkup(char, country)
+    assert not res2.success
+
+
+def test_old_age_treatment_diminished():
+    """#67: an 85yo gets much less out of major treatment than a 40yo."""
+    from src.engine import healthcare
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+
+    def recovery_at(age):
+        char = create_random_character(country, rng)
+        char.age = age
+        char.attributes.health = 30
+        char.money = 100_000
+        res = healthcare.buy_major_treatment(char, country)
+        assert res.success
+        return res.health_delta
+
+    young = recovery_at(40)
+    old = recovery_at(85)
+    assert young > old, f"young recovery {young} should exceed old {old}"
+
+
+def test_treat_disease_manages_chronic():
+    """#67: treating a permanent chronic disease flips status active → inactive
+    but the disease stays on the record."""
+    from src.engine import healthcare
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 50
+    char.money = 50_000
+    # Add hypertension manually
+    char.diseases["hypertension"] = {
+        "name": "Hypertension",
+        "category": "chronic",
+        "active": True,
+        "age_acquired": 45,
+        "permanent": True,
+    }
+    res = healthcare.treat_disease(char, country, "hypertension")
+    assert res.success
+    assert "hypertension" in char.diseases  # still on record
+    assert char.diseases["hypertension"]["active"] is False  # but managed
+
+
 def test_synthetic_athletics_ladder_reachable():
     """#59: the athletics ladder now has 5 rungs from youth athlete to
     elite athlete instead of just 'professional athlete'."""

@@ -722,31 +722,38 @@ def quit_job(character: Character) -> None:
 
 
 def yearly_income(character: Character, country: Country, rng: random.Random) -> int:
-    """Apply income, expenses, and yearly variance.
+    """Apply income, expenses, subscription costs, and yearly variance.
 
     Salaried jobs have tight variance (-5% to +10%): a steady paycheck.
     Freelance jobs (#61) have a much wider luck roll AND scale heavily
     with the relevant attribute — a high-skill freelance artist thrives,
     a low-skill one starves.
-    """
-    if character.salary <= 0:
-        return 0
 
+    Subscription costs (#66) are deducted after income/expenses so the
+    player can have negative net years if they over-subscribe.
+    """
     job = get_job(character.job) if character.job else None
     if job is not None and job.is_freelance:
-        # Freelance: salary is the *baseline* talent rate but each year
-        # is a coin-flip on luck. Talent multiplier centered on 50 means
-        # an artistic-90 freelance writer earns 1.8x baseline; an
-        # artistic-25 one earns 0.5x.
         attr = _relevant_attribute(job.category)
         talent = max(0.4, min(2.5, getattr(character.attributes, attr, 50) / 50.0))
         luck = rng.uniform(0.5, 2.0)
         income = int(character.salary * talent * luck)
-    else:
+    elif character.salary > 0:
         variance = 1.0 + rng.uniform(-0.05, 0.10)
         income = int(character.salary * variance)
+    else:
+        income = 0
 
     expenses = int(income * 0.75) if income > 0 else 0
     net = income - expenses
+
+    # Subscription costs (#66) — applied even if the character has no
+    # job. Living expenses still hit your savings.
+    from . import spending
+    sub_cost = spending.yearly_subscription_cost(character)
+    if sub_cost:
+        net -= sub_cost
+        spending.apply_subscription_effects(character)
+
     character.money += net
     return net

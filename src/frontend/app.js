@@ -114,6 +114,236 @@ async function payLoan(index, amount) {
   renderGame();
 }
 
+// ---------- Spend (#66) ----------
+const spendState = {
+  category: "big",
+  purchases: [],
+};
+
+async function loadPurchases() {
+  if (!state.game) return;
+  try {
+    spendState.purchases = await api(`/api/game/${state.game.id}/purchases`);
+    renderSpendTab();
+  } catch (e) {
+    logErr("loadPurchases failed", e);
+  }
+}
+
+function renderSpendTab() {
+  const subsHost = $opt("#active-subscriptions");
+  if (!subsHost) return;
+
+  // Active subscriptions section
+  const c = state.game?.character;
+  const subs = c?.subscriptions || {};
+  if (Object.keys(subs).length === 0) {
+    subsHost.innerHTML = '<p class="muted">No active subscriptions.</p>';
+  } else {
+    let html = "<h5 class='facts-heading'>Active subscriptions</h5>";
+    for (const [key, sub] of Object.entries(subs)) {
+      html += `<div class="sub-row">
+        <span>${sub.name}</span>
+        <span class="muted">${fmtMoney((sub.monthly_cost || 0) * 12)}/yr</span>
+        <button class="btn xs" data-cancel-sub="${key}">Cancel</button>
+      </div>`;
+    }
+    subsHost.innerHTML = html;
+    subsHost.querySelectorAll("[data-cancel-sub]").forEach((b) => {
+      b.onclick = () => cancelSubscription(b.dataset.cancelSub);
+    });
+  }
+
+  // Category tabs
+  const tabsHost = $opt("#purchase-categories");
+  const cats = ["big", "lifestyle", "subscription", "charity", "gift"];
+  const labels = { big: "Big purchases", lifestyle: "Lifestyle", subscription: "Subscriptions", charity: "Charity", gift: "Gifts" };
+  tabsHost.innerHTML = "";
+  for (const cat of cats) {
+    const btn = document.createElement("button");
+    btn.className = "purchase-tab" + (cat === spendState.category ? " active" : "");
+    btn.textContent = labels[cat];
+    btn.onclick = () => {
+      spendState.category = cat;
+      renderSpendTab();
+    };
+    tabsHost.appendChild(btn);
+  }
+
+  // Purchase rows
+  const list = $opt("#purchase-list");
+  list.innerHTML = "";
+  const filtered = spendState.purchases.filter((p) => p.category === spendState.category);
+  if (filtered.length === 0) {
+    list.innerHTML = '<p class="muted">Nothing in this category.</p>';
+    return;
+  }
+  for (const p of filtered) {
+    const row = document.createElement("div");
+    row.className = "purchase-row" + (!p.eligible ? " disabled" : "") + (p.owned || p.subscribed ? " owned" : "");
+    const costLabel = p.monthly_cost
+      ? `${fmtMoney(p.monthly_cost)}/mo`
+      : fmtMoney(p.cost);
+    const blockers = !p.eligible ? `<div class="pr-blocked">${p.reason || "ineligible"}</div>` : "";
+    const ownedTag = p.owned ? '<span class="pr-owned">Owned</span>'
+                   : p.subscribed ? '<span class="pr-owned">Subscribed</span>'
+                   : '';
+    row.innerHTML = `
+      <div class="pr-main">
+        <div class="pr-name">${p.name} ${ownedTag}</div>
+        <div class="pr-desc">${p.description}</div>
+        ${blockers}
+      </div>
+      <div class="pr-actions">
+        <span class="pr-cost">${costLabel}</span>
+        <button class="btn sm" data-buy="${p.key}" ${(!p.eligible || p.owned || p.subscribed) ? "disabled" : ""}>Buy</button>
+      </div>`;
+    list.appendChild(row);
+  }
+  list.querySelectorAll("[data-buy]").forEach((b) => {
+    b.onclick = () => buyPurchase(b.dataset.buy);
+  });
+}
+
+async function buyPurchase(key) {
+  log(`buyPurchase(${key})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/buy`, {
+      method: "POST",
+      body: JSON.stringify({ purchase_key: key }),
+    });
+    state.game = res.game;
+    $opt("#spend-msg").textContent = res.message;
+    $opt("#spend-msg").className = "good";
+    await loadPurchases();
+    renderGame();
+  } catch (e) {
+    logErr("buyPurchase failed", e);
+    $opt("#spend-msg").textContent = e.message;
+    $opt("#spend-msg").className = "form-msg";
+  }
+}
+
+async function cancelSubscription(key) {
+  log(`cancelSubscription(${key})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/cancel_subscription`, {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    });
+    state.game = res.game;
+    await loadPurchases();
+    renderGame();
+  } catch (e) {
+    logErr("cancelSubscription failed", e);
+    alert(e.message);
+  }
+}
+
+// ---------- Healthcare (#67) ----------
+const healthState = {
+  options: null,
+};
+
+async function loadHealthcare() {
+  if (!state.game) return;
+  try {
+    healthState.options = await api(`/api/game/${state.game.id}/healthcare`);
+    renderHealthcareActions();
+  } catch (e) {
+    logErr("loadHealthcare failed", e);
+  }
+}
+
+function renderHealthcareActions() {
+  const host = $opt("#healthcare-actions");
+  if (!host || !healthState.options) return;
+  const opts = healthState.options;
+  const c = state.game?.character;
+  if (!c) return;
+
+  let html = "";
+
+  // General checkup
+  const checkup = opts.checkup;
+  if (checkup) {
+    const disabled = !checkup.eligible || c.money < checkup.cost ? "disabled" : "";
+    const title = checkup.eligible ? "" : (checkup.reason || "");
+    html += `<button class="btn xs" id="btn-checkup" ${disabled} title="${title}">Checkup ${fmtMoney(checkup.cost)}</button>`;
+  }
+
+  // Major treatment
+  const major = opts.major;
+  if (major) {
+    const disabled = !major.eligible || c.money < major.cost ? "disabled" : "";
+    const title = major.eligible ? "" : (major.reason || "");
+    html += `<button class="btn xs" id="btn-major" ${disabled} title="${title}">Major treatment ${fmtMoney(major.cost)}</button>`;
+  }
+
+  // Per-disease cure buttons
+  if (opts.diseases && opts.diseases.length) {
+    for (const d of opts.diseases) {
+      const disabled = c.money < d.cost ? "disabled" : "";
+      const verb = d.permanent ? "Manage" : "Cure";
+      html += `<button class="btn xs" data-treat-disease="${d.disease_key}" ${disabled}>${verb} ${d.name} ${fmtMoney(d.cost)}</button>`;
+    }
+  }
+
+  host.innerHTML = html;
+  const cb = $opt("#btn-checkup");
+  if (cb) cb.addEventListener("click", buyCheckup);
+  const mb = $opt("#btn-major");
+  if (mb) mb.addEventListener("click", buyMajorTreatment);
+  host.querySelectorAll("[data-treat-disease]").forEach((b) => {
+    b.onclick = () => treatDisease(b.dataset.treatDisease);
+  });
+}
+
+async function buyCheckup() {
+  log("buyCheckup");
+  try {
+    const res = await api(`/api/game/${state.game.id}/buy_checkup`, { method: "POST" });
+    state.game = res.game;
+    alert(res.message);
+    await loadHealthcare();
+    renderGame();
+  } catch (e) {
+    logErr("buyCheckup failed", e);
+    alert(e.message);
+  }
+}
+
+async function buyMajorTreatment() {
+  log("buyMajorTreatment");
+  try {
+    const res = await api(`/api/game/${state.game.id}/buy_major_treatment`, { method: "POST" });
+    state.game = res.game;
+    alert(res.message);
+    await loadHealthcare();
+    renderGame();
+  } catch (e) {
+    logErr("buyMajorTreatment failed", e);
+    alert(e.message);
+  }
+}
+
+async function treatDisease(diseaseKey) {
+  log(`treatDisease(${diseaseKey})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/treat_disease`, {
+      method: "POST",
+      body: JSON.stringify({ disease_key: diseaseKey }),
+    });
+    state.game = res.game;
+    alert(res.message);
+    await loadHealthcare();
+    renderGame();
+  } catch (e) {
+    logErr("treatDisease failed", e);
+    alert(e.message);
+  }
+}
+
 async function quitJob() {
   if (!confirm("Quit your current job? You'll need to find a new one.")) return;
   log("quitJob");
@@ -292,6 +522,8 @@ async function newGame(countryCode) {
     $opt("#death-diseases") && ($opt("#death-diseases").innerHTML = "");
     showGameScreen();
     renderGame();
+    loadPurchases();
+    loadHealthcare();
   } catch (e) {
     logErr("newGame failed", e);
     alert(`Could not start a new life: ${e.message}`);
@@ -311,6 +543,10 @@ async function advanceYear() {
     renderGame();
     renderTurn(res.turn);
     if (res.turn.died) showDeathScreen(res.turn);
+    // Refresh spending + healthcare panels (eligibility changes
+    // every year as the character ages, gets new diseases, etc).
+    loadPurchases();
+    loadHealthcare();
   } catch (e) {
     logErr("advanceYear failed", e);
     alert(`Failed to advance year: ${e.message}`);
@@ -900,6 +1136,10 @@ function setupFinanceTabs() {
       t.classList.add("active");
       $("#tab-investments").classList.toggle("hidden", t.dataset.tab !== "investments");
       $("#tab-loans").classList.toggle("hidden", t.dataset.tab !== "loans");
+      $opt("#tab-spend")?.classList.toggle("hidden", t.dataset.tab !== "spend");
+      // Refresh purchases when the user opens the Spend tab — eligibility
+      // depends on current state (subscriptions, money, age).
+      if (t.dataset.tab === "spend") loadPurchases();
     };
   });
 
