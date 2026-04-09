@@ -573,6 +573,105 @@ def test_promote_walks_ladder_with_experience():
     assert char.promotion_count == 1
 
 
+def test_apply_for_job_qualified_acceptance_high():
+    """#54: a fully qualified candidate should accept >70% of the time."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    country = get_country("us")
+    accepted = 0
+    for seed in range(200):
+        rng = random.Random(seed)
+        char = create_random_character(country, rng)
+        # Build a candidate fully qualified for 'engineer':
+        # min_age 20, education >= secondary, IQ >= 60.
+        char.age = 25
+        char.education = EducationLevel.UNIVERSITY
+        char.attributes.intelligence = 80
+        char.is_urban = True
+        char.vocation_field = None
+        result = careers.apply_for_job(char, country, "engineer", rng)
+        if result.accepted:
+            accepted += 1
+    assert accepted > 140, f"qualified accept rate only {accepted}/200"
+
+
+def test_apply_for_job_long_shot_low_but_nonzero():
+    """#54: a 5-year-old applying for surgeon hits the floor (~1%)."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    country = get_country("us")
+    accepted = 0
+    for seed in range(1000):
+        rng = random.Random(seed)
+        char = create_random_character(country, rng)
+        char.age = 5  # too young, no education
+        char.attributes.intelligence = 30
+        char.is_urban = True
+        char.vocation_field = None
+        result = careers.apply_for_job(char, country, "doctor", rng)
+        if result.accepted:
+            accepted += 1
+    # Floor is 1%, so 1000 trials should give 5-30 acceptances.
+    assert accepted >= 5, f"floor probability not honored: only {accepted}/1000"
+    assert accepted <= 50, f"long-shot acceptance too high: {accepted}/1000"
+
+
+def test_request_raise_eligibility_gates():
+    """#55: can_request_raise enforces years_in_role and cooldown."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.job = "engineer"
+    char.salary = 70000
+    char.years_in_role = 0
+    char.promotion_count = 0
+
+    # Just hired — not eligible
+    eligible, reason = careers.can_request_raise(char)
+    assert not eligible
+    assert "year" in reason
+
+    # 5 years in — eligible (first promo threshold)
+    char.years_in_role = 5
+    eligible, _ = careers.can_request_raise(char)
+    assert eligible
+
+    # After requesting, cooldown applies
+    char.last_raise_request_age = 30
+    eligible, reason = careers.can_request_raise(char)
+    assert not eligible
+    assert "asked recently" in reason
+
+
+def test_request_raise_outcomes_distribution():
+    """#55: across many trials, qualified-and-stuck characters get a raise
+    or promotion >50% of the time."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    country = get_country("us")
+    grants = 0
+    for seed in range(200):
+        rng = random.Random(seed)
+        char = create_random_character(country, rng)
+        char.age = 35
+        char.job = "engineer"
+        char.salary = 70000
+        char.years_in_role = 8  # 3 years past the 5-year threshold
+        char.promotion_count = 0
+        char.attributes.intelligence = 80
+        char.attributes.wisdom = 70
+        char.attributes.endurance = 70
+        char.attributes.conscience = 50
+        char.is_urban = True
+        char.education = EducationLevel.UNIVERSITY
+        result = careers.request_raise(char, country, rng)
+        if result.outcome in ("raise", "promotion"):
+            grants += 1
+    assert grants > 100, f"strong candidate grant rate only {grants}/200"
+
+
 def test_vocation_field_constrains_assigned_jobs():
     """#51: a character with vocation_field='medical' should only get
     jobs from the medical category."""

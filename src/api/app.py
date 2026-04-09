@@ -75,6 +75,10 @@ class PayLoanRequest(BaseModel):
     amount: int
 
 
+class ApplyJobRequest(BaseModel):
+    job_name: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -101,7 +105,8 @@ def _serialize_game(game: Game) -> dict:
 def _career_summary(character) -> dict | None:
     """Return the character's current career snapshot for the sidebar
     (#51): vocation field, current job's category, the next rung in the
-    binary's promotion ladder (if any), and how close they are to it."""
+    binary's promotion ladder (if any), and how close they are to it.
+    Also includes the raise-request eligibility (#55)."""
     if not character.job:
         return None
     job = careers.get_job(character.job)
@@ -110,6 +115,7 @@ def _career_summary(character) -> dict | None:
     next_rung = careers.get_job(job.promotes_to) if job.promotes_to else None
     promo_count = character.promotion_count or 0
     years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    can_ask, ask_reason = careers.can_request_raise(character)
     return {
         "vocation_field": character.vocation_field,
         "category": job.category,
@@ -120,6 +126,8 @@ def _career_summary(character) -> dict | None:
         "next_job": next_rung.name if next_rung else None,
         "next_min_age": next_rung.min_age if next_rung else None,
         "next_min_intelligence": next_rung.min_intelligence if next_rung else None,
+        "can_request_raise": can_ask,
+        "raise_blocked_reason": ask_reason,
     }
 
 
@@ -375,6 +383,78 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         game.save()
         return _serialize_game(game)
+
+    @app.get("/api/game/{game_id}/job_board")
+    def job_board(game_id: str):
+        """Return every job in the catalogue annotated with the
+        character's eligibility, predicted acceptance probability, and
+        PPP-scaled expected salary (#54)."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        listings = careers.job_listing(game.state.character, country)
+        return [
+            {
+                "name": l.job.name,
+                "category": l.job.category,
+                "salary_low": int(l.expected_salary * 0.85),
+                "salary_high": int(l.expected_salary * 1.15),
+                "expected_salary": l.expected_salary,
+                "min_age": l.job.min_age,
+                "max_age": l.job.max_age,
+                "min_education": l.job.min_education,
+                "min_intelligence": l.job.min_intelligence,
+                "urban_only": l.job.urban_only,
+                "rural_only": l.job.rural_only,
+                "status": l.status,
+                "accept_chance": round(l.accept_chance, 3),
+                "missing": l.missing,
+                "promotes_to": l.job.promotes_to,
+            }
+            for l in listings
+        ]
+
+    @app.post("/api/game/{game_id}/request_raise")
+    def request_raise(game_id: str):
+        """Player-initiated raise / promotion request (#55). Resolves
+        immediately with one of: promotion, raise, denied, fired,
+        cooldown, or not_eligible."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = careers.request_raise(
+            game.state.character, country, game.rng
+        )
+        game.save()
+        return {
+            "outcome": result.outcome,
+            "message": result.message,
+            "salary_delta": result.salary_delta,
+            "new_job": result.new_job,
+            "game": _serialize_game(game),
+        }
+
+    @app.post("/api/game/{game_id}/apply_job")
+    def apply_job(game_id: str, req: ApplyJobRequest):
+        """Roll for acceptance to the named job. On success, the
+        character switches roles. On failure, no state change."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = careers.apply_for_job(
+            game.state.character, country, req.job_name, game.rng
+        )
+        game.save()
+        return {
+            "accepted": result.accepted,
+            "message": result.message,
+            "new_job": result.new_job,
+            "new_salary": result.new_salary,
+            "game": _serialize_game(game),
+        }
 
     @app.post("/api/game/{game_id}/pay_loan")
     def pay_loan(game_id: str, req: PayLoanRequest):

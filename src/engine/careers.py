@@ -170,6 +170,264 @@ def _set_job(character: Character, country: Country, job: Job, rng: random.Rando
     character.salary = max(100, int(base * scale))
 
 
+# ---------------------------------------------------------------------------
+# Ask for a raise / promotion (#55)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RaiseResult:
+    """Return value of :func:`request_raise`."""
+    outcome: str           # 'promotion' | 'raise' | 'denied' | 'fired' | 'cooldown' | 'not_eligible'
+    message: str
+    salary_delta: int = 0
+    new_job: str | None = None
+
+
+# Cooldown after any raise request — denied OR granted, since granted
+# requests reset years_in_role to 0 which already enforces a much longer
+# wait before the next eligibility window.
+_RAISE_COOLDOWN_YEARS = 2
+
+
+def can_request_raise(character: Character) -> tuple[bool, str | None]:
+    """Whether the player can press the 'ask for raise' button right now.
+    Returns (eligible, reason). Used by the frontend to grey the button."""
+    if character.job is None:
+        return False, "you don't have a job"
+    current = get_job(character.job)
+    if current is None:
+        return False, "unknown job"
+    promo_count = character.promotion_count or 0
+    years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    if character.years_in_role < years_required:
+        return False, f"need {years_required - character.years_in_role} more year(s) in role"
+    if character.last_raise_request_age is not None:
+        gap = character.age - character.last_raise_request_age
+        if gap < _RAISE_COOLDOWN_YEARS:
+            return False, f"asked recently, wait {_RAISE_COOLDOWN_YEARS - gap} year(s)"
+    return True, None
+
+
+def request_raise(
+    character: Character,
+    country: Country,
+    rng: random.Random,
+) -> RaiseResult:
+    """Player-initiated raise / promotion request (#55).
+
+    Resolution sequence:
+      1. **Promotion** — if the next-rung requirements are met, the
+         character actually gets promoted (same as :func:`promote`).
+         Probability boosted by performance.
+      2. **Raise** — salary bumps 8-25% but the job stays the same.
+         years_in_role resets to 0 (you've reset your seniority clock).
+      3. **Denied** — small happiness hit, no change.
+      4. **Fired** — rare (~5% baseline), penalized by performance.
+
+    Performance is composed of intelligence + wisdom + endurance,
+    normalized to 0..1. Each year past the years_to_promote threshold
+    adds 5% to the favorable outcomes (you've earned a stronger ask).
+    A high-conscience character is slightly less aggressive (-10%) so
+    they sometimes hold back from demanding what they could.
+    """
+    eligible, reason = can_request_raise(character)
+    if not eligible:
+        return RaiseResult(outcome="not_eligible" if reason and "year" not in reason else "cooldown",
+                           message=reason or "not eligible right now")
+
+    current = get_job(character.job)  # already validated above
+    promo_count = character.promotion_count or 0
+    years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    years_past = character.years_in_role - years_required
+
+    perf = (character.attributes.intelligence
+            + character.attributes.wisdom
+            + character.attributes.endurance) / 300.0
+    boldness_penalty = 0.10 if character.attributes.conscience > 70 else 0.0
+
+    promote_p = 0.10 + perf * 0.20 + years_past * 0.05 - boldness_penalty
+    raise_p = 0.45 + perf * 0.20 + years_past * 0.03 - boldness_penalty
+    fire_p = max(0.01, 0.08 - perf * 0.06)
+
+    # Mark the request so the cooldown applies regardless of outcome.
+    character.last_raise_request_age = character.age
+
+    roll = rng.random()
+
+    # Promotion path: only if the character actually meets the next rung
+    # AND the promote_p check fires. Otherwise fall through to raise/deny.
+    if current.promotes_to:
+        next_job = get_job(current.promotes_to)
+        if next_job and _meets_requirements(next_job, character) and roll < promote_p:
+            old_salary = character.salary
+            _set_job(character, country, next_job, rng)
+            character.years_in_role = 0
+            character.promotion_count = promo_count + 1
+            return RaiseResult(
+                outcome="promotion",
+                message=f"You asked for more responsibility. They promoted you to {next_job.name}!",
+                salary_delta=character.salary - old_salary,
+                new_job=next_job.name,
+            )
+
+    # Raise path: salary bump in the same role.
+    if roll < promote_p + raise_p:
+        old_salary = character.salary
+        bump_pct = rng.uniform(0.08, 0.25)
+        character.salary = int(character.salary * (1 + bump_pct))
+        character.years_in_role = 0
+        return RaiseResult(
+            outcome="raise",
+            message=f"You asked for a raise. They agreed — {int(bump_pct * 100)}% bump.",
+            salary_delta=character.salary - old_salary,
+        )
+
+    # Fire path: insubordination.
+    if roll > 1.0 - fire_p:
+        character.job = None
+        character.salary = 0
+        character.years_in_role = 0
+        character.promotion_count = 0
+        return RaiseResult(
+            outcome="fired",
+            message="You demanded too aggressively. You were let go.",
+        )
+
+    # Denied: nothing changes.
+    return RaiseResult(
+        outcome="denied",
+        message="You asked for a raise. They turned you down.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Job board: browse + apply (#54)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class JobListing:
+    """One row in the job board's listing — a job plus the character's
+    eligibility for it. Returned by :func:`job_listing`."""
+    job: Job
+    status: str               # 'qualified' | 'stretch' | 'long_shot' | 'out_of_reach'
+    accept_chance: float      # 0.0–1.0; never below 0.01 (the floor)
+    missing: list[str]        # human-readable list of failed gates
+    expected_salary: int      # PPP-scaled salary midpoint for this character
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    """Return value of :func:`apply_for_job`."""
+    accepted: bool
+    message: str
+    new_job: str | None = None
+    new_salary: int = 0
+
+
+def _missing_requirements(job: Job, character: Character) -> list[str]:
+    """List the gates the character fails for `job`. Empty list = qualified."""
+    out: list[str] = []
+    if character.age < job.min_age:
+        out.append(f"too young (need {job.min_age}+)")
+    elif character.age > job.max_age:
+        out.append(f"too old (cap {job.max_age})")
+    if int(character.education) < job.min_education:
+        edu_labels = ["none", "primary", "secondary", "vocational", "university"]
+        out.append(f"need {edu_labels[job.min_education]} education")
+    if character.attributes.intelligence < job.min_intelligence:
+        out.append(f"need IQ {job.min_intelligence}+")
+    if job.urban_only and not character.is_urban:
+        out.append("urban residents only")
+    if job.rural_only and character.is_urban:
+        out.append("rural residents only")
+    return out
+
+
+def _accept_probability(job: Job, character: Character) -> tuple[float, str]:
+    """Compute the acceptance probability for a hypothetical application
+    and return (probability, status_label). The floor is 1% — even an
+    extremely unqualified application has a non-zero chance, mirroring
+    real-world luck."""
+    missing = _missing_requirements(job, character)
+    n_missing = len(missing)
+
+    if n_missing == 0:
+        base = 0.80
+        status = "qualified"
+    elif n_missing == 1:
+        base = 0.30
+        status = "stretch"
+    elif n_missing == 2:
+        base = 0.10
+        status = "long_shot"
+    else:
+        base = 0.03
+        status = "out_of_reach"
+
+    # Vocation field mismatch makes career switching harder. The penalty
+    # only applies if the character has already locked in a different
+    # field (otherwise unspecialized characters can apply anywhere).
+    if character.vocation_field and job.category and job.category != character.vocation_field:
+        base *= 0.4
+
+    return max(0.01, base), status
+
+
+def job_listing(character: Character, country: Country) -> list[JobListing]:
+    """Return every job in the catalogue annotated with the character's
+    eligibility, predicted acceptance probability, and PPP-scaled salary
+    estimate. Used by the frontend's job board (#54)."""
+    scale = _scale_for_country(country)
+    out: list[JobListing] = []
+    for job in all_jobs():
+        chance, status = _accept_probability(job, character)
+        midpoint = (job.salary_low + job.salary_high) // 2
+        expected_salary = max(100, int(midpoint * scale))
+        out.append(JobListing(
+            job=job,
+            status=status,
+            accept_chance=chance,
+            missing=_missing_requirements(job, character),
+            expected_salary=expected_salary,
+        ))
+    return out
+
+
+def apply_for_job(
+    character: Character,
+    country: Country,
+    job_name: str,
+    rng: random.Random,
+) -> ApplyResult:
+    """Roll for acceptance to ``job_name``. Always at least a 1% chance;
+    fully qualified candidates land at 80%. Vocation field mismatches
+    halve (×0.4) the base. On accept the character takes the new job and
+    their years_in_role + promotion_count reset (career restart)."""
+    job = get_job(job_name)
+    if job is None:
+        return ApplyResult(accepted=False, message=f"unknown job {job_name!r}")
+
+    chance, status = _accept_probability(job, character)
+    if rng.random() >= chance:
+        return ApplyResult(
+            accepted=False,
+            message=f"You applied to be a {job.name} but didn't get the offer.",
+        )
+
+    # Got it. Switch jobs (this implicitly quits the previous role).
+    _set_job(character, country, job, rng)
+    character.years_in_role = 0
+    character.promotion_count = 0
+    return ApplyResult(
+        accepted=True,
+        message=f"You got the job — you're now a {job.name} (~${character.salary:,}/yr).",
+        new_job=job.name,
+        new_salary=character.salary,
+    )
+
+
 def promote(character: Character, country: Country, rng: random.Random) -> str | None:
     """Per-year promotion check (#51). Walks the binary's PromotesTo
     chain when:

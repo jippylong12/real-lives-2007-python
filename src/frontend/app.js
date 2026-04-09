@@ -126,6 +126,127 @@ async function quitJob() {
   }
 }
 
+// ---------- Job board (#54) ----------
+const jobboardState = {
+  category: "All",
+  listings: [],
+};
+
+async function openJobBoard() {
+  log("openJobBoard");
+  try {
+    jobboardState.listings = await api(`/api/game/${state.game.id}/job_board`);
+    log(`fetched ${jobboardState.listings.length} job listings`);
+    jobboardState.category = "All";
+    renderJobBoardTabs();
+    renderJobBoardList();
+    $("#jobboard-msg").textContent = "";
+    $("#jobboard-modal").classList.remove("hidden");
+  } catch (e) {
+    logErr("openJobBoard failed", e);
+    alert(`Could not load the job board: ${e.message}`);
+  }
+}
+
+function closeJobBoard() {
+  $("#jobboard-modal").classList.add("hidden");
+}
+
+function renderJobBoardTabs() {
+  const tabs = $("#jobboard-tabs");
+  const cats = ["All", ...new Set(jobboardState.listings.map((l) => l.category).filter(Boolean))].sort((a, b) =>
+    a === "All" ? -1 : b === "All" ? 1 : a.localeCompare(b)
+  );
+  tabs.innerHTML = "";
+  for (const c of cats) {
+    const btn = document.createElement("button");
+    btn.className = "region-tab" + (c === jobboardState.category ? " active" : "");
+    btn.textContent = c;
+    btn.onclick = () => {
+      jobboardState.category = c;
+      $$(".jobboard-tabs .region-tab").forEach((t) => t.classList.toggle("active", t.textContent === c));
+      renderJobBoardList();
+    };
+    tabs.appendChild(btn);
+  }
+}
+
+function renderJobBoardList() {
+  const host = $("#jobboard-list");
+  host.innerHTML = "";
+  let listings = jobboardState.listings;
+  if (jobboardState.category !== "All") {
+    listings = listings.filter((l) => l.category === jobboardState.category);
+  }
+  // Sort: qualified > stretch > long_shot > out_of_reach, then salary desc.
+  const statusOrder = { qualified: 0, stretch: 1, long_shot: 2, out_of_reach: 3 };
+  listings = [...listings].sort((a, b) => {
+    const so = statusOrder[a.status] - statusOrder[b.status];
+    return so !== 0 ? so : b.expected_salary - a.expected_salary;
+  });
+  if (listings.length === 0) {
+    host.innerHTML = '<p class="muted">No jobs in this category.</p>';
+    return;
+  }
+  for (const l of listings) {
+    const row = document.createElement("div");
+    row.className = `jobboard-row status-${l.status}`;
+    const chancePct = Math.round(l.accept_chance * 100);
+    const missing = l.missing.length ? `<div class="jr-missing">${l.missing.join(" · ")}</div>` : "";
+    row.innerHTML = `
+      <div class="jr-main">
+        <div class="jr-name">${l.name}</div>
+        <div class="jr-meta">${l.category || "—"} · ${fmtMoney(l.expected_salary)}/yr</div>
+        ${missing}
+      </div>
+      <div class="jr-actions">
+        <span class="jr-chance">${chancePct}%</span>
+        <button class="btn sm" data-apply="${l.name.replace(/"/g, "&quot;")}">Apply</button>
+      </div>`;
+    host.appendChild(row);
+  }
+  host.querySelectorAll("[data-apply]").forEach((b) => {
+    b.onclick = () => applyJob(b.dataset.apply);
+  });
+}
+
+async function applyJob(jobName) {
+  log(`applyJob(${jobName})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/apply_job`, {
+      method: "POST",
+      body: JSON.stringify({ job_name: jobName }),
+    });
+    state.game = res.game;
+    $("#jobboard-msg").textContent = res.message;
+    $("#jobboard-msg").className = res.accepted ? "good" : "muted";
+    if (res.accepted) {
+      // Refresh listings since the character's eligibility for everything changed.
+      jobboardState.listings = await api(`/api/game/${state.game.id}/job_board`);
+      renderJobBoardList();
+      renderGame();
+    }
+  } catch (e) {
+    logErr("applyJob failed", e);
+    alert(`Apply failed: ${e.message}`);
+  }
+}
+
+async function requestRaise() {
+  if (!confirm("Ask for a raise or promotion? You could get one — or you could be let go.")) return;
+  log("requestRaise");
+  try {
+    const res = await api(`/api/game/${state.game.id}/request_raise`, { method: "POST" });
+    state.game = res.game;
+    log(`raise outcome: ${res.outcome} — ${res.message}`);
+    alert(res.message);
+    renderGame();
+  } catch (e) {
+    logErr("requestRaise failed", e);
+    alert(`Could not request raise: ${e.message}`);
+  }
+}
+
 async function newGame(countryCode) {
   log(`newGame(${countryCode || "random"})`);
   try {
@@ -329,15 +450,22 @@ function renderGame() {
         nextLine = `<div class="career-next muted">Top of the ladder.</div>`;
       }
       const cat = career.vocation_field || career.category || "—";
+      const askBtn = career.can_request_raise
+        ? `<button id="btn-ask-raise" class="btn xs">Ask for raise</button>`
+        : (career.years_in_role >= career.years_to_promote
+            ? `<button class="btn xs" disabled title="${career.raise_blocked_reason || ""}">Ask for raise</button>`
+            : "");
       careerEl.innerHTML = `
         <div class="career-head">
           <span class="career-cat">${cat}</span>
           <span class="career-promos">${career.promotion_count} promotion${career.promotion_count === 1 ? "" : "s"}</span>
         </div>
         <div class="career-bar"><span style="width:${ladderProgress}%"></span></div>
-        <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role</div>
+        <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role ${askBtn}</div>
         ${nextLine}
       `;
+      const btn = $opt("#btn-ask-raise");
+      if (btn) btn.addEventListener("click", requestRaise);
     }
   }
 
@@ -824,6 +952,8 @@ async function init() {
   $("#btn-new").addEventListener("click", () => showStartScreen());
   $("#btn-restart").addEventListener("click", () => showStartScreen());
   $("#btn-quit-job").addEventListener("click", quitJob);
+  $("#btn-find-work").addEventListener("click", openJobBoard);
+  $("#btn-jobboard-close").addEventListener("click", closeJobBoard);
   log("init: loading countries + finance products");
   await loadCountries();
   await loadFinanceProducts();

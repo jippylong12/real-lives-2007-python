@@ -164,6 +164,7 @@ class Character:
     vocation_field: str | None = None
     years_in_role: int = 0
     promotion_count: int = 0
+    last_raise_request_age: int | None = None  # cooldown gate (#55)
     married: bool = False
     spouse_name: str | None = None
     children: list[FamilyMember] = field(default_factory=list)
@@ -211,6 +212,7 @@ class Character:
             "vocation_field": self.vocation_field,
             "years_in_role": self.years_in_role,
             "promotion_count": self.promotion_count,
+            "last_raise_request_age": self.last_raise_request_age,
             "married": self.married,
             "spouse_name": self.spouse_name,
             "children": [asdict(c) for c in self.children],
@@ -253,6 +255,7 @@ class Character:
             vocation_field=d.get("vocation_field"),
             years_in_role=d.get("years_in_role", 0),
             promotion_count=d.get("promotion_count", 0),
+            last_raise_request_age=d.get("last_raise_request_age"),
             married=d.get("married", False),
             spouse_name=d.get("spouse_name"),
             children=children,
