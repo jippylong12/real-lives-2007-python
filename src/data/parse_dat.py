@@ -342,7 +342,7 @@ def _looks_like_city(s: str) -> bool:
 # CIA Factbook → seed.py country name aliases. Most country blocks anchor on
 # their seed.py name verbatim, but a handful use older / longer / abbreviated
 # variants in the original .dat file (some are truncated by the parser's
-# 80-char string cap).
+# 80-char string cap, others are spelled differently in the 2007 binary).
 _COUNTRY_NAME_ALIASES = {
     "Burma": "Myanmar",
     "Korea, North": "North Korea",
@@ -353,15 +353,30 @@ _COUNTRY_NAME_ALIASES = {
     "Gambia, The": "Gambia",
     "Congo, Republic of": "Republic of the Congo",
     "Congo, Democratic Republic of": "DR Congo",
+    "the Congo": "Republic of the Congo",
     "the Congo Democratic Republic": "DR Congo",
     "Russian Federation": "Russia",
     "East Timor": "Timor-Leste",
     "Yugoslav": "Serbia and Montenegro",
     "Uzbekist": "Uzbekistan",
+    "Macedonia": "North Macedonia",
+    "Swaziland": "Eswatini",
+    # 'the X' definite-article forms used in the 2007 binary.
+    "the Bahamas": "Bahamas",
+    "the Central African Republic": "Central African Republic",
+    "the Comoros": "Comoros",
+    "the Czech Republic": "Czech Republic",
+    "CzechRep": "Czech Republic",
+    "the Dominican Republic": "Dominican Republic",
+    "the Maldives": "Maldives",
+    "the Netherlands": "Netherlands",
+    "the Philippines": "Philippines",
+    "the Solomon Islands": "Solomon Islands",
+    "the Sudan": "Sudan",
+    "the Ukraine": "Ukraine",
     "the United States": "United States",
     "the United Kingdom": "United Kingdom",
     "the United Arab Emirates": "United Arab Emirates",
-    "the Ukraine": "Ukraine",
     "GreatBri": "United Kingdom",
     "UntdAE": "United Arab Emirates",
 }

@@ -58,7 +58,12 @@ def test_build_db_creates_expected_tables():
         n_with_extras = conn.execute(
             "SELECT COUNT(DISTINCT country_code) FROM country_cities WHERE rank > 1"
         ).fetchone()[0]
-        assert n_with_extras >= 100, f"only {n_with_extras} countries got >1 city"
+        # After #9: alias coverage + hand-bundled fallbacks for tail-of-pool
+        # entries and microstates means every country has at least one extra
+        # city beyond its capital.
+        assert n_with_extras == n_countries, (
+            f"only {n_with_extras}/{n_countries} countries got >1 city"
+        )
 
         # Spot-check well-known cities
         rows = conn.execute(

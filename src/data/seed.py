@@ -306,6 +306,35 @@ COUNTRIES: list[dict] = [
 ]
 
 
+# Hand-bundled secondary city lists for countries the world.dat extractor
+# can't anchor on (#9). Most are tail-of-pool entries (their data block in
+# the binary is too short to contain a usable city run) or microstates whose
+# entire population lives in the capital. The build_db pipeline merges these
+# into country_cities only for codes that don't already get cities from the
+# binary extractor — the binary remains the source of truth where available.
+FALLBACK_CITIES: dict[str, list[str]] = {
+    "ad": ["Andorra la Vella", "Escaldes-Engordany", "Sant Julia de Loria", "La Massana", "Encamp"],
+    "ai": ["The Valley", "Blowing Point", "South Hill", "Sandy Ground", "Stoney Ground"],
+    "bm": ["Hamilton", "Saint George's", "Somerset Village", "Flatts Village", "Tucker's Town"],
+    "bo": ["La Paz", "Santa Cruz de la Sierra", "Cochabamba", "Sucre", "Oruro", "Potosi", "Tarija"],
+    "er": ["Asmara", "Keren", "Massawa", "Assab", "Mendefera", "Dekemhare"],
+    "gf": ["Cayenne", "Saint-Laurent-du-Maroni", "Kourou", "Matoury", "Remire-Montjoly"],
+    "pf": ["Papeete", "Faaa", "Punaauia", "Pirae", "Mahina"],
+    "ki": ["Tarawa", "Betio", "Bairiki", "Bikenibeu", "Banraeaba"],
+    "mh": ["Majuro", "Ebeye", "Arno", "Jabor", "Wotje"],
+    "mc": ["Monaco", "Monte Carlo", "La Condamine", "Fontvieille"],
+    "nr": ["Yaren", "Aiwo", "Anibare", "Baiti", "Boe"],
+    "pw": ["Ngerulmud", "Koror", "Airai", "Kloulklubed", "Melekeok"],
+    "kn": ["Basseterre", "Charlestown", "Cayon", "Sandy Point Town", "Newcastle"],
+    "lc": ["Castries", "Vieux Fort", "Soufriere", "Dennery", "Gros Islet"],
+    "vc": ["Kingstown", "Georgetown", "Layou", "Barrouallie", "Calliaqua"],
+    "ws": ["Apia", "Vaitele", "Faleula", "Siusega", "Vailoa"],
+    "sm": ["City of San Marino", "Borgo Maggiore", "Serravalle", "Domagnano", "Fiorentino"],
+    "sc": ["Victoria", "Anse Boileau", "Bel Ombre", "Beau Vallon", "Cascade"],
+    "sg": ["Singapore", "Jurong", "Tampines", "Woodlands", "Punggol"],
+}
+
+
 # Curated job catalogue. ~30 representative jobs that span the original game's
 # range — unskilled labor up through executive/professional. min_education
 # values: 0=none, 1=primary, 2=secondary, 3=vocational, 4=university.

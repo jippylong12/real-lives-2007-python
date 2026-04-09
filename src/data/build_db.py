@@ -231,6 +231,11 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
             code = c["code"]
             capital = c["capital"]
             cities = [s for s in extracted.get(c["name"], []) if s.lower() != capital.lower()]
+            # Fall back to hand-bundled cities if the binary extractor didn't
+            # find anything for this country (issue #9 — tail-of-pool entries
+            # and microstates whose binary block is too tight to anchor on).
+            if not cities and code in seed.FALLBACK_CITIES:
+                cities = [s for s in seed.FALLBACK_CITIES[code] if s.lower() != capital.lower()]
             ordered = [capital] + cities
             for rank, name in enumerate(ordered, start=1):
                 conn.execute(
