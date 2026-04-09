@@ -127,7 +127,8 @@ def _career_summary(character) -> dict | None:
     next_rung = careers.get_job(job.promotes_to) if job.promotes_to else None
     promo_count = character.promotion_count or 0
     years_required = careers._years_required_for_promo(character, job)
-    can_ask, ask_reason = careers.can_request_raise(character)
+    can_raise, raise_reason = careers.can_request_salary_raise(character)
+    can_promote, promote_reason = careers.can_request_promotion(character)
     return {
         "vocation_field": character.vocation_field,
         "category": job.category,
@@ -138,8 +139,11 @@ def _career_summary(character) -> dict | None:
         "next_job": next_rung.name if next_rung else None,
         "next_min_age": next_rung.min_age if next_rung else None,
         "next_min_intelligence": next_rung.min_intelligence if next_rung else None,
-        "can_request_raise": can_ask,
-        "raise_blocked_reason": ask_reason,
+        # #63: split raise vs promotion
+        "can_request_raise": can_raise,
+        "raise_blocked_reason": raise_reason,
+        "can_request_promotion": can_promote,
+        "promotion_blocked_reason": promote_reason,
     }
 
 
@@ -430,14 +434,36 @@ def create_app() -> FastAPI:
 
     @app.post("/api/game/{game_id}/request_raise")
     def request_raise(game_id: str):
-        """Player-initiated raise / promotion request (#55). Resolves
-        immediately with one of: promotion, raise, denied, fired,
-        cooldown, or not_eligible."""
+        """Player-initiated salary raise request (#55, #63). Outcomes:
+        raise / denied / fired / cooldown / not_eligible. Available
+        even at the top of the ladder — separate from promotion."""
         game = load_game(game_id)
         if game is None:
             raise HTTPException(status_code=404, detail="game not found")
         country = get_country(game.state.character.country_code)
-        result = careers.request_raise(
+        result = careers.request_salary_raise(
+            game.state.character, country, game.rng
+        )
+        game.save()
+        return {
+            "outcome": result.outcome,
+            "message": result.message,
+            "salary_delta": result.salary_delta,
+            "new_job": result.new_job,
+            "game": _serialize_game(game),
+        }
+
+    @app.post("/api/game/{game_id}/request_promotion")
+    def request_promotion(game_id: str):
+        """Player-initiated promotion request (#63). Outcomes:
+        promotion / denied / fired / not_eligible. Only valid when
+        there's a next rung in the ladder AND the character meets
+        its requirements."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = careers.request_promotion(
             game.state.character, country, game.rng
         )
         game.save()

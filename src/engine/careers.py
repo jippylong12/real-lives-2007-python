@@ -17,6 +17,7 @@ adjustment.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from functools import lru_cache
@@ -236,9 +237,10 @@ def _years_required_for_promo(character: Character, current: Job) -> int:
     return max(2, int(round(base / skill)))
 
 
-def can_request_raise(character: Character) -> tuple[bool, str | None]:
-    """Whether the player can press the 'ask for raise' button right now.
-    Returns (eligible, reason). Used by the frontend to grey the button."""
+def can_request_salary_raise(character: Character) -> tuple[bool, str | None]:
+    """Whether the player can ask for a salary raise (#63). Available
+    even at the top of the ladder — there's no rung gate, just years
+    in role + cooldown."""
     if character.job is None:
         return False, "you don't have a job"
     current = get_job(character.job)
@@ -254,75 +256,89 @@ def can_request_raise(character: Character) -> tuple[bool, str | None]:
     return True, None
 
 
-def request_raise(
+def can_request_promotion(character: Character) -> tuple[bool, str | None]:
+    """Whether the player can ask for a promotion (#63). Requires:
+    a job with a next-rung in the ladder, the character meets that
+    rung's requirements, plus the standard years_in_role + cooldown
+    gates. At the top of the ladder this is always False — there's
+    nothing to promote to."""
+    if character.job is None:
+        return False, "you don't have a job"
+    current = get_job(character.job)
+    if current is None:
+        return False, "unknown job"
+    if not current.promotes_to:
+        return False, "top of the ladder"
+    next_job = get_job(current.promotes_to)
+    if next_job is None:
+        return False, "no next rung"
+    if not _meets_requirements(next_job, character):
+        # The next rung exists but the character doesn't qualify yet —
+        # surface a hint about what's missing.
+        missing = _missing_requirements(next_job, character)
+        if missing:
+            return False, f"need {missing[0]} for the next rung"
+        return False, "not yet qualified for the next rung"
+    years_required = _years_required_for_promo(character, current)
+    if character.years_in_role < years_required:
+        return False, f"need {years_required - character.years_in_role} more year(s) in role"
+    if character.last_raise_request_age is not None:
+        gap = character.age - character.last_raise_request_age
+        if gap < _RAISE_COOLDOWN_YEARS:
+            return False, f"asked recently, wait {_RAISE_COOLDOWN_YEARS - gap} year(s)"
+    return True, None
+
+
+# Backwards-compat alias used by the existing /api/game/{id}/request_raise
+# endpoint and the older career payload field. Maps to the salary-raise
+# variant since the original button was labeled 'Ask for raise'.
+def can_request_raise(character: Character) -> tuple[bool, str | None]:
+    return can_request_salary_raise(character)
+
+
+def _performance_score(character: Character, current: Job) -> float:
+    """Normalized 0..1 performance score: heavily weights the
+    category-relevant attribute (#60), with wisdom + endurance as
+    secondary contributors. Used by both raise and promotion rolls."""
+    relevant = _relevant_attribute(current.category)
+    relevant_value = getattr(character.attributes, relevant, 60)
+    return (relevant_value * 2
+            + character.attributes.wisdom
+            + character.attributes.endurance) / 400.0
+
+
+def request_salary_raise(
     character: Character,
     country: Country,
     rng: random.Random,
 ) -> RaiseResult:
-    """Player-initiated raise / promotion request (#55).
+    """Player-initiated salary raise request (#63 split). Outcomes:
+    raise / denied / fired. NO promotion path — that's
+    :func:`request_promotion`.
 
-    Resolution sequence:
-      1. **Promotion** — if the next-rung requirements are met, the
-         character actually gets promoted (same as :func:`promote`).
-         Probability boosted by performance.
-      2. **Raise** — salary bumps 8-25% but the job stays the same.
-         years_in_role resets to 0 (you've reset your seniority clock).
-      3. **Denied** — small happiness hit, no change.
-      4. **Fired** — rare (~5% baseline), penalized by performance.
-
-    Performance is composed of intelligence + wisdom + endurance,
-    normalized to 0..1. Each year past the years_to_promote threshold
-    adds 5% to the favorable outcomes (you've earned a stronger ask).
-    A high-conscience character is slightly less aggressive (-10%) so
-    they sometimes hold back from demanding what they could.
+    Salary bumps 8-25% on success. years_in_role resets to 0 (raise
+    resets the seniority clock).
     """
-    eligible, reason = can_request_raise(character)
+    eligible, reason = can_request_salary_raise(character)
     if not eligible:
-        return RaiseResult(outcome="not_eligible" if reason and "year" not in reason else "cooldown",
-                           message=reason or "not eligible right now")
+        return RaiseResult(
+            outcome="not_eligible" if reason and "year" not in reason else "cooldown",
+            message=reason or "not eligible right now",
+        )
 
-    current = get_job(character.job)  # already validated above
-    promo_count = character.promotion_count or 0
+    current = get_job(character.job)
     years_required = _years_required_for_promo(character, current)
     years_past = character.years_in_role - years_required
-
-    # Performance: heavily weight the category-relevant attribute (#60)
-    # so an artistic painter can argue for a raise on creative output,
-    # while an engineer's case rests on intelligence.
-    relevant = _relevant_attribute(current.category)
-    relevant_value = getattr(character.attributes, relevant, 60)
-    perf = (relevant_value * 2
-            + character.attributes.wisdom
-            + character.attributes.endurance) / 400.0
+    perf = _performance_score(character, current)
     boldness_penalty = 0.10 if character.attributes.conscience > 70 else 0.0
 
-    promote_p = 0.10 + perf * 0.20 + years_past * 0.05 - boldness_penalty
-    raise_p = 0.45 + perf * 0.20 + years_past * 0.03 - boldness_penalty
-    fire_p = max(0.01, 0.08 - perf * 0.06)
+    raise_p = 0.55 + perf * 0.25 + years_past * 0.04 - boldness_penalty
+    fire_p = max(0.01, 0.06 - perf * 0.05)
 
-    # Mark the request so the cooldown applies regardless of outcome.
     character.last_raise_request_age = character.age
-
     roll = rng.random()
 
-    # Promotion path: only if the character actually meets the next rung
-    # AND the promote_p check fires. Otherwise fall through to raise/deny.
-    if current.promotes_to:
-        next_job = get_job(current.promotes_to)
-        if next_job and _meets_requirements(next_job, character) and roll < promote_p:
-            old_salary = character.salary
-            _set_job(character, country, next_job, rng)
-            character.years_in_role = 0
-            character.promotion_count = promo_count + 1
-            return RaiseResult(
-                outcome="promotion",
-                message=f"You asked for more responsibility. They promoted you to {next_job.name}!",
-                salary_delta=character.salary - old_salary,
-                new_job=next_job.name,
-            )
-
-    # Raise path: salary bump in the same role.
-    if roll < promote_p + raise_p:
+    if roll < raise_p:
         old_salary = character.salary
         bump_pct = rng.uniform(0.08, 0.25)
         character.salary = int(character.salary * (1 + bump_pct))
@@ -333,7 +349,6 @@ def request_raise(
             salary_delta=character.salary - old_salary,
         )
 
-    # Fire path: insubordination.
     if roll > 1.0 - fire_p:
         character.job = None
         character.salary = 0
@@ -344,11 +359,81 @@ def request_raise(
             message="You demanded too aggressively. You were let go.",
         )
 
-    # Denied: nothing changes.
     return RaiseResult(
         outcome="denied",
         message="You asked for a raise. They turned you down.",
     )
+
+
+def request_promotion(
+    character: Character,
+    country: Country,
+    rng: random.Random,
+) -> RaiseResult:
+    """Player-initiated promotion request (#63 split). Outcomes:
+    promotion / denied / fired. NO salary-bump path — that's
+    :func:`request_salary_raise`.
+
+    Only fires when the character meets the next-rung requirements
+    (gated by :func:`can_request_promotion`). On success the character
+    actually moves up the ladder.
+    """
+    eligible, reason = can_request_promotion(character)
+    if not eligible:
+        return RaiseResult(
+            outcome="not_eligible",
+            message=reason or "not eligible right now",
+        )
+
+    current = get_job(character.job)
+    next_job = get_job(current.promotes_to)
+    years_required = _years_required_for_promo(character, current)
+    years_past = character.years_in_role - years_required
+    perf = _performance_score(character, current)
+    boldness_penalty = 0.10 if character.attributes.conscience > 70 else 0.0
+
+    promote_p = 0.40 + perf * 0.30 + years_past * 0.05 - boldness_penalty
+    fire_p = max(0.01, 0.08 - perf * 0.06)
+
+    character.last_raise_request_age = character.age
+    roll = rng.random()
+
+    if roll < promote_p:
+        old_salary = character.salary
+        promo_count = character.promotion_count or 0
+        _set_job(character, country, next_job, rng)
+        character.years_in_role = 0
+        character.promotion_count = promo_count + 1
+        return RaiseResult(
+            outcome="promotion",
+            message=f"You asked for the role and they gave it to you — you're now a {next_job.name}!",
+            salary_delta=character.salary - old_salary,
+            new_job=next_job.name,
+        )
+
+    if roll > 1.0 - fire_p:
+        character.job = None
+        character.salary = 0
+        character.years_in_role = 0
+        character.promotion_count = 0
+        return RaiseResult(
+            outcome="fired",
+            message="You overreached. They let you go instead.",
+        )
+
+    return RaiseResult(
+        outcome="denied",
+        message="You asked for the promotion. They turned you down.",
+    )
+
+
+# Backwards-compat alias used by the existing endpoint name.
+def request_raise(
+    character: Character,
+    country: Country,
+    rng: random.Random,
+) -> RaiseResult:
+    return request_salary_raise(character, country, rng)
 
 
 # ---------------------------------------------------------------------------
@@ -426,34 +511,87 @@ def _missing_requirements(job: Job, character: Character) -> list[str]:
     return out
 
 
-def _accept_probability(job: Job, character: Character) -> tuple[float, str]:
-    """Compute the acceptance probability for a hypothetical application
-    and return (probability, status_label). The floor is 1% — even an
-    extremely unqualified application has a non-zero chance, mirroring
-    real-world luck."""
-    missing = _missing_requirements(job, character)
-    n_missing = len(missing)
+def _accept_logit(job: Job, character: Character) -> float:
+    """Continuous per-requirement logit (#64). Replaces the old 4-bucket
+    ramp with a smooth function so every job's acceptance probability
+    reflects exactly how the character matches up — instead of every
+    application coming back as either 80% or 30%.
 
-    if n_missing == 0:
-        base = 0.80
-        status = "qualified"
-    elif n_missing == 1:
-        base = 0.30
-        status = "stretch"
-    elif n_missing == 2:
-        base = 0.10
-        status = "long_shot"
+    The result is summed into a logit (log odds) and squashed via a
+    sigmoid in :func:`_logit_to_probability`. Each requirement
+    contributes:
+
+      - In-window age: small bonus. Out-of-window: linear penalty in
+        years.
+      - Education >= floor: small bonus per level above. Below: bigger
+        penalty per level missing.
+      - Intelligence: small bonus per point above the floor; bigger
+        penalty per point below.
+      - Urban/rural mismatch: flat penalty.
+      - Vocation field mismatch: flat penalty.
+    """
+    logit = 0.5  # baseline ~62% before any modifiers
+
+    # Age
+    if character.age < job.min_age:
+        logit -= (job.min_age - character.age) * 0.4
+    elif character.age > job.max_age:
+        logit -= (character.age - job.max_age) * 0.4
     else:
-        base = 0.03
-        status = "out_of_reach"
+        logit += 0.3
 
-    # Vocation field mismatch makes career switching harder. The penalty
-    # only applies if the character has already locked in a different
-    # field (otherwise unspecialized characters can apply anywhere).
+    # Education
+    edu_diff = int(character.education) - job.min_education
+    if edu_diff < 0:
+        logit -= abs(edu_diff) * 1.8
+    else:
+        logit += min(edu_diff * 0.2, 0.6)
+
+    # Intelligence
+    iq_diff = character.attributes.intelligence - job.min_intelligence
+    if iq_diff < 0:
+        logit -= abs(iq_diff) * 0.06
+    else:
+        logit += min(iq_diff * 0.015, 0.5)
+
+    # Urban / rural mismatch
+    if job.urban_only and not character.is_urban:
+        logit -= 2.5
+    if job.rural_only and character.is_urban:
+        logit -= 2.5
+
+    # Vocation field mismatch — career switching is hard but possible
     if character.vocation_field and job.category and job.category != character.vocation_field:
-        base *= 0.4
+        logit -= 1.5
 
-    return max(0.01, base), status
+    return logit
+
+
+def _logit_to_probability(logit: float) -> float:
+    """Sigmoid + clamp to [0.01, 0.95]."""
+    try:
+        p = 1.0 / (1.0 + math.exp(-logit))
+    except OverflowError:
+        p = 0.0 if logit < 0 else 1.0
+    return max(0.01, min(0.95, p))
+
+
+def _status_for_probability(p: float) -> str:
+    """Display label binned from the continuous probability (#64)."""
+    if p >= 0.55:
+        return "qualified"
+    if p >= 0.25:
+        return "stretch"
+    if p >= 0.08:
+        return "long_shot"
+    return "out_of_reach"
+
+
+def _accept_probability(job: Job, character: Character) -> tuple[float, str]:
+    """Return (probability, status_label) for a hypothetical application.
+    Status is derived from the probability band, not a hard categorical."""
+    p = _logit_to_probability(_accept_logit(job, character))
+    return p, _status_for_probability(p)
 
 
 def job_listing(character: Character, country: Country) -> list[JobListing]:

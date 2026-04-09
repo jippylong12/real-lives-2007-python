@@ -244,7 +244,7 @@ async function applyJob(jobName) {
 }
 
 async function requestRaise() {
-  if (!confirm("Ask for a raise or promotion? You could get one — or you could be let go.")) return;
+  if (!confirm("Ask for a salary raise? You could get one — or you could be let go.")) return;
   log("requestRaise");
   try {
     const res = await api(`/api/game/${state.game.id}/request_raise`, { method: "POST" });
@@ -255,6 +255,21 @@ async function requestRaise() {
   } catch (e) {
     logErr("requestRaise failed", e);
     alert(`Could not request raise: ${e.message}`);
+  }
+}
+
+async function requestPromotion() {
+  if (!confirm("Ask for a promotion? You could move up — or you could be let go.")) return;
+  log("requestPromotion");
+  try {
+    const res = await api(`/api/game/${state.game.id}/request_promotion`, { method: "POST" });
+    state.game = res.game;
+    log(`promotion outcome: ${res.outcome} — ${res.message}`);
+    alert(res.message);
+    renderGame();
+  } catch (e) {
+    logErr("requestPromotion failed", e);
+    alert(`Could not request promotion: ${e.message}`);
   }
 }
 
@@ -481,22 +496,38 @@ function renderGame() {
         nextLine = `<div class="career-next muted">Top of the ladder.</div>`;
       }
       const cat = career.vocation_field || career.category || "—";
-      const askBtn = career.can_request_raise
-        ? `<button id="btn-ask-raise" class="btn xs">Ask for raise</button>`
-        : (career.years_in_role >= career.years_to_promote
-            ? `<button class="btn xs" disabled title="${career.raise_blocked_reason || ""}">Ask for raise</button>`
-            : "");
+      const eligibleByYears = career.years_in_role >= career.years_to_promote;
+
+      // Two buttons (#63): salary raise and promotion. Each shows enabled
+      // when can_request_*, disabled with tooltip when years_in_role
+      // crosses the threshold but the gate is something else.
+      let raiseBtn = "";
+      if (career.can_request_raise) {
+        raiseBtn = `<button id="btn-ask-raise" class="btn xs">Ask for raise</button>`;
+      } else if (eligibleByYears) {
+        raiseBtn = `<button class="btn xs" disabled title="${career.raise_blocked_reason || ""}">Ask for raise</button>`;
+      }
+      let promoBtn = "";
+      if (career.can_request_promotion) {
+        promoBtn = `<button id="btn-ask-promo" class="btn xs">Ask for promotion</button>`;
+      } else if (eligibleByYears && career.next_job) {
+        promoBtn = `<button class="btn xs" disabled title="${career.promotion_blocked_reason || ""}">Ask for promotion</button>`;
+      }
+
       careerEl.innerHTML = `
         <div class="career-head">
           <span class="career-cat">${cat}</span>
           <span class="career-promos">${career.promotion_count} promotion${career.promotion_count === 1 ? "" : "s"}</span>
         </div>
         <div class="career-bar"><span style="width:${ladderProgress}%"></span></div>
-        <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role ${askBtn}</div>
+        <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role</div>
         ${nextLine}
+        ${(raiseBtn || promoBtn) ? `<div class="career-actions">${raiseBtn} ${promoBtn}</div>` : ""}
       `;
-      const btn = $opt("#btn-ask-raise");
-      if (btn) btn.addEventListener("click", requestRaise);
+      const rb = $opt("#btn-ask-raise");
+      if (rb) rb.addEventListener("click", requestRaise);
+      const pb = $opt("#btn-ask-promo");
+      if (pb) pb.addEventListener("click", requestPromotion);
     }
   }
 

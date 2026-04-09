@@ -286,29 +286,66 @@ def _wealth_for_country(country: "Country", rng: random.Random) -> int:
     return int(base * rng.uniform(0.1, 2.5))
 
 
+_TALENTABLE_ATTRS = (
+    "intelligence", "artistic", "musical", "athletic",
+    "strength", "endurance", "appearance",
+)
+
+
 def _starting_attributes(country: "Country", rng: random.Random) -> Attributes:
-    """Initial 12-attribute roll, modulated by country development level."""
-    hdi_bonus = (country.hdi - 0.5) * 30   # +/- 15 points
-    health_bonus = (country.health_services_pct - 70) * 0.3
-    literacy_bonus = (country.literacy - 70) * 0.2
+    """Initial 12-attribute roll (#65). Most attributes use a Gaussian
+    distribution centered on the country's adjusted baseline so most
+    characters cluster near the mean and outliers are rare. Then 1-2
+    *talents* get a +15-25 boost and 1-2 *weaknesses* get a -10-15
+    penalty — so every character has something they're noticeably
+    good at and something they struggle with, instead of being
+    average at everything.
+    """
+    hdi_bonus = (country.hdi - 0.5) * 20      # +/- 10 points
+    health_bonus = (country.health_services_pct - 70) * 0.25
+    literacy_bonus = (country.literacy - 70) * 0.15
 
-    def roll(base: int, jitter: int) -> int:
-        return base + rng.randint(-jitter, jitter)
+    def roll(base: float, sigma: float) -> int:
+        """Gaussian roll, clamped to 1..99."""
+        return max(1, min(99, int(base + rng.gauss(0, sigma))))
 
-    return Attributes(
-        health=int(75 + health_bonus + rng.randint(-10, 10)),
-        happiness=int(72 + hdi_bonus * 0.3 + rng.randint(-12, 12)),
-        intelligence=int(50 + literacy_bonus + rng.randint(-15, 15)),
-        artistic=roll(50, 25),
-        musical=roll(50, 25),
-        athletic=roll(50, 20),
-        strength=roll(50, 20),
-        endurance=roll(50, 20),
-        appearance=roll(55, 25),
-        conscience=roll(60, 20),
-        wisdom=roll(15, 10),
-        resistance=int(50 + (country.safe_water_pct - 80) * 0.25 + rng.randint(-15, 15)),
+    attrs = Attributes(
+        health=roll(72 + health_bonus, 8),
+        happiness=roll(68 + hdi_bonus * 0.3, 10),
+        # Lower base (was 50, now 42) so most characters are average
+        # rather than above-average. Country literacy still helps.
+        intelligence=roll(42 + literacy_bonus, 11),
+        artistic=roll(40, 13),
+        musical=roll(40, 13),
+        athletic=roll(45, 11),
+        strength=roll(45, 11),
+        endurance=roll(45, 11),
+        appearance=roll(48, 12),
+        conscience=roll(55, 12),
+        wisdom=roll(12, 6),
+        resistance=roll(50 + (country.safe_water_pct - 80) * 0.2, 11),
     )
+
+    # Talents: 1-2 attributes get a noticeable boost so the character
+    # has something they're recognizably *good* at.
+    n_talents = rng.choice([1, 1, 2])  # mostly one talent, sometimes two
+    talents = rng.sample(_TALENTABLE_ATTRS, n_talents)
+    for attr in talents:
+        boost = rng.randint(15, 25)
+        current = getattr(attrs, attr)
+        setattr(attrs, attr, min(99, current + boost))
+
+    # Weaknesses: 1-2 attributes (different from talents) get a penalty
+    # so the character also has clear soft spots.
+    weakness_pool = [a for a in _TALENTABLE_ATTRS if a not in talents]
+    n_weaknesses = rng.choice([1, 1, 2])
+    weaknesses = rng.sample(weakness_pool, n_weaknesses)
+    for attr in weaknesses:
+        penalty = rng.randint(10, 18)
+        current = getattr(attrs, attr)
+        setattr(attrs, attr, max(1, current - penalty))
+
+    return attrs
 
 
 def create_random_character(country: "Country", rng: random.Random | None = None) -> Character:

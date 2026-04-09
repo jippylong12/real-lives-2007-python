@@ -19,6 +19,41 @@ from src.engine.world import all_countries, get_country, random_country
 
 # ---------- Birth ----------
 
+def test_attribute_distribution_realistic_with_talents():
+    """#65: characters spawn with realistic attribute distributions —
+    most attributes near the country mean, with 1-2 talents and 1-2
+    weaknesses per character. Across many newborns, fewer than 15% of
+    any single attribute should clear 70."""
+    rng_seed = 0
+    country = get_country("us")
+    samples = {a: [] for a in ("intelligence", "artistic", "athletic", "strength", "appearance")}
+    has_talent = 0
+    has_weakness = 0
+    for s in range(200):
+        rng = random.Random(s + rng_seed)
+        c = create_random_character(country, rng)
+        for a in samples:
+            samples[a].append(getattr(c.attributes, a))
+        attrs_dict = c.attributes.to_dict()
+        if any(attrs_dict[a] >= 60 for a in ("intelligence", "artistic", "musical", "athletic", "strength", "endurance", "appearance")):
+            has_talent += 1
+        if any(attrs_dict[a] <= 35 for a in ("intelligence", "artistic", "musical", "athletic", "strength", "endurance", "appearance")):
+            has_weakness += 1
+
+    for a, vals in samples.items():
+        mean = sum(vals) / len(vals)
+        above_70 = sum(1 for v in vals if v >= 70) / len(vals)
+        # Means should land in the 35-55 range (no longer all clustered high)
+        assert 35 <= mean <= 60, f"{a} mean {mean:.0f} out of expected band"
+        # At most ~15% of any single attribute should be high enough to
+        # qualify for elite jobs.
+        assert above_70 <= 0.20, f"{a} {above_70*100:.0f}% above 70 — too many high rolls"
+
+    # Most characters should have at least one talent and one weakness.
+    assert has_talent > 150, f"only {has_talent}/200 characters have a talent"
+    assert has_weakness > 150, f"only {has_weakness}/200 characters have a weakness"
+
+
 def test_birth_attributes_within_bounds():
     rng = random.Random(123)
     country = get_country("se")
@@ -785,6 +820,7 @@ def test_request_raise_eligibility_gates():
     rng = random.Random(0)
     char = create_random_character(get_country("us"), rng)
     char.age = 30
+    char.attributes.intelligence = 70  # ensure skill_factor doesn't extend the gate
     char.job = "engineer"
     char.salary = 70000
     char.years_in_role = 0
