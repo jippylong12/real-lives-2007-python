@@ -306,6 +306,195 @@ COUNTRIES: list[dict] = [
 ]
 
 
+# Vocation categories for the 131 binary jobs (#51). Each job_name is
+# mapped to one of 14 categories so the engine can offer the player a
+# field of study at the education-path step and constrain the assigned
+# job to that field. Categories are derived by reading the binary's
+# PromotesTo chains: jobs that promote into the same management ladder
+# get grouped, plus a few hand-tweaked clusters for cohesion (e.g.
+# putting safety_inspector with police rather than industrial).
+JOB_CATEGORIES: dict[str, str] = {
+    # ----- Medical -----
+    "doctor": "medical",
+    "nurse": "medical",
+    "head nurse": "medical",
+    "nursing aid": "medical",
+    "medical technician": "medical",
+    "chemistry lab technician": "medical",
+    "lab technician": "medical",
+    "traditional medicine practitioner": "medical",
+
+    # ----- Education -----
+    "college president": "education",
+    "college head of department": "education",
+    "college professor": "education",
+    "school principal": "education",
+    "school administrator": "education",
+    "secondary school teacher": "education",
+    "primary school teacher": "education",
+    "special education teacher": "education",
+    "school counselor": "education",
+    "teaching resource aid": "education",
+    "primary teacher's aid": "education",
+    "special education teaching aid": "education",
+    "nursery school aid": "education",
+    "librarian": "education",
+
+    # ----- STEM (engineering / science / tech) -----
+    "scientist": "stem",
+    "senior scientist": "stem",
+    "biologist": "stem",
+    "mathematician": "stem",
+    "social scientist": "stem",
+    "engineer": "stem",
+    "engineering department manager": "stem",
+    "computer programmer": "stem",
+    "software department manager": "stem",
+    "computer technician": "stem",
+    "electronic equipment operator": "stem",
+    "air traffic controller": "stem",
+
+    # ----- Government / Law / NGO -----
+    "senior government official": "government",
+    "judge": "government",
+    "lawyer": "government",
+    "NGO official": "government",
+    "senior NGO official": "government",
+    "community leader": "government",
+    "customs official": "government",
+    "social worker": "government",
+    "administrator": "government",
+    "administrative aid": "government",
+
+    # ----- Police / Security -----
+    "police chief": "police",
+    "police captain": "police",
+    "police inspector": "police",
+    "policeman": "police",
+    "safety inspector": "police",
+
+    # ----- Military -----
+    "military sergeant": "military",
+    "soldier": "military",
+
+    # ----- Arts / Creative -----
+    "writer": "arts",
+    "artist": "arts",
+    "sculptor": "arts",
+    "musician": "arts",
+    "fashion model": "arts",
+    "entertainment industry technician": "arts",
+    "potter": "arts",
+
+    # ----- Business / Management / Sales / Clerical -----
+    "company president": "business",
+    "general manager": "business",
+    "department manager": "business",
+    "production department manager": "business",
+    "marketing director": "business",
+    "business service agent": "business",
+    "secretary": "business",
+    "numerical clerk": "business",
+    "materials clerk": "business",
+    "office worker": "business",
+    "office clerk": "business",
+    "mail clerk": "business",
+    "cashier": "business",
+    "information clerk": "business",
+    "salesperson": "business",
+    "shop salesperson": "business",
+    "stall salesperson": "business",
+
+    # ----- Trades (skilled labor) -----
+    "electrician": "trades",
+    "finish carpenter": "trades",
+    "cabinet maker": "trades",
+    "mechanic": "trades",
+    "blacksmith": "trades",
+    "foreman": "trades",
+    "factory worker": "trades",
+    "painter": "trades",
+    "metal worker": "trades",
+    "manufacturing laborer": "trades",
+    "freight handler": "trades",
+    "machine operator": "trades",
+    "printer": "trades",
+    "locomotive engineer": "trades",
+    "truck driver": "trades",
+    "construction worker": "trades",
+    "miner": "trades",
+    "stone cutter": "trades",
+    "shoemaker": "trades",
+    "seamstress": "trades",
+    "textile worker": "trades",
+    "handicraft worker": "trades",
+    "assembler": "trades",
+    "garbage collector": "trades",
+    "food processing worker": "trades",
+    "restaurant services worker": "trades",
+
+    # ----- Industrial / Plant operators -----
+    "power plant operator": "industrial",
+    "chemical plant operator": "industrial",
+    "mineral processing plant operator": "industrial",
+    "metal processing plant operator": "industrial",
+    "ceramic plant operator": "industrial",
+    "paper plant operator": "industrial",
+
+    # ----- Agriculture / Resources -----
+    "subsistence farmer": "agriculture",
+    "small farmer": "agriculture",
+    "farm worker": "agriculture",
+    "fisherman": "agriculture",
+    "hunter": "agriculture",
+    "logger": "agriculture",
+
+    # ----- Maritime -----
+    "seaman": "maritime",
+    "second mate": "maritime",
+    "first mate": "maritime",
+    "ship's captain": "maritime",
+
+    # ----- Athletics -----
+    "professional athlete": "athletics",
+
+    # ----- Service / Survival -----
+    "domestic helper": "service",
+    "caretaker": "service",
+    "travel attendant": "service",
+    "beggar": "service",
+    "scavenger of used goods": "service",
+    "street vendor": "service",
+    "temporary odd jobs": "service",
+    "shoe cleaner": "service",
+    "laborer": "service",
+    "messenger": "service",
+    "fortune-teller": "service",
+    "prostitute": "service",
+    "thief": "service",
+}
+
+
+# Display labels and entry-job hints for each category — used by the
+# vocation picker UI in #48.
+JOB_CATEGORY_META: dict[str, dict] = {
+    "medical":     {"label": "Medical & Health",     "needs_university": True,  "intelligence_floor": 50},
+    "education":   {"label": "Education & Academia", "needs_university": False, "intelligence_floor": 40},
+    "stem":        {"label": "Science & Engineering","needs_university": True,  "intelligence_floor": 55},
+    "government":  {"label": "Government & Law",     "needs_university": True,  "intelligence_floor": 45},
+    "police":      {"label": "Police & Security",    "needs_university": False, "intelligence_floor": 25},
+    "military":    {"label": "Military",             "needs_university": False, "intelligence_floor": 20},
+    "arts":        {"label": "Arts & Creative",      "needs_university": False, "intelligence_floor": 25},
+    "business":    {"label": "Business & Management","needs_university": False, "intelligence_floor": 30},
+    "trades":      {"label": "Skilled Trades",       "needs_university": False, "intelligence_floor": 10},
+    "industrial":  {"label": "Industrial Operations","needs_university": False, "intelligence_floor": 20},
+    "agriculture": {"label": "Agriculture",          "needs_university": False, "intelligence_floor": 0},
+    "maritime":    {"label": "Maritime",             "needs_university": False, "intelligence_floor": 15},
+    "athletics":   {"label": "Athletics",            "needs_university": False, "intelligence_floor": 25},
+    "service":     {"label": "Service & Other",      "needs_university": False, "intelligence_floor": 0},
+}
+
+
 # Hand-bundled secondary city lists for countries the world.dat extractor
 # can't anchor on (#9). Most are tail-of-pool entries (their data block in
 # the binary is too short to contain a usable city run) or microstates whose

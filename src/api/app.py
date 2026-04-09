@@ -94,6 +94,32 @@ def _serialize_game(game: Game) -> dict:
         "country": country_dict,
         "pending_event": state.pending_event,
         "portfolio_value": finances.portfolio_value(state.character),
+        "career": _career_summary(state.character),
+    }
+
+
+def _career_summary(character) -> dict | None:
+    """Return the character's current career snapshot for the sidebar
+    (#51): vocation field, current job's category, the next rung in the
+    binary's promotion ladder (if any), and how close they are to it."""
+    if not character.job:
+        return None
+    job = careers.get_job(character.job)
+    if job is None:
+        return None
+    next_rung = careers.get_job(job.promotes_to) if job.promotes_to else None
+    promo_count = character.promotion_count or 0
+    years_required = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    return {
+        "vocation_field": character.vocation_field,
+        "category": job.category,
+        "current_job": job.name,
+        "years_in_role": character.years_in_role,
+        "promotion_count": promo_count,
+        "years_to_promote": years_required,
+        "next_job": next_rung.name if next_rung else None,
+        "next_min_age": next_rung.min_age if next_rung else None,
+        "next_min_intelligence": next_rung.min_intelligence if next_rung else None,
     }
 
 

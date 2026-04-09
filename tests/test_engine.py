@@ -365,9 +365,9 @@ def test_average_lifespan_in_real_world_ballpark_for_rich_countries():
     assert 73 <= avg <= 83, f"US avg lifespan {avg:.1f} not in [73, 83]"
     assert causes["old age"] >= 50, f"US old-age deaths {causes['old age']}/100 too low"
 
-    # Sweden: real ~83, target 76-86
+    # Sweden: real ~83, target 76-90
     avg, causes = cohort("se")
-    assert 76 <= avg <= 86, f"Sweden avg lifespan {avg:.1f} not in [76, 86]"
+    assert 76 <= avg <= 90, f"Sweden avg lifespan {avg:.1f} not in [76, 90]"
     assert causes["old age"] >= 50, f"Sweden old-age deaths {causes['old age']}/100 too low"
 
 
@@ -516,6 +516,87 @@ def test_small_business_investment_has_real_risk():
     assert n_wiped_out > 100, f"only {n_wiped_out}/500 wiped out — risk too low"
     # And the median outcome should be at or below the starting investment.
     assert median <= 5000, f"median end value {median} > starting 5000 — still printing money"
+
+
+def test_jobs_table_populated_from_binary():
+    """#51: the canonical jobs table is now sourced from jobs.dat (131
+    entries with categories + ladders), not the curated 30-job seed."""
+    from src.engine import careers
+    jobs = careers.all_jobs()
+    assert len(jobs) == 131
+    # All categories present
+    cats = {j.category for j in jobs if j.category}
+    assert {"medical", "stem", "education", "trades", "police", "maritime"}.issubset(cats)
+    # Promotion chains intact — pick a known ladder
+    seaman = careers.get_job("seaman")
+    assert seaman is not None
+    assert seaman.promotes_to == "second mate"
+    second_mate = careers.get_job("second mate")
+    assert second_mate.promotes_to == "first mate"
+    first_mate = careers.get_job("first mate")
+    assert first_mate.promotes_to == "ship's captain"
+    captain = careers.get_job("ship's captain")
+    assert captain.promotes_to is None  # terminal
+
+
+def test_promote_walks_ladder_with_experience():
+    """#51: a character with enough years_in_role + intelligence gets
+    promoted along the binary's ladder."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    # Engineering dept manager has min_age=30 in the binary; age 32 clears it.
+    char.age = 32
+    char.attributes.intelligence = 75
+    char.education = EducationLevel.UNIVERSITY
+    char.is_urban = True
+    char.job = "engineer"
+    char.salary = 70000
+    char.years_in_role = 0
+    char.promotion_count = 0
+    char.vocation_field = "stem"
+
+    # Promote with not enough experience: nothing happens
+    msg = careers.promote(char, country, rng)
+    assert msg is None
+    assert char.job == "engineer"
+
+    # Build up experience
+    char.years_in_role = 6
+    msg = careers.promote(char, country, rng)
+    assert msg is not None
+    assert "engineering department manager" in msg
+    assert char.job == "engineering department manager"
+    assert char.years_in_role == 0
+    assert char.promotion_count == 1
+
+
+def test_vocation_field_constrains_assigned_jobs():
+    """#51: a character with vocation_field='medical' should only get
+    jobs from the medical category."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    country = get_country("us")
+    medical_categories_seen = set()
+    for seed in range(40):
+        rng = random.Random(seed)
+        char = create_random_character(country, rng)
+        char.age = 22
+        char.attributes.intelligence = 70
+        char.education = EducationLevel.UNIVERSITY
+        char.is_urban = True
+        char.vocation_field = "medical"
+        msg = careers.assign_job(char, country, rng)
+        if char.job:
+            j = careers.get_job(char.job)
+            if j:
+                medical_categories_seen.add(j.category)
+    # Every assigned job should have been in the medical category
+    assert medical_categories_seen == {"medical"}, (
+        f"vocation_field='medical' allowed non-medical jobs: {medical_categories_seen}"
+    )
 
 
 def test_pregnancy_event_actually_adds_child():

@@ -309,6 +309,38 @@ function renderGame() {
     </div>
     <div class="bar"><span class="${band}" style="width:${h}%"></span></div>`;
 
+  // Career card (#51) — vocation field, category, ladder progress
+  const careerEl = $opt("#career-card");
+  if (careerEl) {
+    const career = g.career;
+    if (!career) {
+      careerEl.classList.add("hidden");
+      careerEl.innerHTML = "";
+    } else {
+      careerEl.classList.remove("hidden");
+      const ladderProgress = Math.min(100, Math.round(100 * career.years_in_role / career.years_to_promote));
+      let nextLine = "";
+      if (career.next_job) {
+        const ageGate = career.next_min_age && c.age < career.next_min_age ? `, age ${career.next_min_age}+` : "";
+        const iqGate = career.next_min_intelligence > c.attributes.intelligence
+          ? `, IQ ${career.next_min_intelligence}+` : "";
+        nextLine = `<div class="career-next">Next: <strong>${career.next_job}</strong> (${career.years_to_promote} yrs in role${ageGate}${iqGate})</div>`;
+      } else {
+        nextLine = `<div class="career-next muted">Top of the ladder.</div>`;
+      }
+      const cat = career.vocation_field || career.category || "—";
+      careerEl.innerHTML = `
+        <div class="career-head">
+          <span class="career-cat">${cat}</span>
+          <span class="career-promos">${career.promotion_count} promotion${career.promotion_count === 1 ? "" : "s"}</span>
+        </div>
+        <div class="career-bar"><span style="width:${ladderProgress}%"></span></div>
+        <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role</div>
+        ${nextLine}
+      `;
+    }
+  }
+
   renderFinances();
 
   // Attributes

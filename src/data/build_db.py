@@ -72,15 +72,19 @@ CREATE TABLE IF NOT EXISTS countries (
 
 CREATE TABLE IF NOT EXISTS jobs (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    name              TEXT NOT NULL,
+    name              TEXT NOT NULL UNIQUE,
     min_education     INTEGER NOT NULL,
     min_intelligence  INTEGER NOT NULL,
     min_age           INTEGER NOT NULL,
     max_age           INTEGER NOT NULL,
     salary_low        INTEGER NOT NULL,
     salary_high       INTEGER NOT NULL,
-    urban_only        INTEGER NOT NULL
+    urban_only        INTEGER NOT NULL,
+    category          TEXT,                    -- vocation category (#51)
+    promotes_to       TEXT,                    -- next job name in the ladder (#51)
+    rural_only        INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(category);
 
 CREATE TABLE IF NOT EXISTS investments (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,8 +158,12 @@ CREATE TABLE IF NOT EXISTS job_original_stats (
     athletic                INTEGER,
     salary                  REAL,
     seacoast_only           INTEGER,
-    forest_only             INTEGER
+    forest_only             INTEGER,
+    promotes_to             TEXT,                  -- next job in the binary's ladder (#51)
+    category                TEXT                   -- vocation category, set in seed.JOB_CATEGORIES (#51)
 );
+CREATE INDEX IF NOT EXISTS idx_job_original_stats_category
+    ON job_original_stats(category);
 
 -- Original-game stats decoded directly from world.dat (2007-era values).
 -- This table is independent from the curated `countries` table and is used
@@ -324,21 +332,85 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 ),
             )
 
-        # 3. Jobs.
-        for j in seed.JOBS:
-            conn.execute(
-                """
-                INSERT INTO jobs (
-                    name, min_education, min_intelligence, min_age, max_age,
-                    salary_low, salary_high, urban_only
-                ) VALUES (?,?,?,?,?,?,?,?)
-                """,
-                (
-                    j["name"], j["min_education"], j["min_intelligence"],
-                    j["min_age"], j["max_age"], j["salary_low"], j["salary_high"],
-                    1 if j["urban_only"] else 0,
-                ),
-            )
+        # 3. Jobs — populated from the binary's 131 entries (#51) instead of
+        #    the seed.JOBS curated list. The binary's education codes
+        #    (N/P/H/C/G) map to the engine's EducationLevel ints; salary
+        #    becomes a +/- 20% range; UrbanRural ('U'/'R'/'B') maps to the
+        #    urban_only / rural_only flags. The same iteration also fills
+        #    job_original_stats so the catch-all + the canonical table
+        #    stay in sync.
+        EDU_CODE_TO_LEVEL = {"N": 0, "P": 1, "H": 2, "C": 2, "G": 4}
+        jobs_orig_total = 0
+        jobs_parsed = parsed_files.get("jobs")
+        if jobs_parsed is not None:
+            for i, row in enumerate(parse_dat.decode_all_rows(jobs_parsed)):
+                name = row.get("JobName")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                clean_name = name.strip()
+                edu_code = row.get("Education") or "N"
+                min_education = EDU_CODE_TO_LEVEL.get(edu_code, 0)
+                intelligence = int(row.get("Intelligence") or 0)
+                min_age = int(row.get("MinimumAge") or 14)
+                # Several maritime jobs have a sentinel min_age of 100 in the
+                # binary — treat that as 'no early restriction' (16 is the
+                # default working age).
+                if min_age >= 100:
+                    min_age = 16
+                max_age = int(row.get("MaxAge") or 65)
+                salary = int(row.get("Salary") or 0)
+                salary_low = int(salary * 0.8)
+                salary_high = int(salary * 1.2)
+                ur = row.get("UrbanRural") or "B"
+                urban_only = 1 if ur == "U" else 0
+                rural_only = 1 if ur == "R" else 0
+                category = seed.JOB_CATEGORIES.get(clean_name)
+                promotes_to = row.get("PromotesTo")
+                if isinstance(promotes_to, str):
+                    promotes_to = promotes_to.strip() or None
+                else:
+                    promotes_to = None
+
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO jobs (
+                        name, min_education, min_intelligence, min_age, max_age,
+                        salary_low, salary_high, urban_only, rural_only,
+                        category, promotes_to
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        clean_name, min_education, intelligence, min_age, max_age,
+                        salary_low, salary_high, urban_only, rural_only,
+                        category, promotes_to,
+                    ),
+                )
+                # Mirror into job_original_stats for the catch-all consumers
+                # that need the wider field set (#19).
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO job_original_stats (
+                        binary_index, job_name, minimum_age, max_age, education,
+                        urban_rural, self_employed, intelligence, strength, endurance,
+                        artistic, musical, athletic, salary, seacoast_only, forest_only,
+                        promotes_to, category
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        i, clean_name,
+                        row.get("MinimumAge"), row.get("MaxAge"),
+                        edu_code, ur,
+                        1 if row.get("SelfEmployed") else 0,
+                        intelligence,
+                        row.get("Strength"), row.get("Endurance"),
+                        row.get("Artistic"), row.get("Musical"), row.get("Athletic"),
+                        row.get("Salary"),
+                        1 if row.get("Seacoast") else 0,
+                        1 if row.get("Forest") else 0,
+                        promotes_to, category,
+                    ),
+                )
+                jobs_orig_total += 1
 
         # 4. Investments.
         for inv in seed.INVESTMENTS:
@@ -381,38 +453,6 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     (code, name, rank, 1 if rank == 1 else 0),
                 )
                 cities_total += 1
-
-        # 6b. Original-game job catalogue decoded directly from jobs.dat (#19).
-        # The generic row decoder works on any .dat file with a fixed-row
-        # data section, not just world.dat.
-        jobs_orig_total = 0
-        jobs_parsed = parsed_files.get("jobs")
-        if jobs_parsed is not None:
-            for i, row in enumerate(parse_dat.decode_all_rows(jobs_parsed)):
-                name = row.get("JobName")
-                if not isinstance(name, str) or not name.strip():
-                    continue
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO job_original_stats (
-                        binary_index, job_name, minimum_age, max_age, education,
-                        urban_rural, self_employed, intelligence, strength, endurance,
-                        artistic, musical, athletic, salary, seacoast_only, forest_only
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        i, name.strip(),
-                        row.get("MinimumAge"), row.get("MaxAge"),
-                        row.get("Education"), row.get("UrbanRural"),
-                        1 if row.get("SelfEmployed") else 0,
-                        row.get("Intelligence"), row.get("Strength"), row.get("Endurance"),
-                        row.get("Artistic"), row.get("Musical"), row.get("Athletic"),
-                        row.get("Salary"),
-                        1 if row.get("Seacoast") else 0,
-                        1 if row.get("Forest") else 0,
-                    ),
-                )
-                jobs_orig_total += 1
 
         # 7a. Original-game stats decoded directly from world.dat. The decoder
         # interprets the schema's type/size/offset metadata to pull every

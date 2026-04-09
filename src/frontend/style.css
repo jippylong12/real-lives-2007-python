@@ -209,6 +209,56 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   border-top: 1px solid var(--line-soft);
   border-bottom: 1px solid var(--line-soft);
 }
+
+/* Career card (#51) — vocation field, ladder progress, next promotion */
+.career-card {
+  margin: 0 0 10px;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.career-card.hidden { display: none; }
+.career-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.career-cat {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--ink-mute);
+}
+.career-promos {
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+.career-bar {
+  height: 5px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 4px 0;
+}
+.career-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.career-yrs {
+  font-size: 11px;
+  color: var(--ink-mute);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.career-next {
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+  line-height: 1.3;
+}
+.career-next strong { color: var(--ink); }
 .health-headline .health-label {
   display: flex; justify-content: space-between; align-items: baseline;
   font-size: 12px; color: var(--ink-mute);

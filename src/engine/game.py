@@ -159,11 +159,20 @@ class Game:
             log.append(TurnEvent("education", "Education", "education", ed_msg))
             char.remember(ed_msg)
 
-        # 2. Job hunt
+        # 2. Job hunt + promotion (#51).
+        # Tick years_in_role first so the promotion check sees the
+        # accumulated experience for the year that just finished.
+        if char.job is not None:
+            char.years_in_role += 1
         job_msg = careers.assign_job(char, country, self.rng)
         if job_msg:
             log.append(TurnEvent("job", "New job", "finance", job_msg))
             char.remember(job_msg)
+        else:
+            promo_msg = careers.promote(char, country, self.rng)
+            if promo_msg:
+                log.append(TurnEvent("promotion", "Promotion", "finance", promo_msg))
+                char.remember(promo_msg)
 
         # 3. Income / expenses
         net = careers.yearly_income(char, country, self.rng)

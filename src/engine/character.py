@@ -157,6 +157,13 @@ class Character:
     in_school: bool = False
     job: str | None = None
     salary: int = 0
+    # Vocation tracking (#51): the player's chosen field of work, the
+    # number of years in the current job, and how many promotions they've
+    # taken in their career so far. The field is set by the EDUCATION_PATH
+    # / vocation-picker choices and constrains assign_job's pool.
+    vocation_field: str | None = None
+    years_in_role: int = 0
+    promotion_count: int = 0
     married: bool = False
     spouse_name: str | None = None
     children: list[FamilyMember] = field(default_factory=list)
@@ -201,6 +208,9 @@ class Character:
             "in_school": self.in_school,
             "job": self.job,
             "salary": self.salary,
+            "vocation_field": self.vocation_field,
+            "years_in_role": self.years_in_role,
+            "promotion_count": self.promotion_count,
             "married": self.married,
             "spouse_name": self.spouse_name,
             "children": [asdict(c) for c in self.children],
@@ -240,6 +250,9 @@ class Character:
             in_school=d.get("in_school", False),
             job=d.get("job"),
             salary=d.get("salary", 0),
+            vocation_field=d.get("vocation_field"),
+            years_in_role=d.get("years_in_role", 0),
+            promotion_count=d.get("promotion_count", 0),
             married=d.get("married", False),
             spouse_name=d.get("spouse_name"),
             children=children,

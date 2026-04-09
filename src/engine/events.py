@@ -692,6 +692,15 @@ def _education_dropout(c):
     c.in_school = False
 
 
+def _set_vocation(field):
+    """Build a side-effect that sets character.vocation_field. Used by
+    the UNIVERSITY_MAJOR / VOCATIONAL_TRACK choices below to constrain
+    careers.assign_job to the chosen category (#51)."""
+    def _do(c):
+        c.vocation_field = field
+    return _do
+
+
 def _accept_proposal(c):
     from .character import Gender, _random_name
     import random as _random
@@ -737,6 +746,131 @@ LOVE_MARRIAGE = _choice(
             label="Ask for more time",
             deltas={"happiness": -1, "wisdom": +2},
             summary="You asked for more time. They agreed but you both felt the weight of it.",
+        ),
+    ],
+)
+
+
+UNIVERSITY_MAJOR = _choice(
+    key="university_major",
+    title="Pick your major",
+    category="education",
+    description=(
+        "You're heading into university. Time to choose what to study — your "
+        "major will shape the kind of work you can do for the rest of your "
+        "life. Pick a field that fits your strengths."
+    ),
+    when=lambda c, co: (
+        c.age == 18
+        and c.in_school
+        and c.education == EducationLevel.PRIMARY
+        and c.vocation_field is None
+    ),
+    chance=lambda c, co: 1.0,
+    choices=[
+        EventChoice(
+            key="medical",
+            label="Medicine — doctor, nurse, lab tech",
+            deltas={"intelligence": +2, "wisdom": +1},
+            summary="You enrolled in pre-med. The next 6+ years will be intensive.",
+            side_effect=_set_vocation("medical"),
+        ),
+        EventChoice(
+            key="stem",
+            label="Science & Engineering",
+            deltas={"intelligence": +2, "wisdom": +1},
+            summary="You picked an engineering / science track.",
+            side_effect=_set_vocation("stem"),
+        ),
+        EventChoice(
+            key="education",
+            label="Education — teacher, professor",
+            deltas={"wisdom": +2, "conscience": +1},
+            summary="You're going to study education and become a teacher.",
+            side_effect=_set_vocation("education"),
+        ),
+        EventChoice(
+            key="government",
+            label="Law & Public Service",
+            deltas={"intelligence": +1, "conscience": +2},
+            summary="You declared a pre-law / public administration major.",
+            side_effect=_set_vocation("government"),
+        ),
+        EventChoice(
+            key="business",
+            label="Business & Management",
+            deltas={"intelligence": +1, "wisdom": +1},
+            summary="You picked business as your major.",
+            side_effect=_set_vocation("business"),
+        ),
+        EventChoice(
+            key="arts",
+            label="Arts & Humanities",
+            deltas={"artistic": +3, "wisdom": +2},
+            summary="You picked an arts and humanities major.",
+            side_effect=_set_vocation("arts"),
+        ),
+    ],
+)
+
+
+VOCATIONAL_TRACK = _choice(
+    key="vocational_track",
+    title="Pick your trade",
+    category="education",
+    description=(
+        "You're starting vocational training. Time to pick a trade — your "
+        "specialization decides which kind of skilled work you'll do for "
+        "the rest of your career."
+    ),
+    when=lambda c, co: (
+        c.age == 18
+        and c.education == EducationLevel.VOCATIONAL
+        and c.vocation_field is None
+    ),
+    chance=lambda c, co: 1.0,
+    choices=[
+        EventChoice(
+            key="trades",
+            label="Skilled Trades — electrician, carpenter, mechanic",
+            deltas={"strength": +2, "endurance": +1},
+            summary="You started apprenticing in a skilled trade.",
+            side_effect=_set_vocation("trades"),
+        ),
+        EventChoice(
+            key="industrial",
+            label="Industrial — plant operator",
+            deltas={"strength": +1, "endurance": +2},
+            summary="You enrolled in industrial operations training.",
+            side_effect=_set_vocation("industrial"),
+        ),
+        EventChoice(
+            key="medical",
+            label="Healthcare — nursing, lab tech",
+            deltas={"intelligence": +1, "conscience": +2},
+            summary="You enrolled in a healthcare technician program.",
+            side_effect=_set_vocation("medical"),
+        ),
+        EventChoice(
+            key="police",
+            label="Police & Security",
+            deltas={"strength": +2, "conscience": +1},
+            summary="You enrolled at the police academy.",
+            side_effect=_set_vocation("police"),
+        ),
+        EventChoice(
+            key="business",
+            label="Business — sales, clerical",
+            deltas={"intelligence": +1, "wisdom": +1},
+            summary="You enrolled in a business / clerical training program.",
+            side_effect=_set_vocation("business"),
+        ),
+        EventChoice(
+            key="maritime",
+            label="Maritime — sailor, ship's officer",
+            deltas={"strength": +2, "endurance": +2},
+            summary="You signed on as a deckhand to learn the trade.",
+            side_effect=_set_vocation("maritime"),
         ),
     ],
 )
@@ -1151,6 +1285,8 @@ EVENT_REGISTRY: list[Event] = [
     DOWRY_NEGOTIATION,
     BILINGUAL_SCHOOLING,
     EDUCATION_PATH,
+    UNIVERSITY_MAJOR,
+    VOCATIONAL_TRACK,
     LOVE_MARRIAGE,
 ]
 
