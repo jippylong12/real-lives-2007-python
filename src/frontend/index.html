@@ -59,7 +59,8 @@
             <div class="row"><span>Year</span><strong id="stat-year">2007</strong></div>
             <div class="row"><span>Money</span><strong id="stat-money">$0</strong></div>
             <div class="row"><span>Job</span><strong id="stat-job">—</strong>
-              <button id="btn-find-work" class="btn xs">Find work</button>
+              <button id="btn-find-work" class="btn xs hidden">Find work</button>
+              <span id="work-blocked" class="muted hidden" style="font-size:11px;margin-left:6px"></span>
               <button id="btn-quit-job" class="btn xs hidden">Quit</button>
             </div>
           </div>
@@ -174,11 +175,15 @@
       </div>
     </div>
 
-    <!-- Job board modal (#54) — browse and apply for any job. -->
+    <!-- Job board modal (#54, #57, #58) — browse and apply for any job. -->
     <div id="jobboard-modal" class="modal-backdrop hidden">
       <div class="modal-card panel jobboard">
         <div class="jobboard-header">
           <h3>Job board</h3>
+          <label class="jobboard-toggle">
+            <input type="checkbox" id="jobboard-show-all" />
+            Show long shots
+          </label>
           <button id="btn-jobboard-close" class="btn xs">Close</button>
         </div>
         <p id="jobboard-msg" class="muted"></p>

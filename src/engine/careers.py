@@ -302,8 +302,39 @@ def request_raise(
 
 
 # ---------------------------------------------------------------------------
-# Job board: browse + apply (#54)
+# Job board: browse + apply (#54), with life-stage gates (#57)
 # ---------------------------------------------------------------------------
+
+
+def minimum_working_age(country: Country) -> int:
+    """Country-aware minimum age at which a character can take ANY job (#57).
+
+    High-HDI countries enforce school + child-labor laws strictly: 14.
+    Mid-HDI countries: 12. Low-HDI countries (where the binary's
+    'subsistence farmer' / 'scavenger' jobs ship with min_age 5-8):
+    relaxed to 8 to match real-world child labor patterns the original
+    game models.
+    """
+    if country.hdi >= 0.7:
+        return 14
+    if country.hdi >= 0.5:
+        return 12
+    return 8
+
+
+def can_character_work(character: Character, country: Country) -> tuple[bool, str | None]:
+    """Whether the character is currently allowed to look for work.
+    Returns (allowed, reason). The frontend hides the 'Find work' button
+    based on this and shows the reason in its place (#57)."""
+    floor = minimum_working_age(country)
+    if character.age < floor:
+        return False, f"too young (work allowed at {floor}+ in {country.name})"
+    # Characters in basic schooling shouldn't be working full-time. Once
+    # they hit secondary / vocational / university the world opens up,
+    # since the binary's professional jobs assume school overlap.
+    if character.in_school and int(character.education) < int(EducationLevel.SECONDARY):
+        return False, "still in primary school"
+    return True, None
 
 
 @dataclass(frozen=True)
@@ -378,10 +409,22 @@ def _accept_probability(job: Job, character: Character) -> tuple[float, str]:
 def job_listing(character: Character, country: Country) -> list[JobListing]:
     """Return every job in the catalogue annotated with the character's
     eligibility, predicted acceptance probability, and PPP-scaled salary
-    estimate. Used by the frontend's job board (#54)."""
+    estimate. Used by the frontend's job board (#54).
+
+    Returns an empty list if the character isn't allowed to work yet
+    (#57). Within the catalogue, jobs whose min_age is more than 2 years
+    above the character's current age are filtered out — the player
+    can't see "long shot" entries for jobs they're physically too young
+    for, only ones they're close to being able to do.
+    """
+    allowed, _ = can_character_work(character, country)
+    if not allowed:
+        return []
     scale = _scale_for_country(country)
     out: list[JobListing] = []
     for job in all_jobs():
+        if job.min_age > character.age + 2:
+            continue
         chance, status = _accept_probability(job, character)
         midpoint = (job.salary_low + job.salary_high) // 2
         expected_salary = max(100, int(midpoint * scale))

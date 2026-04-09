@@ -90,11 +90,23 @@ def _serialize_game(game: Game) -> dict:
     if country:
         country_dict = _country_dict(country)
         country_dict["binary_facts"] = _binary_facts_summary(country.code)
+
+    char_dict = state.character.to_dict()
+    # Surface the work-eligibility gate (#57) so the frontend can hide
+    # the 'Find work' button without making a separate API call.
+    if country is not None:
+        can_work, blocked_reason = careers.can_character_work(state.character, country)
+        char_dict["can_work"] = can_work
+        char_dict["work_blocked_reason"] = blocked_reason
+    else:
+        char_dict["can_work"] = False
+        char_dict["work_blocked_reason"] = "no country"
+
     return {
         "id": state.id,
         "year": state.year,
         "started_at": state.started_at,
-        "character": state.character.to_dict(),
+        "character": char_dict,
         "country": country_dict,
         "pending_event": state.pending_event,
         "portfolio_value": finances.portfolio_value(state.character),

@@ -126,10 +126,11 @@ async function quitJob() {
   }
 }
 
-// ---------- Job board (#54) ----------
+// ---------- Job board (#54, #57, #58) ----------
 const jobboardState = {
   category: "All",
   listings: [],
+  show_all: false,  // false = hide long_shot + out_of_reach (#58)
 };
 
 async function openJobBoard() {
@@ -178,6 +179,10 @@ function renderJobBoardList() {
   if (jobboardState.category !== "All") {
     listings = listings.filter((l) => l.category === jobboardState.category);
   }
+  // Hide long shots and out-of-reach unless the player toggled them on (#58).
+  if (!jobboardState.show_all) {
+    listings = listings.filter((l) => l.status === "qualified" || l.status === "stretch");
+  }
   // Sort: qualified > stretch > long_shot > out_of_reach, then salary desc.
   const statusOrder = { qualified: 0, stretch: 1, long_shot: 2, out_of_reach: 3 };
   listings = [...listings].sort((a, b) => {
@@ -185,7 +190,11 @@ function renderJobBoardList() {
     return so !== 0 ? so : b.expected_salary - a.expected_salary;
   });
   if (listings.length === 0) {
-    host.innerHTML = '<p class="muted">No jobs in this category.</p>';
+    if (!jobboardState.show_all) {
+      host.innerHTML = '<p class="muted">No realistic options in this category yet — toggle <strong>Show long shots</strong> to see everything.</p>';
+    } else {
+      host.innerHTML = '<p class="muted">No jobs in this category.</p>';
+    }
     return;
   }
   for (const l of listings) {
@@ -411,6 +420,26 @@ function renderGame() {
   $("#stat-edu").textContent = EDU_LABELS[c.education] || "—";
   $("#stat-job").textContent = c.job || "—";
   $("#btn-quit-job").classList.toggle("hidden", !c.job);
+
+  // Find Work button + work-blocked label (#57). Shown only when the
+  // character is old enough + not in primary school.
+  const findBtn = $opt("#btn-find-work");
+  const blocked = $opt("#work-blocked");
+  if (findBtn && blocked) {
+    if (c.can_work) {
+      findBtn.classList.remove("hidden");
+      blocked.classList.add("hidden");
+      blocked.textContent = "";
+    } else {
+      findBtn.classList.add("hidden");
+      if (c.work_blocked_reason) {
+        blocked.classList.remove("hidden");
+        blocked.textContent = c.work_blocked_reason;
+      } else {
+        blocked.classList.add("hidden");
+      }
+    }
+  }
   $("#stat-salary").textContent = c.salary ? fmtMoney(c.salary) + "/yr" : "—";
   $("#stat-money").textContent = fmtMoney(c.money);
   $("#stat-portfolio").textContent = fmtMoney(g.portfolio_value || 0);
@@ -954,6 +983,10 @@ async function init() {
   $("#btn-quit-job").addEventListener("click", quitJob);
   $("#btn-find-work").addEventListener("click", openJobBoard);
   $("#btn-jobboard-close").addEventListener("click", closeJobBoard);
+  $("#jobboard-show-all").addEventListener("change", (e) => {
+    jobboardState.show_all = e.target.checked;
+    renderJobBoardList();
+  });
   log("init: loading countries + finance products");
   await loadCountries();
   await loadFinanceProducts();

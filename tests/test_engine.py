@@ -573,6 +573,70 @@ def test_promote_walks_ladder_with_experience():
     assert char.promotion_count == 1
 
 
+def test_job_board_age_gate_by_country_hdi():
+    """#57: babies / toddlers / young kids in high-HDI countries can't
+    use the job board at all. Low-HDI countries allow earlier work."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+
+    # Sweden: HDI ~0.94, working age 14
+    sweden = get_country("se")
+    char = create_random_character(sweden, rng)
+    for age in (0, 5, 10, 13):
+        char.age = age
+        char.in_school = False  # ignore school for this gate test
+        allowed, reason = careers.can_character_work(char, sweden)
+        assert not allowed, f"age {age} in Sweden should not be allowed"
+        assert "14+" in reason
+    char.age = 14
+    allowed, _ = careers.can_character_work(char, sweden)
+    assert allowed
+
+    # Nigeria: HDI ~0.5, working age 8 (real child labor)
+    nigeria = get_country("ng")
+    char_ng = create_random_character(nigeria, rng)
+    char_ng.in_school = False
+    char_ng.age = 5
+    allowed, _ = careers.can_character_work(char_ng, nigeria)
+    assert not allowed
+    char_ng.age = 8
+    allowed, _ = careers.can_character_work(char_ng, nigeria)
+    assert allowed
+
+
+def test_job_board_in_school_blocks_work():
+    """#57: a primary-school student can't take a job."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 16
+    char.in_school = True
+    char.education = EducationLevel.NONE  # still in primary
+    allowed, reason = careers.can_character_work(char, get_country("us"))
+    assert not allowed
+    assert "school" in reason.lower()
+
+
+def test_job_listing_filters_far_too_young_jobs():
+    """#57: a 14-year-old shouldn't see 'doctor' (min_age 24) in the
+    listings — only jobs near their current age window."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    rng = random.Random(0)
+    # Use Nigeria so the working-age gate clears at 14.
+    country = get_country("ng")
+    char = create_random_character(country, rng)
+    char.age = 14
+    char.in_school = False
+    listings = careers.job_listing(char, country)
+    job_names = {l.job.name for l in listings}
+    assert "doctor" not in job_names  # min_age 24 — too far
+    # The 14-year-old should still see jobs they're close to age-wise.
+    assert any(l.job.min_age <= 16 for l in listings)
+
+
 def test_apply_for_job_qualified_acceptance_high():
     """#54: a fully qualified candidate should accept >70% of the time."""
     from src.engine import careers

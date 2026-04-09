@@ -471,10 +471,18 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 
 /* Job board modal (#54) */
 .jobboard-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 12px;
   margin-bottom: 8px;
 }
-.jobboard-header h3 { margin: 0; }
+.jobboard-header h3 { margin: 0; flex: 1; }
+.jobboard-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  user-select: none;
+}
+.jobboard-toggle input { cursor: pointer; }
 #jobboard-msg { margin: 0 0 8px; min-height: 1.2em; font-size: 13px; }
 #jobboard-msg.good { color: var(--good); }
 .jobboard-tabs { padding: 0 0 12px; flex-wrap: wrap; }
