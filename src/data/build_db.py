@@ -26,6 +26,22 @@ DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "reallives.db"
 
 
+# Binary fields that represent a 0-100 percentage. The 2007 game's data has
+# at least one known data-entry typo (Iran SanitationUrban=189 instead of 89,
+# issue #28); clamp to 100 in the persist path so downstream consumers can
+# trust the values. Counts and rates (PersonsPerTelevision, BirthRate, etc.)
+# are NOT in this set — they can legitimately exceed 100.
+_PERCENTAGE_FIELDS: frozenset[str] = frozenset({
+    "MaleLiteracy", "FemaleLiteracy",
+    "PercentUrban",
+    "SafeWaterUrban", "SafeWaterRural",
+    "SanitationUrban", "SanitationRural",
+    "HealthServicesUrban", "HealthServicesRural",
+    "PrimarySchool", "SecondarySchoolMale", "SecondarySchoolFemale",
+    "TrainedBirth",
+})
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS countries (
     code                    TEXT PRIMARY KEY,
@@ -457,6 +473,10 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 elif isinstance(val, (int, float)):
                     value_text = None
                     value_num = float(val)
+                    # Clamp known-percentage fields against the 2007 binary's
+                    # data-entry errors (Iran SanitationUrban=189, #28).
+                    if fname in _PERCENTAGE_FIELDS and value_num > 100:
+                        value_num = 100.0
                 else:
                     s = str(val).strip("\x00").strip()
                     if not s:

@@ -139,6 +139,44 @@ def test_schema_carries_type_size_offset():
     assert male_life.slot_size == 8
 
 
+def test_percentage_fields_clamped_to_100():
+    """Issue #28: the 2007 binary has at least one known data-entry typo
+    (Iran SanitationUrban=189, almost certainly a '1' prepended to 89).
+    The build_db pipeline clamps known-percentage fields to [0, 100] when
+    persisting to country_binary_field so downstream consumers can trust
+    the values."""
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        # No row in country_binary_field for a percentage field should
+        # exceed 100 after clamping.
+        rows = conn.execute("""
+            SELECT country_code, field_name, value_num
+            FROM country_binary_field
+            WHERE field_name IN (
+                'MaleLiteracy','FemaleLiteracy','PercentUrban',
+                'SafeWaterUrban','SafeWaterRural',
+                'SanitationUrban','SanitationRural',
+                'HealthServicesUrban','HealthServicesRural',
+                'PrimarySchool','SecondarySchoolMale','SecondarySchoolFemale',
+                'TrainedBirth'
+            )
+            AND value_num > 100
+        """).fetchall()
+        assert not rows, f"unclamped percentage values: {[dict(r) for r in rows]}"
+
+        # Iran specifically: SanitationUrban was 189 in the raw binary;
+        # should now be 100 after clamping.
+        row = conn.execute(
+            "SELECT value_num FROM country_binary_field "
+            "WHERE country_code='ir' AND field_name='SanitationUrban'"
+        ).fetchone()
+        assert row is not None
+        assert row["value_num"] == 100.0
+    finally:
+        conn.close()
+
+
 def test_country_binary_field_catch_all_populated():
     """Issue #17: every binary field decoded from world.dat should land in
     country_binary_field, not just the curated handful in
