@@ -416,6 +416,51 @@ def test_job_original_stats_table_populated():
         conn.close()
 
 
+def test_max_age_category_caps_applied():
+    """Issue #84: per-category max_age caps lower the binary's long-tail
+    outliers (cabinet maker 85, traditional medicine practitioner 90,
+    military commander 65) to realistic retirement ages without raising
+    any job's existing tighter cap (youth athlete 22, soldier 55)."""
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        rows = {r["name"]: r["max_age"] for r in conn.execute("SELECT name, max_age FROM jobs")}
+
+        # --- Cap LOWERS the binary's long-tail outliers ---
+        # cabinet maker: binary 85 → trades cap 70
+        assert rows["cabinet maker"] == 70
+        # traditional medicine practitioner: binary 90 → medical cap 75
+        assert rows["traditional medicine practitioner"] == 75
+        # military commander: synthetic-ladder rung was 65 → military cap 55
+        assert rows["military commander"] == 55
+        # senior religious leader: synthetic ladder was 90 → service cap 72
+        assert rows["senior religious leader"] == 72
+
+        # --- Cap is a NO-OP when the binary value is already <= cap ---
+        # soldier is already 55 in the binary; military cap also 55.
+        assert rows["soldier"] == 55
+        # youth athlete is 22 in the synthetic ladder; athletics cap 40 → unchanged.
+        assert rows["youth athlete"] == 22
+        # elite athlete is 38; cap 40 → unchanged.
+        assert rows["elite athlete"] == 38
+
+        # --- Sanity: every job still has a positive max_age and no
+        # category was accidentally lifted above its cap. ---
+        cat_rows = conn.execute(
+            "SELECT name, max_age, category FROM jobs WHERE category IS NOT NULL"
+        ).fetchall()
+        for r in cat_rows:
+            assert r["max_age"] and r["max_age"] > 0, f"{r['name']} has bad max_age"
+            cap = build_db.MAX_AGE_BY_CATEGORY.get(r["category"])
+            if cap is not None:
+                assert r["max_age"] <= cap, (
+                    f"{r['name']} ({r['category']}) max_age {r['max_age']} "
+                    f"exceeds category cap {cap}"
+                )
+    finally:
+        conn.close()
+
+
 def test_type_4_decodes_as_bool_type_5_as_uint16():
     """Issue #20: type 4 fields are boolean flags, type 5 fields are uint16
     counts/percentages. Verify the decoder honors that distinction."""

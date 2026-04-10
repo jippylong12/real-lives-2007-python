@@ -43,6 +43,49 @@ _PERCENTAGE_FIELDS: frozenset[str] = frozenset({
 })
 
 
+# #84: per-category retirement-age ceiling. The binary's jobs.dat ships
+# generous max_age values (cabinet maker = 85, doctor = 80, traditional
+# medicine practitioner = 90) that don't match real-world retirement
+# norms — military around 55, trades around 70, doctors low 70s. After
+# #75 wired auto-retirement to fire when char.age > job.max_age, those
+# loose values mean characters in many roles never actually retire on a
+# believable timeline.
+#
+# Cap-only semantics: ``max_age = min(binary_value, override)``. The
+# override only ever LOWERS a binary value, never raises one — so a job
+# that already has a tighter cap (youth athlete = 22, soldier = 55,
+# entry-level trades) keeps its lower value. We only pull the long-tail
+# outliers down. Applied to BOTH the binary insert loop and the
+# synthetic job ladder loop so every job in the `jobs` table is
+# consistent.
+MAX_AGE_BY_CATEGORY: dict[str, int] = {
+    "military":    55,
+    "police":      60,
+    "athletics":   40,   # binary professional athlete is already 40
+    "trades":      70,
+    "industrial":  65,
+    "maritime":    65,
+    "agriculture": 72,
+    "business":    70,
+    "service":     72,
+    "stem":        72,
+    "education":   72,
+    "government":  72,
+    "medical":     75,
+    "arts":        80,   # writers / painters legitimately work into late life
+}
+
+
+def _cap_max_age(max_age: int, category: str | None) -> int:
+    """Apply the #84 per-category retirement cap. Cap-only — only lowers."""
+    if category is None:
+        return max_age
+    cap = MAX_AGE_BY_CATEGORY.get(category)
+    if cap is None:
+        return max_age
+    return min(max_age, cap)
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS countries (
     code                    TEXT PRIMARY KEY,
@@ -386,6 +429,10 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 urban_only = 1 if ur == "U" else 0
                 rural_only = 1 if ur == "R" else 0
                 category = seed.JOB_CATEGORIES.get(clean_name)
+                # #84: cap max_age at a category-realistic ceiling so
+                # auto-retirement (#75) fires on a believable timeline.
+                # Cap-only — only lowers, never raises.
+                max_age = _cap_max_age(max_age, category)
                 promotes_to = row.get("PromotesTo")
                 if isinstance(promotes_to, str):
                     promotes_to = promotes_to.strip() or None
@@ -452,6 +499,10 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
         # ship (athletics amateur/semi-pro/elite, military officers,
         # religious leaders, arts subdiscipline ladders).
         for sj in seed.SYNTHETIC_JOB_LADDERS:
+            # #84: same per-category cap as the binary loop above so
+            # senior religious leader (90) → 72, military commander
+            # (65) → 55, etc.
+            sj_max_age = _cap_max_age(sj["max_age"], sj["category"])
             conn.execute(
                 """
                 INSERT OR REPLACE INTO jobs (
@@ -462,7 +513,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 """,
                 (
                     sj["name"], sj["min_education"], sj["min_intelligence"],
-                    sj["min_age"], sj["max_age"],
+                    sj["min_age"], sj_max_age,
                     sj["salary_low"], sj["salary_high"],
                     sj["urban_only"], sj["rural_only"],
                     sj["category"], sj["promotes_to"],
