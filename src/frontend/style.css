@@ -1145,6 +1145,227 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
 @keyframes rl-toast-in  { to { transform: translateX(0); opacity: 1; } }
 @keyframes rl-toast-out { to { transform: translateX(12px); opacity: 0; } }
 
+/* =====================================================================
+   Statistics dashboard (#70). Cross-life history aggregated across
+   every completed life ever played on this installation.
+   ===================================================================== */
+
+.statistics-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  margin-bottom: 1.4rem;
+}
+.statistics-header h2 { margin: 0; }
+.statistics-header-actions {
+  display: flex; gap: 6px; align-items: center;
+}
+
+.stats-section-h {
+  margin: 1.8rem 0 0.6rem;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+}
+
+/* ----- Global stats grid: 4-7 small cells across the top ----- */
+.stats-global-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.stats-cell {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.stats-cell-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+}
+.stats-cell-value {
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Milestones: 5 cards in a responsive grid ----- */
+.stats-milestones-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+.milestone-card {
+  padding: 14px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, border-left-color 0.12s ease;
+}
+.milestone-card:hover {
+  background: var(--accent-soft);
+}
+.milestone-card.empty {
+  border-left-color: var(--line);
+  cursor: default;
+}
+.milestone-card.empty:hover { background: var(--bg-elev); }
+.milestone-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  margin-bottom: 4px;
+}
+.milestone-name {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.milestone-meta {
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.milestone-value {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.milestone-empty {
+  font-size: 12px;
+}
+
+/* ----- Per-country sortable table ----- */
+.stats-country-table {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.stats-table thead {
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.stats-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+  padding: 10px 12px;
+}
+.stats-table td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+.stats-table tbody tr:hover { background: var(--bg); }
+
+/* ----- Career + talent bar chart rows ----- */
+.stats-bar-chart {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+.stats-bar-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 180px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+.stats-bar-label {
+  font-weight: 500;
+  color: var(--ink);
+  text-transform: capitalize;
+}
+.stats-bar-track {
+  height: 8px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.stats-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.stats-bar-fill.talent {
+  background: var(--good);
+}
+.stats-bar-meta {
+  text-align: right;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+/* ----- Past lives list ----- */
+.stats-lives-list {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.past-life-row {
+  padding: 10px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.past-life-row:hover { background: var(--accent-soft); }
+.pl-name {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+.pl-meta {
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+.pl-cause {
+  font-size: 11px;
+  font-style: italic;
+  margin-top: 2px;
+}
+.stats-lives-pager {
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Death actions row to fit the new "Back to statistics" button */
+#death-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
 /* ---------- Mobile ---------- */
 @media (max-width: 900px) {
   .game { grid-template-columns: 1fr; }

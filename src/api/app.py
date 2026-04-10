@@ -21,10 +21,11 @@ static files. There is no build step.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -316,6 +317,17 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # #70: replay the life_archive JSONL sidecar at startup so a wiped
+    # or rebuilt DB auto-restores from the durability layer. Best
+    # effort — log and continue if anything goes wrong.
+    try:
+        from ..engine import statistics as _stats
+        n_restored = _stats.restore_jsonl_into_db()
+        if n_restored:
+            print(f"[life_archive] restored {n_restored} row(s) from JSONL sidecar")
+    except Exception as e:
+        print(f"[life_archive] sidecar replay failed: {e}")
 
     # ---- API routes ----
     @app.get("/api/health")
@@ -784,6 +796,79 @@ def create_app() -> FastAPI:
             "turn": _turn_dict(result),
             "game": _serialize_game(game),
         }
+
+    # ---- Cross-life statistics dashboard (#70) ----
+    from ..engine import statistics
+
+    @app.get("/api/statistics/global")
+    def stats_global():
+        """Top-line aggregates across the whole life archive."""
+        return statistics.global_stats()
+
+    @app.get("/api/statistics/by_country")
+    def stats_by_country():
+        """One row per country with at least one archived life."""
+        return statistics.per_country_stats()
+
+    @app.get("/api/statistics/by_career")
+    def stats_by_career():
+        """Top final jobs by occurrence with avg lifespan + earnings."""
+        return statistics.career_stats()
+
+    @app.get("/api/statistics/talents")
+    def stats_talents():
+        """Per-attribute talent counts (lives that reached peak >= 75)."""
+        return statistics.talent_stats()
+
+    @app.get("/api/statistics/milestones")
+    def stats_milestones():
+        """Best-of cards: oldest, wealthiest, most decorated, etc."""
+        return statistics.milestones()
+
+    @app.get("/api/statistics/lives")
+    def stats_lives(limit: int = 50, offset: int = 0):
+        """Paginated list of archived lives. Each entry is a small
+        summary; click through fetches the full snapshot via
+        /api/statistics/lives/{id}."""
+        return statistics.list_lives(limit=limit, offset=offset)
+
+    @app.get("/api/statistics/lives/{archive_id}")
+    def stats_one_life(archive_id: str):
+        """Full character snapshot for one archived life — same shape
+        as /api/game/{id} so the past-life retrospective rehydrates
+        through the existing showDeathScreen rendering."""
+        snapshot = statistics.get_life(archive_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="archived life not found")
+        return snapshot
+
+    @app.get("/api/statistics/export")
+    def stats_export():
+        """Download the entire life archive as a JSON file. The user
+        can keep this as an off-site backup; reimport via /import."""
+        body = statistics.export_archive()
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="life_archive_'
+                    f'{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json"'
+                ),
+            },
+        )
+
+    @app.post("/api/statistics/import")
+    async def stats_import(req: Request):
+        """Merge an exported archive JSON into the current DB.
+        Idempotent on id — rows already present are skipped. Returns
+        {imported, skipped, total}."""
+        try:
+            body_bytes = await req.body()
+            payload_str = body_bytes.decode("utf-8")
+            return statistics.import_archive(payload_str)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     # ---- Static assets ----
     if FLAGS_DIR.exists():

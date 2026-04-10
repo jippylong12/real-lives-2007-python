@@ -11,4 +11,6 @@ build/
 
 # Built on first run from seed data — don't commit.
 data/reallives.db
+# #70: cross-life statistics archive JSONL sidecar — per-machine runtime data.
+data/life_archive.jsonl
 .pytest_cache/

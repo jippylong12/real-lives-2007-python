@@ -416,6 +416,28 @@ def test_job_original_stats_table_populated():
         conn.close()
 
 
+def test_life_archive_table_exists_after_build():
+    """#70: the life_archive table should be created by build_db so
+    the cross-life statistics dashboard has somewhere to write to."""
+    build_db.build()
+    conn = build_db.get_connection()
+    try:
+        tables = {r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        assert "life_archive" in tables
+        # Sanity-check the schema has the columns the engine writes to.
+        cols = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(life_archive)"
+        ).fetchall()}
+        for required in ("id", "name", "country_code", "age_at_death",
+                         "cause_of_death", "lifetime_earnings",
+                         "peak_intelligence", "snapshot_json"):
+            assert required in cols, f"life_archive missing column: {required}"
+    finally:
+        conn.close()
+
+
 def test_max_age_category_caps_applied():
     """Issue #84: per-category max_age caps lower the binary's long-tail
     outliers (cabinet maker 85, traditional medicine practitioner 90,

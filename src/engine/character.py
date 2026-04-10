@@ -202,6 +202,16 @@ class Character:
     # could fire 10 years in a row and milestone events like baptism
     # could fire twice.
     event_history: dict[str, list[int]] = field(default_factory=dict)
+    # Cross-life statistics accumulators (#70). lifetime_earnings sums
+    # every year's positive net income; peak_net_worth tracks the
+    # highest (cash + portfolio - debt) the character ever reached;
+    # peak_attributes maps attribute name → max value reached during
+    # the run. These power the per-life archive row written on death
+    # so the dashboard can show talents that grew rather than just
+    # final (often degraded by old age) values.
+    lifetime_earnings: int = 0
+    peak_net_worth: int = 0
+    peak_attributes: dict[str, int] = field(default_factory=dict)
 
     @property
     def life_stage(self) -> LifeStage:
@@ -256,6 +266,9 @@ class Character:
             "purchases": [dict(p) for p in self.purchases],
             "last_treatment": dict(self.last_treatment),
             "event_history": {k: list(v) for k, v in self.event_history.items()},
+            "lifetime_earnings": self.lifetime_earnings,
+            "peak_net_worth": self.peak_net_worth,
+            "peak_attributes": dict(self.peak_attributes),
         }
         return d
 
@@ -303,6 +316,9 @@ class Character:
             purchases=d.get("purchases", []),
             last_treatment=d.get("last_treatment", {}),
             event_history={k: list(v) for k, v in d.get("event_history", {}).items()},
+            lifetime_earnings=d.get("lifetime_earnings", 0),
+            peak_net_worth=d.get("peak_net_worth", 0),
+            peak_attributes=dict(d.get("peak_attributes", {})),
         )
 
 

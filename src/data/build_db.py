@@ -265,6 +265,50 @@ CREATE TABLE IF NOT EXISTS games (
     slot        INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_games_slot ON games(slot);
+
+-- Cross-life statistics archive (#70). Every completed life writes a
+-- row here on death — used by the statistics dashboard to aggregate
+-- across all the lives a player has ever played. The full character
+-- snapshot is stashed in snapshot_json so the past-life retrospective
+-- can rehydrate it without a separate save format.
+--
+-- Robustness layer: every insert is also appended to a JSONL sidecar
+-- at data/life_archive.jsonl. Server startup replays the sidecar so
+-- a wiped DB auto-restores from the file (#70).
+CREATE TABLE IF NOT EXISTS life_archive (
+    id                  TEXT PRIMARY KEY,         -- the originating game.id
+    archived_at         TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    gender              INTEGER NOT NULL,
+    country_code        TEXT NOT NULL,
+    country_name        TEXT NOT NULL,
+    born_year           INTEGER NOT NULL,
+    died_year           INTEGER NOT NULL,
+    age_at_death        INTEGER NOT NULL,
+    cause_of_death      TEXT,
+    final_job           TEXT,
+    final_salary        INTEGER NOT NULL DEFAULT 0,
+    lifetime_earnings   INTEGER NOT NULL DEFAULT 0,
+    peak_net_worth      INTEGER NOT NULL DEFAULT 0,
+    education           INTEGER NOT NULL DEFAULT 0,
+    married             INTEGER NOT NULL DEFAULT 0,
+    children_count      INTEGER NOT NULL DEFAULT 0,
+    diseases_count      INTEGER NOT NULL DEFAULT 0,
+    promotion_count     INTEGER NOT NULL DEFAULT 0,
+    -- Peak attributes for talent retrospective. Tracking the maximum
+    -- value any attribute reached during life lets the dashboard show
+    -- talents that grew rather than the (often degraded) final value.
+    peak_intelligence   INTEGER, peak_artistic INTEGER, peak_musical INTEGER,
+    peak_athletic       INTEGER, peak_strength INTEGER, peak_endurance INTEGER,
+    peak_appearance     INTEGER, peak_conscience INTEGER, peak_wisdom INTEGER,
+    peak_resistance     INTEGER,
+    -- Full character snapshot for the "view past life" retrospective.
+    -- Same shape as the running game's character.to_dict() so the
+    -- frontend rehydrates with the existing showDeathScreen render.
+    snapshot_json       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_life_archive_country ON life_archive(country_code);
+CREATE INDEX IF NOT EXISTS idx_life_archive_died_year ON life_archive(died_year);
 """
 
 

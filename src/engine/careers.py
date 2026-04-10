@@ -912,4 +912,9 @@ def yearly_income(character: Character, country: Country, rng: random.Random) ->
         character._pending_subscription_log = records  # type: ignore[attr-defined]
 
     character.money += net
+    # #70: lifetime earnings tracker for the cross-life statistics
+    # archive. Only positive net years count — "money brought in
+    # across all working years", not "current net cash position".
+    if net > 0:
+        character.lifetime_earnings += net
     return net

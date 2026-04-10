@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import careers, death, diseases, education, events, finances, relationships
+from . import careers, death, diseases, education, events, finances, relationships, statistics
 from .character import Character, EducationLevel, create_random_character
 from .world import Country, all_countries, get_country, random_country
 from ..data.build_db import get_connection
@@ -348,7 +348,22 @@ class Game:
                 regen *= 2
             char.attributes.adjust(health=+regen)
 
-        # 10. Death roll — first from active high-lethality diseases, then
+        # 10. Cross-life statistics tracking (#70). Update peak net
+        # worth and peak attributes once per year. Done before the
+        # death roll so a character who dies this year still has
+        # their final-year peaks recorded.
+        portfolio = finances.portfolio_value(char)
+        net_worth_now = char.money + portfolio - char.debt
+        if net_worth_now > char.peak_net_worth:
+            char.peak_net_worth = net_worth_now
+        for _attr in ("intelligence", "artistic", "musical", "athletic",
+                      "strength", "endurance", "appearance", "conscience",
+                      "wisdom", "resistance"):
+            _val = getattr(char.attributes, _attr, 0)
+            if _val > char.peak_attributes.get(_attr, 0):
+                char.peak_attributes[_attr] = _val
+
+        # 11. Death roll — first from active high-lethality diseases, then
         # from the generic age/health curve.
         disease_cause = diseases.disease_kill_check(char, country, self.rng)
         if disease_cause:
@@ -357,6 +372,7 @@ class Game:
             char.remember(f"Died of {disease_cause}.")
             log.append(TurnEvent("death", "Death", "life",
                                  f"You died at age {char.age}. Cause: {disease_cause}."))
+            statistics.write_archive_row(self.state)  # #70
             self._checkpoint_rng()
             return TurnResult(self.state.year, char.age, log,
                               self.state.pending_event, True, disease_cause)
@@ -367,6 +383,7 @@ class Game:
             char.remember(f"Died of {cause}.")
             log.append(TurnEvent("death", "Death", "life",
                                  f"You died at age {char.age}. Cause: {cause}."))
+            statistics.write_archive_row(self.state)  # #70
         char.attributes.clamp()
         self._checkpoint_rng()
         return TurnResult(self.state.year, char.age, log,

@@ -237,6 +237,149 @@ def test_slice_of_life_events_capped_per_year():
         )
 
 
+def test_lifetime_earnings_accumulates_across_years():
+    """#70: every positive net income year adds to character.lifetime_earnings."""
+    from src.engine import careers
+    from src.engine.character import create_random_character
+    from src.engine.world import get_country
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.in_school = False
+    char.education = 4
+    char.attributes.intelligence = 70
+    char.age = 25
+    # Salary needs to exceed the US cost-of-living baseline
+    # (~$45k from #82) for the net to be positive.
+    char.salary = 120_000
+    char.job = "office worker"
+
+    starting = char.lifetime_earnings
+    for _ in range(5):
+        careers.yearly_income(char, country, rng)
+    # Should have accumulated some earnings (positive net years).
+    assert char.lifetime_earnings > starting
+
+
+def test_peak_attributes_track_max():
+    """#70: char.peak_attributes records the highest value any
+    attribute reached during the run."""
+    from src.engine import Game
+    g = Game.new(country_code="us", seed=42)
+    char = g.state.character
+    char.attributes.intelligence = 80
+    g.advance_year()
+    assert char.peak_attributes.get("intelligence", 0) >= 80
+    char.attributes.intelligence = 30  # later regression doesn't lower the peak
+    g.advance_year()
+    assert char.peak_attributes.get("intelligence", 0) >= 80
+
+
+def test_life_archive_written_on_death():
+    """#70: when a character dies, statistics.write_archive_row is
+    called and a row appears in the life_archive table."""
+    from src.engine import Game
+    from src.data.build_db import get_connection
+    g = Game.new(country_code="us", seed=99)
+    # Force the character into a near-death state and let advance_year
+    # roll the kill_check.
+    g.state.character.age = 95
+    g.state.character.attributes.health = 5
+    # Run several ticks; old + sick = high death probability.
+    for _ in range(15):
+        if not g.state.character.alive:
+            break
+        g.advance_year()
+    assert not g.state.character.alive, "test setup failed: character didn't die"
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, name, age_at_death, cause_of_death FROM life_archive WHERE id = ?",
+            (g.state.id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, "no life_archive row written on death"
+    assert row["age_at_death"] == g.state.character.age
+    assert row["cause_of_death"] == g.state.character.cause_of_death
+
+
+def test_life_archive_jsonl_round_trip_after_db_wipe():
+    """#70: the JSONL sidecar can rehydrate the life_archive table
+    after the DB is wiped — the durability layer that protects
+    against accidental DB rebuilds."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    # Force a death to create at least one row + sidecar entry.
+    g = Game.new(country_code="us", seed=77)
+    g.state.character.age = 95
+    g.state.character.attributes.health = 5
+    for _ in range(15):
+        if not g.state.character.alive:
+            break
+        g.advance_year()
+    assert not g.state.character.alive
+
+    # Wipe the DB table
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive WHERE id = ?", (g.state.id,))
+        conn.commit()
+        n_after_wipe = conn.execute(
+            "SELECT COUNT(*) FROM life_archive WHERE id = ?", (g.state.id,)
+        ).fetchone()[0]
+        assert n_after_wipe == 0
+    finally:
+        conn.close()
+
+    # Replay JSONL — the row should come back.
+    statistics.restore_jsonl_into_db()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM life_archive WHERE id = ?", (g.state.id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, "JSONL replay didn't restore the wiped row"
+
+
+def test_export_import_archive_round_trip():
+    """#70: export → import is idempotent on id."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    # Make sure there's at least one row to export.
+    g = Game.new(country_code="us", seed=11)
+    g.state.character.age = 95
+    g.state.character.attributes.health = 5
+    for _ in range(15):
+        if not g.state.character.alive:
+            break
+        g.advance_year()
+    assert not g.state.character.alive
+
+    payload = statistics.export_archive()
+    assert g.state.id in payload  # the id appears in the dump
+
+    # Import the same payload — should skip everything (already present).
+    result = statistics.import_archive(payload)
+    assert result["imported"] == 0
+    assert result["skipped"] >= 1
+
+    # Drop one specific row, import again, that one should come back.
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive WHERE id = ?", (g.state.id,))
+        conn.commit()
+    finally:
+        conn.close()
+    result = statistics.import_archive(payload)
+    assert result["imported"] == 1
+
+
 def test_event_variety_per_life_meaningfully_higher_than_baseline():
     """#52: simulate a handful of lives and assert the average distinct
     event count per life is meaningfully higher than the pre-#52

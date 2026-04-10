@@ -17,6 +17,7 @@
       </div>
       <div class="topbar-actions" id="topbar-actions">
         <span id="save-indicator" class="save-indicator">Saved</span>
+        <button id="btn-statistics" class="btn">Statistics</button>
         <button id="btn-new" class="btn primary">Slot picker</button>
       </div>
     </header>
@@ -189,7 +190,47 @@
         <h3 class="death-section-h">Life timeline</h3>
         <ol id="death-timeline" class="timeline"></ol>
 
-        <button id="btn-restart" class="btn primary lg">Live a new life</button>
+        <div id="death-actions">
+          <button id="btn-restart" class="btn primary lg">Live a new life</button>
+          <!-- Visible when viewing an archived life from the statistics
+               screen (#70). Wired up by viewArchivedLife(). -->
+          <button id="btn-back-to-stats" class="btn lg hidden">Back to statistics</button>
+        </div>
+      </section>
+
+      <!-- Statistics dashboard (#70). Cross-life history aggregated
+           across every completed life ever played on this installation. -->
+      <section id="screen-statistics" class="screen panel statistics hidden">
+        <div class="statistics-header">
+          <h2>Statistics</h2>
+          <div class="statistics-header-actions">
+            <a id="stats-export-link" class="btn xs" href="/api/statistics/export" download>Export archive</a>
+            <button id="stats-import-btn" class="btn xs">Import archive</button>
+            <input id="stats-import-input" type="file" accept="application/json" hidden />
+            <button id="btn-stats-back" class="btn xs">Close</button>
+          </div>
+        </div>
+
+        <div id="stats-empty" class="muted hidden">No completed lives yet — finish a life to start populating the archive.</div>
+
+        <h3 class="stats-section-h">Overview</h3>
+        <div id="stats-global" class="stats-global-grid"></div>
+
+        <h3 class="stats-section-h">Best of</h3>
+        <div id="stats-milestones" class="stats-milestones-grid"></div>
+
+        <h3 class="stats-section-h">By country</h3>
+        <div id="stats-country" class="stats-country-table"></div>
+
+        <h3 class="stats-section-h">By career</h3>
+        <div id="stats-career" class="stats-bar-chart"></div>
+
+        <h3 class="stats-section-h">Talents</h3>
+        <div id="stats-talents" class="stats-bar-chart"></div>
+
+        <h3 class="stats-section-h">Past lives</h3>
+        <div id="stats-lives" class="stats-lives-list"></div>
+        <div id="stats-lives-pager" class="stats-lives-pager"></div>
       </section>
 
     </main>

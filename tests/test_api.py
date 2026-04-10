@@ -297,6 +297,82 @@ def test_invest_validation_insufficient_funds(client):
     assert r.status_code == 400
 
 
+def test_statistics_endpoints_return_expected_shape(client):
+    """#70: every /api/statistics/* endpoint returns 200 with the
+    expected JSON shape, even with an empty archive."""
+    from src.data.build_db import get_connection
+    # Wipe the archive so we start from a known state.
+    conn = get_connection()
+    conn.execute("DELETE FROM life_archive")
+    conn.commit()
+    conn.close()
+
+    r = client.get("/api/statistics/global")
+    assert r.status_code == 200
+    g = r.json()
+    for key in ("total_lives", "distinct_countries", "avg_lifespan",
+                "longest_lifespan", "total_lifetime_earnings",
+                "total_marriages", "total_children"):
+        assert key in g
+
+    r = client.get("/api/statistics/by_country")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+    r = client.get("/api/statistics/by_career")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+    r = client.get("/api/statistics/talents")
+    assert r.status_code == 200
+    talents = r.json()
+    for attr in ("intelligence", "wisdom", "athletic"):
+        assert attr in talents
+
+    r = client.get("/api/statistics/milestones")
+    assert r.status_code == 200
+    m = r.json()
+    for key in ("oldest", "wealthiest", "most_decorated",
+                "most_diseases_survived", "most_children"):
+        assert key in m  # value can be None on empty archive
+
+    r = client.get("/api/statistics/lives?limit=10")
+    assert r.status_code == 200
+    payload = r.json()
+    assert "total" in payload and "lives" in payload
+    assert isinstance(payload["lives"], list)
+
+
+def test_statistics_export_import_round_trip(client):
+    """#70: export → import via the API endpoints is idempotent."""
+    from src.engine import statistics
+    from src.engine.game import Game
+    # Create a known dead character so the archive has something.
+    g = Game.new(country_code="us", seed=33)
+    g.state.character.age = 95
+    g.state.character.attributes.health = 5
+    for _ in range(15):
+        if not g.state.character.alive:
+            break
+        g.advance_year()
+    assert not g.state.character.alive
+
+    # Export
+    r = client.get("/api/statistics/export")
+    assert r.status_code == 200
+    body = r.content.decode("utf-8")
+    assert g.state.id in body
+
+    # Import the same payload — should skip
+    r = client.post("/api/statistics/import",
+                    headers={"Content-Type": "application/json"},
+                    content=body)
+    assert r.status_code == 200
+    result = r.json()
+    assert result["imported"] == 0
+    assert result["skipped"] >= 1
+
+
 def test_self_employment_kinds_in_job_board_and_career_payload(client):
     """#83: the new modern self-employment kinds appear on the job
     board with is_freelance=True, and an applied freelance job

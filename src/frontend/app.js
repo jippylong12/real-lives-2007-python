@@ -1077,12 +1077,14 @@ async function decide(choiceKey) {
 function showGameScreen() {
   $("#screen-start").classList.add("hidden");
   $("#screen-death").classList.add("hidden");
+  $("#screen-statistics").classList.add("hidden");
   $("#screen-game").classList.remove("hidden");
 }
 
 async function showStartScreen() {
   $("#screen-game").classList.add("hidden");
   $("#screen-death").classList.add("hidden");
+  $("#screen-statistics").classList.add("hidden");
   $("#screen-start").classList.remove("hidden");
   // Always return to the slot picker view first; never leave the
   // user staring at a country grid when they came back from a life.
@@ -1096,6 +1098,7 @@ async function showStartScreen() {
 
 function showDeathScreen(turn) {
   $("#screen-game").classList.add("hidden");
+  $("#screen-statistics").classList.add("hidden");
   $("#screen-death").classList.remove("hidden");
   const c = state.game.character;
   const co = state.game.country;
@@ -1151,6 +1154,234 @@ function showDeathScreen(turn) {
     const li = document.createElement("li");
     li.textContent = line;
     tl.appendChild(li);
+  }
+}
+
+// =====================================================================
+// Cross-life statistics dashboard (#70)
+// =====================================================================
+
+// Tracks whether the current death screen is showing a live death or
+// an archived life from the past-lives browser. When set, the death
+// screen's "Back to statistics" button is visible and clicking
+// "Live a new life" routes back to statistics instead.
+let _viewingArchivedLife = false;
+
+async function showStatisticsScreen() {
+  log("showStatisticsScreen");
+  $("#screen-start").classList.add("hidden");
+  $("#screen-game").classList.add("hidden");
+  $("#screen-death").classList.add("hidden");
+  $("#screen-statistics").classList.remove("hidden");
+  await loadStatistics();
+}
+
+async function loadStatistics() {
+  try {
+    const [globalStats, byCountry, byCareer, talents, milestones, lives] = await Promise.all([
+      api("/api/statistics/global"),
+      api("/api/statistics/by_country"),
+      api("/api/statistics/by_career"),
+      api("/api/statistics/talents"),
+      api("/api/statistics/milestones"),
+      api("/api/statistics/lives?limit=50"),
+    ]);
+    if (globalStats.total_lives === 0) {
+      $("#stats-empty").classList.remove("hidden");
+    } else {
+      $("#stats-empty").classList.add("hidden");
+    }
+    renderGlobalCard(globalStats);
+    renderMilestones(milestones);
+    renderCountryTable(byCountry);
+    renderCareerChart(byCareer);
+    renderTalents(talents);
+    renderPastLivesList(lives);
+  } catch (e) {
+    logErr("loadStatistics failed", e);
+    showToast(`Couldn't load statistics: ${e.message}`, { kind: "error" });
+  }
+}
+
+function renderGlobalCard(s) {
+  const host = $("#stats-global");
+  const cells = [
+    ["Total lives", s.total_lives],
+    ["Distinct countries", s.distinct_countries],
+    ["Average lifespan", s.avg_lifespan ? `${s.avg_lifespan} yrs` : "—"],
+    ["Longest life", s.longest_lifespan ? `${s.longest_lifespan} yrs` : "—"],
+    ["Lifetime earnings", fmtMoney(s.total_lifetime_earnings || 0)],
+    ["Total marriages", s.total_marriages],
+    ["Total children", s.total_children],
+  ];
+  host.innerHTML = cells.map(([k, v]) =>
+    `<div class="stats-cell"><span class="stats-cell-label">${escapeHtml(k)}</span><strong class="stats-cell-value">${escapeHtml(String(v))}</strong></div>`
+  ).join("");
+}
+
+function renderMilestones(m) {
+  const host = $("#stats-milestones");
+  const cards = [
+    ["Oldest", m.oldest, (r) => `${r.age_at_death} years old`],
+    ["Wealthiest", m.wealthiest, (r) => `${fmtMoney(r.lifetime_earnings)} lifetime`],
+    ["Most decorated", m.most_decorated, (r) => `${r.promotion_count} promotions`],
+    ["Most diseases survived", m.most_diseases_survived, (r) => `${r.diseases_count} diseases`],
+    ["Most children", m.most_children, (r) => `${r.children_count} children`],
+  ];
+  host.innerHTML = cards.map(([title, row, fmt]) => {
+    if (!row) {
+      return `<div class="milestone-card empty"><div class="milestone-title">${title}</div><div class="milestone-empty muted">no lives yet</div></div>`;
+    }
+    return `
+      <div class="milestone-card" data-archive-id="${escapeHtml(row.id)}">
+        <div class="milestone-title">${title}</div>
+        <div class="milestone-name">${escapeHtml(row.name)}</div>
+        <div class="milestone-meta">${escapeHtml(row.country_name)}</div>
+        <div class="milestone-value">${fmt(row)}</div>
+      </div>`;
+  }).join("");
+  // Click any milestone card to view that life's retrospective.
+  host.querySelectorAll("[data-archive-id]").forEach((el) => {
+    el.onclick = () => viewArchivedLife(el.dataset.archiveId);
+  });
+}
+
+function renderCountryTable(rows) {
+  const host = $("#stats-country");
+  if (!rows || rows.length === 0) {
+    host.innerHTML = '<p class="muted">No data yet.</p>';
+    return;
+  }
+  const headers = ["Country", "Lives", "Avg lifespan", "Longest", "Highest earned", "Top job", "Top cause"];
+  const headerRow = headers.map((h) => `<th>${h}</th>`).join("");
+  const bodyRows = rows.map((r) => `
+    <tr>
+      <td><strong>${escapeHtml(r.country_name)}</strong></td>
+      <td>${r.n_lives}</td>
+      <td>${r.avg_lifespan} yrs</td>
+      <td>${r.longest_lived} yrs</td>
+      <td>${fmtMoney(r.highest_earning || 0)}</td>
+      <td>${escapeHtml(r.top_job || "—")}</td>
+      <td>${escapeHtml(r.top_cause || "—")}</td>
+    </tr>
+  `).join("");
+  host.innerHTML = `<table class="stats-table"><thead><tr>${headerRow}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+}
+
+function renderCareerChart(rows) {
+  const host = $("#stats-career");
+  if (!rows || rows.length === 0) {
+    host.innerHTML = '<p class="muted">No data yet.</p>';
+    return;
+  }
+  const max = Math.max(...rows.map((r) => r.n_lives), 1);
+  host.innerHTML = rows.map((r) => {
+    const pct = Math.round(100 * r.n_lives / max);
+    return `
+      <div class="stats-bar-row">
+        <div class="stats-bar-label">${escapeHtml(r.job)}</div>
+        <div class="stats-bar-track">
+          <div class="stats-bar-fill" style="width: ${pct}%"></div>
+        </div>
+        <div class="stats-bar-meta">${r.n_lives} · ${fmtMoney(r.avg_earnings)} avg</div>
+      </div>`;
+  }).join("");
+}
+
+function renderTalents(t) {
+  const host = $("#stats-talents");
+  const attrs = ["intelligence", "artistic", "musical", "athletic", "strength", "endurance", "appearance", "conscience", "wisdom", "resistance"];
+  const max = Math.max(...attrs.map((a) => (t[a] && t[a].talented_count) || 0), 1);
+  host.innerHTML = attrs.map((a) => {
+    const stat = t[a] || { talented_count: 0, average_peak: 0 };
+    const pct = Math.round(100 * stat.talented_count / max);
+    return `
+      <div class="stats-bar-row">
+        <div class="stats-bar-label">${a}</div>
+        <div class="stats-bar-track">
+          <div class="stats-bar-fill talent" style="width: ${pct}%"></div>
+        </div>
+        <div class="stats-bar-meta">${stat.talented_count} talented · avg peak ${stat.average_peak}</div>
+      </div>`;
+  }).join("");
+}
+
+function renderPastLivesList(payload) {
+  const host = $("#stats-lives");
+  const lives = payload.lives || [];
+  if (lives.length === 0) {
+    host.innerHTML = '<p class="muted">No archived lives yet.</p>';
+    $("#stats-lives-pager").innerHTML = "";
+    return;
+  }
+  host.innerHTML = lives.map((l) => `
+    <div class="past-life-row" data-archive-id="${escapeHtml(l.id)}">
+      <div class="pl-name">${escapeHtml(l.name)}</div>
+      <div class="pl-meta">
+        <span>${escapeHtml(l.country_name)}</span> ·
+        <span>${l.born_year}-${l.died_year}</span> ·
+        <span>${l.age_at_death} yrs</span> ·
+        <span>${escapeHtml(l.final_job || "—")}</span>
+      </div>
+      <div class="pl-cause muted">${escapeHtml(l.cause_of_death || "—")}</div>
+    </div>
+  `).join("");
+  host.querySelectorAll("[data-archive-id]").forEach((el) => {
+    el.onclick = () => viewArchivedLife(el.dataset.archiveId);
+  });
+  // Simple pagination footer (just the count for now — filters are #88).
+  $("#stats-lives-pager").innerHTML = `<span class="muted">Showing ${lives.length} of ${payload.total} total lives</span>`;
+}
+
+async function viewArchivedLife(archiveId) {
+  log(`viewArchivedLife(${archiveId})`);
+  try {
+    const snapshot = await api(`/api/statistics/lives/${archiveId}`);
+    // Hydrate the snapshot into the same shape state.game expects so
+    // showDeathScreen can render it without a separate code path.
+    state.game = snapshot;
+    _viewingArchivedLife = true;
+    $("#btn-back-to-stats").classList.remove("hidden");
+    showDeathScreen({
+      cause_of_death: snapshot.character?.cause_of_death || "—",
+    });
+  } catch (e) {
+    logErr("viewArchivedLife failed", e);
+    showToast(`Couldn't load that life: ${e.message}`, { kind: "error" });
+  }
+}
+
+async function exportArchive() {
+  // Browser handles the actual download via the <a href download> link
+  // — this function only exists if we ever need a programmatic path.
+}
+
+function importArchive() {
+  $("#stats-import-input").click();
+}
+
+async function handleArchiveImport(file) {
+  log(`importing archive from ${file.name}`);
+  try {
+    const text = await file.text();
+    const r = await fetch("/api/statistics/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: text,
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      throw new Error(`${r.status}: ${msg}`);
+    }
+    const result = await r.json();
+    showToast(
+      `Imported ${result.imported} new live${result.imported === 1 ? "" : "s"} (${result.skipped} skipped)`,
+      { kind: "success" },
+    );
+    await loadStatistics();
+  } catch (e) {
+    logErr("import failed", e);
+    showToast(`Import failed: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -1904,7 +2135,18 @@ async function init() {
   $("#btn-advance").addEventListener("click", advanceYear);
   $("#start-random").addEventListener("click", () => newGame(null));
   $("#btn-new").addEventListener("click", () => showStartScreen());
-  $("#btn-restart").addEventListener("click", () => showStartScreen());
+  $("#btn-restart").addEventListener("click", () => {
+    // If we're viewing an archived life, "Live a new life" routes
+    // back to the statistics screen instead of bouncing to the slot
+    // picker — that'd be confusing and lose the player's place.
+    if (_viewingArchivedLife) {
+      _viewingArchivedLife = false;
+      $("#btn-back-to-stats").classList.add("hidden");
+      showStatisticsScreen();
+    } else {
+      showStartScreen();
+    }
+  });
   $("#btn-back-to-slots").addEventListener("click", backToSlotPicker);
   $("#btn-quit-job").addEventListener("click", quitJob);
   $("#btn-drop-out").addEventListener("click", dropOutOfSchool);
@@ -1913,6 +2155,28 @@ async function init() {
   $("#jobboard-show-all").addEventListener("change", (e) => {
     jobboardState.show_all = e.target.checked;
     renderJobBoardList();
+  });
+  // #70: statistics dashboard wiring
+  $("#btn-statistics").addEventListener("click", showStatisticsScreen);
+  $("#btn-stats-back").addEventListener("click", () => {
+    // Return to wherever the player came from. If they came from a
+    // game, that's the game; if from the start screen, slot picker.
+    if (state.game && state.game.character && state.game.character.alive) {
+      showGameScreen();
+    } else {
+      showStartScreen();
+    }
+  });
+  $("#btn-back-to-stats").addEventListener("click", () => {
+    _viewingArchivedLife = false;
+    $("#btn-back-to-stats").classList.add("hidden");
+    showStatisticsScreen();
+  });
+  $("#stats-import-btn").addEventListener("click", importArchive);
+  $("#stats-import-input").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) handleArchiveImport(file);
+    e.target.value = "";  // allow re-importing the same file
   });
   log("init: loading countries + finance products");
   await loadCountries();
