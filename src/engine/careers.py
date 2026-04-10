@@ -24,6 +24,7 @@ from functools import lru_cache
 
 from .character import Character, EducationLevel
 from .world import Country
+from . import finances
 from ..data.build_db import get_connection
 
 
@@ -223,10 +224,49 @@ class RaiseResult:
     new_job: str | None = None
 
 
+@dataclass(frozen=True)
+class RetireResult:
+    """Return value of :func:`retire` (#82)."""
+    outcome: str           # 'retired' | 'not_eligible'
+    message: str
+    former_job: str | None = None
+
+
 # Cooldown after any raise request — denied OR granted, since granted
 # requests reset years_in_role to 0 which already enforces a much longer
 # wait before the next eligibility window.
 _RAISE_COOLDOWN_YEARS = 2
+
+
+# #82: per-category minimum retirement age. Players can retire at or
+# above this threshold regardless of savings; below it, the wealth
+# override kicks in. Buckets are well below the matching
+# MAX_AGE_BY_CATEGORY caps from #84 so there's a meaningful
+# early-retirement window — athletics retire at 30 (cap 40), military
+# at 40 (cap 55), most office work at 55 (cap 65-75).
+MIN_RETIREMENT_AGE_BY_CATEGORY: dict[str, int] = {
+    "athletics":   30,   # most pros retire by their early 30s
+    "military":    40,   # 20-yr service pension common
+    "police":      45,
+    "maritime":    50,
+    "industrial":  55,
+    "trades":      55,
+    "agriculture": 55,
+    "service":     55,
+    "stem":        55,
+    "education":   55,
+    "business":    55,
+    "government":  55,
+    "medical":     55,
+    "arts":        55,
+}
+DEFAULT_MIN_RETIREMENT_AGE = 55
+
+# Wealth override: a player below the age threshold can still retire
+# if (cash + portfolio) covers ~20 years of their current annual
+# expenses. Lines up with the FIRE community's "25x rule" but a touch
+# more lenient since lives in this sim run short.
+RETIREMENT_WEALTH_MULTIPLIER = 20
 
 
 def _years_required_for_promo(character: Character, current: Job) -> int:
@@ -294,6 +334,56 @@ def can_request_promotion(character: Character) -> tuple[bool, str | None]:
 # variant since the original button was labeled 'Ask for raise'.
 def can_request_raise(character: Character) -> tuple[bool, str | None]:
     return can_request_salary_raise(character)
+
+
+def can_retire(character: Character, country: Country) -> tuple[bool, str | None]:
+    """Whether the player can choose to retire early (#82). Eligible
+    when the character is at or above the per-category min retirement
+    age, OR when their (cash + portfolio) covers ~20 years of current
+    annual expenses (the FIRE wealth override). Always blocked when
+    the character has no job to retire from."""
+    if character.job is None:
+        return False, "you don't have a job"
+    current = get_job(character.job)
+    if current is None:
+        return False, "unknown job"
+    min_age = MIN_RETIREMENT_AGE_BY_CATEGORY.get(
+        current.category, DEFAULT_MIN_RETIREMENT_AGE
+    )
+    if character.age >= min_age:
+        return True, None
+    # Wealth override: enough saved to cover ~20 years of expenses.
+    baseline = finances.baseline_cost_of_living(country)
+    annual_expense = max(baseline, int(character.salary * 0.75))
+    threshold = RETIREMENT_WEALTH_MULTIPLIER * annual_expense
+    total_wealth = character.money + finances.portfolio_value(character)
+    if total_wealth >= threshold:
+        return True, None
+    return False, (
+        f"need to be {min_age}+ or have ~${threshold:,} saved "
+        f"(have ${total_wealth:,})"
+    )
+
+
+def retire(character: Character, country: Country) -> RetireResult:
+    """Player-initiated early retirement (#82). Validates the
+    :func:`can_retire` gate, then clears the character's job, salary,
+    and years_in_role while preserving promotion_count. Writes a
+    timeline entry. Returns a RetireResult."""
+    eligible, reason = can_retire(character, country)
+    if not eligible:
+        return RetireResult("not_eligible", reason or "not eligible")
+    former = character.job or "your job"
+    character.job = None
+    character.salary = 0
+    character.years_in_role = 0
+    # promotion_count preserved — they earned those promotions
+    character.remember(f"Retired from being a {former}.")
+    return RetireResult(
+        outcome="retired",
+        message=f"You retired from being a {former}.",
+        former_job=former,
+    )
 
 
 def _performance_score(character: Character, current: Job) -> float:
@@ -791,7 +881,22 @@ def yearly_income(character: Character, country: Country, rng: random.Random) ->
     else:
         income = 0
 
-    expenses = int(income * 0.75) if income > 0 else 0
+    # #82: country-scaled baseline cost of living. Children and full-time
+    # students live on parental support (engine doesn't model parents
+    # explicitly), so they pay nothing. Every other adult — employed,
+    # unemployed, retired — pays at least the country baseline. High
+    # earners still spend 75% of income via lifestyle inflation; the
+    # baseline acts as a floor so a US cashier earning $18k against a
+    # $27k baseline genuinely loses money each year. Retirees with $0
+    # income drain savings at the baseline rate.
+    baseline = finances.baseline_cost_of_living(country)
+    is_dependent = character.age < 18 or character.in_school
+    if income > 0:
+        expenses = max(baseline, int(income * 0.75))
+    elif not is_dependent:
+        expenses = baseline
+    else:
+        expenses = 0
     net = income - expenses
 
     # Subscription costs (#66) — applied even if the character has no

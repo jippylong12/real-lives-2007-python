@@ -650,6 +650,164 @@ def test_athlete_retires_at_max_age():
     assert char.salary == 0
 
 
+def test_retire_age_gate_passes_for_athlete():
+    """#82: a 32yo athlete (athletics min_retire = 30) can retire on
+    the age gate alone — no wealth check needed."""
+    from src.engine import Game, careers
+    g = Game.new(country_code="us", seed=1)
+    country = g.country()
+    char = g.state.character
+    char.in_school = False
+    char.education = 1
+    char.attributes.athletic = 70
+    char.vocation_field = "athletics"
+    char.age = 32
+    elite = careers.get_job("elite athlete")
+    careers._set_job(char, country, elite, g.rng)
+    assert char.job == "elite athlete"
+
+    can, reason = careers.can_retire(char, country)
+    assert can, reason
+
+    result = careers.retire(char, country)
+    assert result.outcome == "retired"
+    assert result.former_job == "elite athlete"
+    assert char.job is None
+    assert char.salary == 0
+    assert char.years_in_role == 0
+    # History line written
+    assert any("Retired from being a elite athlete" in line for line in char.history)
+
+
+def test_retire_age_and_wealth_gates_block_young_office_worker():
+    """#82: a 30yo office worker (business min_retire = 55) with modest
+    savings can NOT retire — both gates fail."""
+    from src.engine import Game, careers
+    g = Game.new(country_code="us", seed=2)
+    country = g.country()
+    char = g.state.character
+    char.in_school = False
+    char.education = 4
+    char.attributes.intelligence = 70
+    char.vocation_field = "business"
+    char.age = 30
+    char.money = 50_000
+    office = careers.get_job("office worker")
+    assert office is not None
+    careers._set_job(char, country, office, g.rng)
+
+    can, reason = careers.can_retire(char, country)
+    assert not can
+    assert reason and "55" in reason  # surfaces the min_age in the message
+
+    result = careers.retire(char, country)
+    assert result.outcome == "not_eligible"
+    # Job preserved on a failed retire attempt
+    assert char.job == "office worker"
+
+
+def test_retire_wealth_override_passes_for_young_millionaire():
+    """#82: a 30yo with $5M cash can retire regardless of category /
+    age — the wealth override (~20× annual expenses) is the path."""
+    from src.engine import Game, careers
+    g = Game.new(country_code="us", seed=3)
+    country = g.country()
+    char = g.state.character
+    char.in_school = False
+    char.education = 4
+    char.attributes.intelligence = 80
+    char.vocation_field = "business"
+    char.age = 30
+    char.money = 5_000_000
+    office = careers.get_job("office worker")
+    careers._set_job(char, country, office, g.rng)
+
+    can, reason = careers.can_retire(char, country)
+    assert can, reason
+
+    result = careers.retire(char, country)
+    assert result.outcome == "retired"
+    assert char.job is None
+
+
+def test_baseline_cost_of_living_drains_unemployed_adult():
+    """#82: an unemployed adult in the US burns through savings at the
+    country baseline rate. Tested via careers.yearly_income directly
+    to isolate the income/expense math from advance_year's job-hunt
+    and investment ticks."""
+    from src.engine import Game, careers, finances
+    g = Game.new(country_code="us", seed=4)
+    country = g.country()
+    char = g.state.character
+    char.in_school = False
+    char.education = 4
+    char.age = 60
+    char.job = None
+    char.salary = 0
+    char.money = 200_000
+
+    baseline = finances.baseline_cost_of_living(country)
+    assert baseline > 10_000, f"US baseline should be substantial, got {baseline}"
+
+    starting = char.money
+    net = careers.yearly_income(char, country, g.rng)
+    # Net should be negative-baseline (or close to it; subscription
+    # costs don't apply since the character has none).
+    assert net == -baseline, f"expected net=-{baseline:,}, got {net:,}"
+    assert char.money == starting + net
+
+
+def test_baseline_cost_does_not_drain_children():
+    """#82: a 10yo dependent doesn't pay the country baseline —
+    children live on parental support."""
+    from src.engine import Game, careers
+    g = Game.new(country_code="us", seed=5)
+    country = g.country()
+    char = g.state.character
+    char.in_school = True
+    char.age = 10
+    char.job = None
+    char.salary = 0
+    char.money = 100  # piggy bank
+
+    net = careers.yearly_income(char, country, g.rng)
+    assert net == 0, f"children should pay 0, got net={net}"
+    assert char.money == 100
+
+
+def test_baseline_cost_makes_low_pay_us_worker_lose_money():
+    """#82: a US character earning $18k/yr against the country baseline
+    (~75% of salary < baseline) loses money via the lifestyle floor.
+    Verifies the realistic 'poor in expensive country' path."""
+    from src.engine import Game, careers, finances
+    g = Game.new(country_code="us", seed=6)
+    country = g.country()
+    char = g.state.character
+    char.in_school = False
+    char.education = 1
+    char.age = 25
+    char.money = 50_000
+    char.job = "cashier"
+    char.salary = 18_000
+    char.years_in_role = 0
+    char.vocation_field = "business"
+
+    baseline = finances.baseline_cost_of_living(country)
+    assert baseline > int(18_000 * 0.75), (
+        f"test premise broken: baseline {baseline} ≤ 75% of salary"
+    )
+
+    # Run 3 yearly_income ticks directly (avoid advance_year's job-hunt
+    # which might promote/replace the character).
+    starting = char.money
+    for _ in range(3):
+        careers.yearly_income(char, country, g.rng)
+    assert char.money < starting, (
+        f"low-pay US worker should lose money; started ${starting:,}, "
+        f"now ${char.money:,}"
+    )
+
+
 def test_investment_age_gate():
     """#68: investments are now age-gated. Savings 12+, bonds 16+, the rest 18+."""
     from src.engine import finances

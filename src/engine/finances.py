@@ -261,6 +261,22 @@ def portfolio_value(character: Character) -> int:
     return sum(i.value for i in character.investments)
 
 
+def baseline_cost_of_living(country: Country) -> int:
+    """Annual baseline cost of a basic existence in this country —
+    shelter, food, utilities — scaled by GDP per capita (#82).
+
+    Roughly 60% of ``country.gdp_pc``, floored at $300/yr to keep the
+    poorest countries from rounding to zero. A US character
+    (gdp_pc ~$45k) pays ~$27k/yr; a Burkina Faso character
+    (gdp_pc ~$700) pays ~$420/yr.
+
+    Used by ``careers.yearly_income`` so unemployed adults (between
+    jobs, retirees) actually drain savings, and by ``careers.can_retire``
+    for the wealth-override threshold.
+    """
+    return max(300, int(country.gdp_pc * 0.6))
+
+
 def financial_stress(character: Character, country: Country) -> int:
     """Negative happiness delta if the player is broke or buried in debt."""
     if character.debt > character.salary * 5:

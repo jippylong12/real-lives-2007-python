@@ -952,6 +952,29 @@ async function requestPromotion() {
   }
 }
 
+async function retire() {
+  const ok = await showConfirm({
+    title: "Retire from your job?",
+    body: "You'll live off your savings and investments. This is permanent — you can't return to your old role, though you can still look for new work later.",
+    confirmText: "Retire",
+    cancelText: "Keep working",
+    destructive: true,
+  });
+  if (!ok) return;
+  log("retire");
+  try {
+    const res = await api(`/api/game/${state.game.id}/retire`, { method: "POST" });
+    state.game = res.game;
+    showToast(res.message, { kind: "success" });
+    renderGame();
+    loadPurchases();
+    loadHealthcare();
+  } catch (e) {
+    logErr("retire failed", e);
+    showToast(`Could not retire: ${e.message}`, { kind: "error" });
+  }
+}
+
 async function newGame(countryCode) {
   // Always thread the currently-selected slot through (#79). The user
   // must have picked a slot before getting here — if not, fail loud.
@@ -1256,15 +1279,20 @@ function renderGame() {
       const cat = career.vocation_field || career.category || "—";
       const eligibleByYears = career.years_in_role >= career.years_to_promote;
 
-      // Two buttons (#63): salary raise and promotion. Each shows enabled
-      // when can_request_*, OR a clickable .blocked variant that toasts
-      // the reason on click. Disabled <button>s swallow clicks silently
-      // and leave the player wondering why nothing happens — always show
-      // a clickable button with feedback on the blocked path.
+      // Three buttons (#63 + #82): salary raise, promotion, and retire.
+      // Each shows enabled when can_*, OR a clickable .blocked variant
+      // that toasts the reason on click. Disabled <button>s swallow
+      // clicks silently and leave the player wondering why nothing
+      // happens — always show a clickable button with feedback on the
+      // blocked path.
       const raiseLive    = !!career.can_request_raise;
       const promoLive    = !!career.can_request_promotion;
+      const retireLive   = !!career.can_retire;
       const showRaiseBtn = raiseLive || eligibleByYears;
       const showPromoBtn = promoLive || (eligibleByYears && career.next_job);
+      // Retire is always offered when employed — the blocked variant
+      // surfaces the age / wealth gate up-front.
+      const showRetireBtn = !!career.current_job;
 
       const raiseBtn = !showRaiseBtn ? "" :
         raiseLive
@@ -1274,6 +1302,10 @@ function renderGame() {
         promoLive
           ? `<button id="btn-ask-promo" class="btn xs">Ask for promotion</button>`
           : `<button id="btn-ask-promo-blocked" class="btn xs blocked" data-reason="${escapeHtml(career.promotion_blocked_reason || "not eligible")}">Ask for promotion</button>`;
+      const retireBtn = !showRetireBtn ? "" :
+        retireLive
+          ? `<button id="btn-retire" class="btn xs">Retire</button>`
+          : `<button id="btn-retire-blocked" class="btn xs blocked" data-reason="${escapeHtml(career.retire_blocked_reason || "not eligible")}">Retire</button>`;
 
       careerEl.innerHTML = `
         <div class="career-head">
@@ -1284,16 +1316,20 @@ function renderGame() {
         <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role</div>
         ${nextLine}
         ${gatesLine}
-        ${(raiseBtn || promoBtn) ? `<div class="career-actions">${raiseBtn} ${promoBtn}</div>` : ""}
+        ${(raiseBtn || promoBtn || retireBtn) ? `<div class="career-actions">${raiseBtn} ${promoBtn} ${retireBtn}</div>` : ""}
       `;
       const rb = $opt("#btn-ask-raise");
       if (rb) rb.addEventListener("click", requestRaise);
       const pb = $opt("#btn-ask-promo");
       if (pb) pb.addEventListener("click", requestPromotion);
+      const retireB = $opt("#btn-retire");
+      if (retireB) retireB.addEventListener("click", retire);
       const rbBlocked = $opt("#btn-ask-raise-blocked");
       if (rbBlocked) rbBlocked.addEventListener("click", () => showToast(rbBlocked.dataset.reason, { kind: "info" }));
       const pbBlocked = $opt("#btn-ask-promo-blocked");
       if (pbBlocked) pbBlocked.addEventListener("click", () => showToast(pbBlocked.dataset.reason, { kind: "info" }));
+      const retireBlocked = $opt("#btn-retire-blocked");
+      if (retireBlocked) retireBlocked.addEventListener("click", () => showToast(retireBlocked.dataset.reason, { kind: "info" }));
     }
   }
 

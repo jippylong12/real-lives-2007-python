@@ -130,15 +130,16 @@ def _serialize_game(game: Game) -> dict:
         "country": country_dict,
         "pending_event": state.pending_event,
         "portfolio_value": finances.portfolio_value(state.character),
-        "career": _career_summary(state.character),
+        "career": _career_summary(state.character, country),
     }
 
 
-def _career_summary(character) -> dict | None:
+def _career_summary(character, country) -> dict | None:
     """Return the character's current career snapshot for the sidebar
     (#51): vocation field, current job's category, the next rung in the
     binary's promotion ladder (if any), and how close they are to it.
-    Also includes the raise-request eligibility (#55)."""
+    Also includes the raise-request eligibility (#55) and the
+    early-retirement gate (#82)."""
     if not character.job:
         return None
     job = careers.get_job(character.job)
@@ -149,6 +150,12 @@ def _career_summary(character) -> dict | None:
     years_required = careers._years_required_for_promo(character, job)
     can_raise, raise_reason = careers.can_request_salary_raise(character)
     can_promote, promote_reason = careers.can_request_promotion(character)
+    # #82: surface the early-retirement gate. Country is required for
+    # the wealth-override threshold (uses baseline_cost_of_living).
+    if country is not None:
+        can_retire_now, retire_reason = careers.can_retire(character, country)
+    else:
+        can_retire_now, retire_reason = False, "no country"
     # Surface the full list of gates the player is failing for the
     # next rung, plus its education requirement, so the career card
     # can show them up-front instead of forcing the player to click to
@@ -178,6 +185,9 @@ def _career_summary(character) -> dict | None:
         "raise_blocked_reason": raise_reason,
         "can_request_promotion": can_promote,
         "promotion_blocked_reason": promote_reason,
+        # #82: early retirement
+        "can_retire": can_retire_now,
+        "retire_blocked_reason": retire_reason,
     }
 
 
@@ -548,6 +558,27 @@ def create_app() -> FastAPI:
             "message": result.message,
             "salary_delta": result.salary_delta,
             "new_job": result.new_job,
+            "game": _serialize_game(game),
+        }
+
+    @app.post("/api/game/{game_id}/retire")
+    def retire(game_id: str):
+        """Player-initiated early retirement (#82). Outcomes:
+        retired / not_eligible. Eligible at or above the per-category
+        min retirement age, OR via the wealth override (~20 years of
+        annual expenses saved)."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        result = careers.retire(game.state.character, country)
+        if result.outcome == "not_eligible":
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "outcome": result.outcome,
+            "message": result.message,
+            "former_job": result.former_job,
             "game": _serialize_game(game),
         }
 
