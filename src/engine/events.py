@@ -65,6 +65,21 @@ class Event:
     choices: Optional[list[EventChoice]] = None  # if set, this is a CHOICE event
     cooldown_years: int = 0     # 0 = no cooldown (annual rhythm allowed)
     max_lifetime: int = 0       # 0 = unlimited; 1 = once per character; etc.
+    # #52 followup: slice-of-life events (the ~200 new content-drop
+    # entries created via _simple_passive) are sampled down to
+    # MAX_SLICE_OF_LIFE_PER_YEAR per year so the event log stays
+    # readable. Structural events (disease, disaster, war, school year,
+    # holidays, choice events) always fire when eligible regardless.
+    slice_of_life: bool = False
+
+
+# #52 followup: cap on the number of slice-of-life events that can
+# fire in a single year. Without this, with ~218 slice-of-life entries
+# at ~5% chance each, the expected per-year firing rate is ~11 events
+# which floods the event log. Combined with the always-on structural
+# events (income tick, holidays, school year, disease, financial
+# stress) a cap of 2 keeps a typical year at ~4-5 total entries.
+MAX_SLICE_OF_LIFE_PER_YEAR = 2
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +141,11 @@ def _simple_passive(
     """Compact constructor for slice-of-life passive events that just
     nudge a few attributes and append a history line. Used by the
     ~200-event content drop in #52 — keeps each event entry to ~3-4
-    lines instead of bespoke apply functions for every one."""
+    lines instead of bespoke apply functions for every one.
+
+    Events created here are flagged ``slice_of_life=True`` so
+    ``roll_events`` can cap them to MAX_SLICE_OF_LIFE_PER_YEAR per
+    year and keep the event log readable."""
     _deltas = dict(deltas) if deltas else {}
     _money = money_delta
     _history = history if history is not None else summary
@@ -135,11 +154,13 @@ def _simple_passive(
             c.attributes.adjust(**_deltas)
         c.remember(_history)
         return EventOutcome(summary=summary, deltas=_deltas, money_delta=_money)
-    return _passive(
+    ev = _passive(
         key=key, title=title, category=category, description=summary,
         when=when, chance=chance, apply=apply,
         cooldown_years=cooldown_years, max_lifetime=max_lifetime,
     )
+    ev.slice_of_life = True
+    return ev
 
 
 # ---------------------------------------------------------------------------
@@ -2873,8 +2894,17 @@ def record_event_fired(character: Character, event_key: str) -> None:
 
 def roll_events(character: Character, country: Country, rng: random.Random) -> list[Event]:
     """Decide which events fire this year. The first CHOICE event seen halts
-    the rest of the year so the player can make their decision."""
+    the rest of the year so the player can make their decision.
+
+    #52 followup: slice-of-life events (the ~200 content-drop entries)
+    are collected separately and sampled down to
+    MAX_SLICE_OF_LIFE_PER_YEAR per year. Without this cap the event
+    log would routinely fire 10+ entries in a single year and become
+    noise. Structural events (disease, disaster, war, school year,
+    holidays, choice events) always fire when eligible — they're the
+    spine of the year."""
     fired: list[Event] = []
+    sol_candidates: list[Event] = []
     for ev in EVENT_REGISTRY:
         if not ev.eligible(character, country):
             continue
@@ -2885,7 +2915,26 @@ def roll_events(character: Character, country: Country, rng: random.Random) -> l
             continue
         p = max(0.0, min(1.0, ev.probability(character, country)))
         if rng.random() < p:
+            if ev.slice_of_life:
+                # Defer — sampled at the end so all slice-of-life
+                # categories get fair representation regardless of
+                # their position in the registry.
+                sol_candidates.append(ev)
+                continue
             fired.append(ev)
             if ev.choices:
-                break
+                # CHOICE event halts the year. Drop any slice-of-life
+                # events we collected so far — the player should focus
+                # on their decision, not on a wall of trivia.
+                return fired
+    # Sample slice-of-life candidates down to the per-year cap. Use a
+    # SEPARATE rng seeded from the character's id and age so the
+    # sampling is deterministic per (character, year) but doesn't
+    # consume the main game rng — otherwise downstream randomness
+    # (income variance, disease rolls, finance ticks, tests) would
+    # shift every time we added or removed a slice-of-life event.
+    if len(sol_candidates) > MAX_SLICE_OF_LIFE_PER_YEAR:
+        sol_rng = random.Random(hash((character.id, character.age, "sol")) & 0xffffffff)
+        sol_candidates = sol_rng.sample(sol_candidates, MAX_SLICE_OF_LIFE_PER_YEAR)
+    fired.extend(sol_candidates)
     return fired

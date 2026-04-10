@@ -33,6 +33,33 @@ def _seek_work_via_engine(gid):
             g.save()
 
 
+def _force_solvent_adult(gid, age=25, money=10000):
+    """Bypass the cohort sim entirely and put the character in a known
+    state for endpoint-specific tests. Loan / invest tests don't need
+    to simulate 20 years of cost-of-living drain — they just need an
+    adult character with cash. Using this avoids brittle seed-sensitive
+    failures whenever any rng-touching change shifts downstream
+    determinism."""
+    from src.engine import careers
+    from src.engine.character import EducationLevel
+    from src.engine.game import load_game
+    from src.engine.world import get_country
+    g = load_game(gid)
+    if g is None:
+        return
+    char = g.state.character
+    char.age = age
+    char.in_school = False
+    char.school_track = None
+    char.education = EducationLevel.SECONDARY
+    char.money = money
+    if char.job is None:
+        country = get_country(char.country_code)
+        if country is not None:
+            careers.assign_job(char, country, g.rng)
+    g.save()
+
+
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
@@ -138,20 +165,12 @@ def test_list_finance_products(client):
 
 
 def test_invest_and_sell_round_trip(client):
-    # New game with deterministic seed; advance to adulthood so loans are
-    # legal (#37: minimum age 18 for non-family loans).
+    # New game then force the character into a known solvent adult
+    # state. This test verifies the loan + invest endpoints, not the
+    # cost-of-living simulation; cohort-walking it is brittle.
     g = client.post("/api/game/new", json={"country_code": "us", "seed": 7}).json()
     gid = g["id"]
-    while g["character"]["age"] < 20:
-        rr = client.post(f"/api/game/{gid}/advance").json()
-        if rr["turn"]["pending_decision"]:
-            ck = rr["turn"]["pending_decision"]["choices"][0]["key"]
-            client.post(f"/api/game/{gid}/decision", json={"choice_key": ck})
-        g = rr["game"]
-        if rr["turn"]["died"]:
-            pytest.skip("character died before reaching loan-eligible age")
-        _seek_work_via_engine(gid)
-    # Refresh after the engine-side find-work calls.
+    _force_solvent_adult(gid, age=25, money=10000)
     g = client.get(f"/api/game/{gid}").json()
 
     # Hand the character some money via loan, then invest it.
@@ -229,14 +248,7 @@ def test_pay_loan_endpoint_clears_balance(client):
     loan to clear it early."""
     g = client.post("/api/game/new", json={"country_code": "us", "seed": 7}).json()
     gid = g["id"]
-    while g["character"]["age"] < 25:
-        rr = client.post(f"/api/game/{gid}/advance").json()
-        if rr["turn"]["pending_decision"]:
-            client.post(f"/api/game/{gid}/decision", json={"choice_key": rr["turn"]["pending_decision"]["choices"][0]["key"]})
-        g = rr["game"]
-        if rr["turn"]["died"]:
-            pytest.skip("character died young")
-        _seek_work_via_engine(gid)
+    _force_solvent_adult(gid, age=25, money=10000)
     g = client.get(f"/api/game/{gid}").json()
 
     # Take a personal loan

@@ -217,6 +217,26 @@ def test_event_history_serializes_round_trip():
     assert restored.event_history == char.event_history
 
 
+def test_slice_of_life_events_capped_per_year():
+    """#52 followup: with ~218 slice-of-life events at ~5% chance each,
+    the expected raw firing rate is ~11 per year. The cap of
+    MAX_SLICE_OF_LIFE_PER_YEAR keeps the actual count down so the
+    event log stays readable. Sim a 60-year US life and assert no
+    year fires more than the cap."""
+    from src.engine.events import roll_events, MAX_SLICE_OF_LIFE_PER_YEAR
+    char = create_random_character(get_country("us"), random.Random(0))
+    rng = random.Random(0)
+    char.in_school = False
+    for age in range(20, 60):
+        char.age = age
+        fired = roll_events(char, get_country("us"), rng)
+        sol_count = sum(1 for e in fired if e.slice_of_life)
+        assert sol_count <= MAX_SLICE_OF_LIFE_PER_YEAR, (
+            f"age {age}: {sol_count} slice-of-life events fired, "
+            f"cap is {MAX_SLICE_OF_LIFE_PER_YEAR}"
+        )
+
+
 def test_event_variety_per_life_meaningfully_higher_than_baseline():
     """#52: simulate a handful of lives and assert the average distinct
     event count per life is meaningfully higher than the pre-#52
