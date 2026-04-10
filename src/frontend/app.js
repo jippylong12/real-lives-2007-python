@@ -311,12 +311,23 @@ async function loadFinanceProducts() {
   state.loanProducts = ln;
 }
 
+// Money-changing actions all funnel through this so the healthcare and
+// spend panels stay in sync. Without this, taking a loan would update
+// state.game but the healthcare panel's "not enough cash" data-blocked
+// strings would still be baked in from the previous render — clicking
+// a now-affordable Checkup button would still show the stale block.
+function _afterMoneyChange() {
+  renderGame();
+  loadPurchases();
+  loadHealthcare();
+}
+
 async function invest(productId, amount) {
   state.game = await api(`/api/game/${state.game.id}/invest`, {
     method: "POST",
     body: JSON.stringify({ product_id: productId, amount }),
   });
-  renderGame();
+  _afterMoneyChange();
 }
 
 async function takeLoan(productId, amount) {
@@ -324,7 +335,7 @@ async function takeLoan(productId, amount) {
     method: "POST",
     body: JSON.stringify({ product_id: productId, amount }),
   });
-  renderGame();
+  _afterMoneyChange();
 }
 
 async function sellInvestment(index) {
@@ -332,7 +343,7 @@ async function sellInvestment(index) {
     method: "POST",
     body: JSON.stringify({ index }),
   });
-  renderGame();
+  _afterMoneyChange();
 }
 
 async function payLoan(index, amount) {
@@ -340,7 +351,7 @@ async function payLoan(index, amount) {
     method: "POST",
     body: JSON.stringify({ index, amount }),
   });
-  renderGame();
+  _afterMoneyChange();
 }
 
 // ---------- Spend (#66) ----------
