@@ -2523,7 +2523,10 @@ def test_spouse_eventually_dies_in_old_age():
 
 def test_divorce_eventually_for_low_compatibility():
     """#50: a low-compatibility marriage in a high-HDI country should
-    eventually trigger divorce_check."""
+    eventually trigger divorce_check.
+    #96: divorce_check is now strain-gated, so the test pre-loads
+    strain past the threshold to model a player who's been ignoring
+    DIVORCE_CONSIDERATION for years."""
     from src.engine import relationships
     rng = random.Random(7)
     country = get_country("us")  # HDI ~0.92
@@ -2531,6 +2534,7 @@ def test_divorce_eventually_for_low_compatibility():
     spouse = relationships.roll_spouse(char, country, 2030, rng)
     spouse.compatibility = 25
     relationships.marry(char, spouse, 2030)
+    spouse.relationship_strain = 80  # well past the choice threshold
 
     fired = 0
     for _ in range(500):
@@ -2558,7 +2562,8 @@ def test_country_divorce_rate_drives_divorce_check_distribution():
     """#92: a marriage in Portugal (high divorce_rate) should fire
     divorce_check far more often than the same marriage in India over
     the same number of rolls. Tests the country signal flowing through,
-    not a single deterministic outcome."""
+    not a single deterministic outcome. Pre-loads strain past the
+    threshold (#96) so divorce_check has something to roll on."""
     from src.engine import relationships
     rng = random.Random(0)
     pt = get_country("pt")
@@ -2570,6 +2575,7 @@ def test_country_divorce_rate_drives_divorce_check_distribution():
         spouse = relationships.roll_spouse(char, country, 2030, local_rng)
         spouse.compatibility = 50  # neutral compat — country must do the work
         relationships.marry(char, spouse, 2030)
+        spouse.relationship_strain = 80
         fired = 0
         for _ in range(2000):
             if relationships.divorce_check(char, country, local_rng):
@@ -2666,6 +2672,231 @@ def test_compatibility_biases_anniversary_event_rate():
     assert high > low, f"high-compat anniversary chance ({high}) should beat low-compat ({low})"
     assert high > 0.55  # 0.50 base × 1.30 boost
     assert low < 0.40   # 0.50 base × 0.65 penalty
+
+
+def test_spouse_develops_diseases_via_full_engine():
+    """#94: spouses run the full disease engine in age_family. Over
+    enough years an old spouse should accumulate at least one named
+    disease in spouse.diseases."""
+    from src.engine import relationships
+    rng = random.Random(13)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.age = 55
+    relationships.marry(char, spouse, 2030)
+
+    # 30 yearly ticks — each runs the disease roller on the spouse.
+    for _ in range(30):
+        if char.spouse is None:  # spouse died
+            break
+        relationships.age_family(char, country, rng)
+
+    # Either the spouse died of a named disease (in previous_spouses)
+    # or accumulated chronic conditions (in current spouse.diseases).
+    if char.spouse is None:
+        archived = char.previous_spouses[0]
+        assert archived.cause_of_death is not None
+        # cause_of_death should be a real disease name OR the age fallback
+        # ('old age' / 'illness'); both paths exercise the new code.
+    else:
+        assert len(char.spouse.diseases) > 0, "30 years should accumulate at least one disease"
+
+
+def test_relationship_strain_accumulates_for_low_compatibility():
+    """#96: update_strain raises strain in proportion to (100 - compat).
+    A 20-compat marriage should cross the divorce threshold within
+    a handful of yearly ticks."""
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.compatibility = 20
+    relationships.marry(char, spouse, 2030)
+    assert spouse.relationship_strain == 0
+
+    for _ in range(20):
+        relationships.update_strain(char)
+    assert char.spouse.relationship_strain >= 50
+
+
+def test_relationship_strain_does_not_accumulate_for_high_compatibility():
+    """A 90-compat marriage should still gain a little strain per year
+    (life is hard) but stay well below the divorce threshold across a
+    typical lifespan."""
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.compatibility = 92
+    relationships.marry(char, spouse, 2030)
+
+    for _ in range(20):
+        relationships.update_strain(char)
+    assert char.spouse.relationship_strain < 50
+
+
+def test_divorce_consideration_event_eligible_at_high_strain():
+    """#96: DIVORCE_CONSIDERATION fires only when strain >= 50."""
+    from src.engine.events import EVENT_REGISTRY
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    relationships.marry(char, spouse, 2030)
+
+    ev = next(e for e in EVENT_REGISTRY if e.key == "divorce_consideration")
+    spouse.relationship_strain = 10
+    assert not ev.eligible(char, country)
+    spouse.relationship_strain = 75
+    assert ev.eligible(char, country)
+
+
+def test_meet_partner_creates_dating_spouse():
+    """#93: MEET_PARTNER's 'lean_in' choice attaches a Spouse with
+    married_year=None to the character — they're dating, not married."""
+    from src.engine.events import EVENT_REGISTRY, _meet_partner_side_effect
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 25
+    assert char.spouse is None
+
+    _meet_partner_side_effect(char, {"country": country, "year": 2030, "rng": rng})
+    assert char.spouse is not None
+    assert char.spouse.married_year is None  # dating, not married
+    assert char.married is False
+
+
+def test_dating_checkpoint_propose_promotes_to_marriage():
+    """#93: DATING_CHECKPOINT's 'propose' choice marries the existing
+    dating partner — uses the standard marry() helper so joined wealth
+    + happiness flow."""
+    from src.engine.events import _meet_partner_side_effect, _dating_propose
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 27
+    starting_wealth = char.family_wealth
+
+    _meet_partner_side_effect(char, {"country": country, "year": 2030, "rng": rng})
+    spouse_wealth = char.spouse.family_wealth
+    _dating_propose(char, {"country": country, "year": 2032, "rng": rng})
+
+    assert char.married is True
+    assert char.spouse.married_year == 2032
+    # Joined wealth applied.
+    assert char.family_wealth == starting_wealth + spouse_wealth
+
+
+def test_dating_checkpoint_break_up_clears_partner_with_no_archive():
+    """#93: ending a dating relationship clears the spouse but does
+    NOT add to previous_spouses (they were never married)."""
+    from src.engine.events import _meet_partner_side_effect, _dating_breakup
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 27
+
+    _meet_partner_side_effect(char, {"country": country, "year": 2030, "rng": rng})
+    assert char.spouse is not None
+    _dating_breakup(char)
+    assert char.spouse is None
+    assert len(char.previous_spouses) == 0
+
+
+def test_meet_candidates_dynamic_payload_rolls_four_candidates():
+    """#91: MEET_CANDIDATES.dynamic_payload returns 4 candidate Spouse
+    dicts so the frontend can render a swipe picker."""
+    from src.engine.events import EVENT_REGISTRY
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 28
+
+    ev = next(e for e in EVENT_REGISTRY if e.key == "meet_candidates")
+    assert ev.dynamic_payload is not None
+    payload = ev.dynamic_payload(char, country, rng)
+    assert "candidates" in payload
+    assert len(payload["candidates"]) == 4
+    for cand in payload["candidates"]:
+        assert "name" in cand
+        assert "compatibility" in cand
+        assert cand.get("married_year") is None
+
+
+def test_meet_candidates_pick_attaches_chosen_candidate():
+    """#91: picking a candidate via apply_decision attaches it as the
+    dating partner. The side_effect reads the index from choice_key
+    and the candidate list from pending_event."""
+    from src.engine.events import _meet_candidates_pick
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 28
+
+    # Build a mock pending_event with 4 candidates.
+    candidates = [
+        relationships.roll_spouse(char, country, 0, rng).to_dict()
+        for _ in range(4)
+    ]
+    target_name = candidates[2]["name"]
+    pending = {"candidates": candidates}
+
+    _meet_candidates_pick(char, {
+        "country": country, "year": 2030, "rng": rng,
+        "pending_event": pending, "choice_key": "pick_2",
+    })
+    assert char.spouse is not None
+    assert char.spouse.name == target_name
+    assert char.spouse.met_year == 2030
+    assert char.spouse.married_year is None
+
+
+def test_divorce_consideration_separate_choice_archives_spouse():
+    """#96: picking 'separate' on the choice event runs the same
+    archive + clear path as the silent divorce."""
+    from src.engine.events import _divorce_separate
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    relationships.marry(char, spouse, 2030)
+    starting_wealth = char.family_wealth
+    char.age = 40
+
+    _divorce_separate(char, {"country": country, "year": 2040, "rng": rng})
+    assert char.spouse is None
+    assert len(char.previous_spouses) == 1
+    archived = char.previous_spouses[0]
+    assert archived.end_state == "divorced"
+    assert archived.ended_year == 40
+    # Wealth got split.
+    assert char.family_wealth < starting_wealth
+
+
+def test_divorce_consideration_counseling_resets_strain():
+    """#96: counseling drops strain back to 20 and boosts compatibility."""
+    from src.engine.events import _divorce_counseling
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.money = 50_000
+    char.salary = 60_000
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.compatibility = 30
+    relationships.marry(char, spouse, 2030)
+    spouse.relationship_strain = 70
+
+    _divorce_counseling(char)
+    assert char.spouse.relationship_strain == 20
+    assert char.spouse.compatibility >= 40   # +12 boost
 
 
 def test_compatibility_biases_big_argument_event_rate():

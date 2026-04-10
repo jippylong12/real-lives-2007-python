@@ -71,6 +71,13 @@ class Event:
     # readable. Structural events (disease, disaster, war, school year,
     # holidays, choice events) always fire when eligible regardless.
     slice_of_life: bool = False
+    # #91 swipe partner picker: optional callable that builds extra
+    # fields to merge into pending_event when this choice event fires.
+    # Used by MEET_CANDIDATES to roll N candidate Spouse dicts at fire
+    # time so the frontend can render a custom picker. Signature:
+    #   (character, country, rng) -> dict
+    # The returned dict is merged into the pending_event payload.
+    dynamic_payload: Optional[Callable[["Character", "Country", "random.Random"], dict]] = None
 
 
 # #52 followup: cap on the number of slice-of-life events that can
@@ -114,6 +121,7 @@ def _choice(
     choices: list[EventChoice],
     cooldown_years: int = 0,
     max_lifetime: int = 0,
+    dynamic_payload: Optional[Callable[["Character", "Country", "random.Random"], dict]] = None,
 ) -> Event:
     def stub_apply(c, co, rng):  # never invoked: choice events resolve via apply_decision
         return EventOutcome(summary=description)
@@ -121,6 +129,7 @@ def _choice(
         key=key, title=title, category=category, description=description,
         eligible=when, probability=chance, apply=stub_apply, choices=choices,
         cooldown_years=cooldown_years, max_lifetime=max_lifetime,
+        dynamic_payload=dynamic_payload,
     )
 
 
@@ -812,6 +821,132 @@ def _set_vocation(field):
     return _do
 
 
+# ---------------------------------------------------------------------------
+# #93: Multi-step dating flow.
+# Replaces the single-step LOVE_MARRIAGE → marriage with: meet a partner,
+# date them for a few years, then propose. Dating partners live in
+# character.spouse with married_year=None — already supported by the Spouse
+# dataclass since #50.
+# ---------------------------------------------------------------------------
+
+def _meet_partner_side_effect(c, ctx):
+    """Roll a Spouse via roll_spouse and attach as a dating partner
+    (married_year=None). The DATING_CHECKPOINT event picks up from here."""
+    from . import relationships
+    country = ctx["country"]
+    year = ctx["year"]
+    rng = ctx["rng"]
+    spouse = relationships.roll_spouse(c, country, year, rng)
+    spouse.married_year = None  # explicit; roll_spouse already defaults this
+    c.spouse = spouse
+
+
+MEET_PARTNER = _choice(
+    key="meet_partner",
+    title="You met someone",
+    category="life",
+    description=(
+        "You met someone you really click with. There's no commitment yet, "
+        "just the early thrill of getting to know each other. Where do you "
+        "want this to go?"
+    ),
+    # Eligible across the typical dating window in any country with
+    # opt-in dating culture (skip the arranged-marriage band).
+    when=lambda c, co: (
+        20 <= c.age <= 35
+        and c.spouse is None
+        and not (co.primary_religion in ("Hinduism", "Islam") and co.gdp_pc < 25000)
+    ),
+    chance=lambda c, co: 0.18 + c.attributes.appearance * 0.0008,
+    choices=[
+        EventChoice(
+            key="lean_in",
+            label="Lean in — start dating them",
+            deltas={"happiness": +6, "wisdom": +1},
+            summary="You started dating. It feels real.",
+            side_effect=_meet_partner_side_effect,
+        ),
+        EventChoice(
+            key="cool_off",
+            label="Take it slow",
+            deltas={"happiness": +1, "wisdom": +2},
+            summary="You held back. Maybe later, maybe never.",
+        ),
+        EventChoice(
+            key="walk_away",
+            label="Walk away",
+            deltas={"happiness": -2, "wisdom": +1},
+            summary="You walked away before it became anything.",
+        ),
+    ],
+    cooldown_years=4,
+)
+
+
+def _dating_continue(c, ctx=None):
+    """Boost compatibility a little — committed dating builds rapport."""
+    if c.spouse is not None:
+        c.spouse.compatibility = min(99, c.spouse.compatibility + 5)
+
+
+def _dating_breakup(c, ctx=None):
+    """End the dating relationship by clearing the partner. No
+    previous_spouses entry — they were never married."""
+    c.spouse = None
+
+
+def _dating_propose(c, ctx):
+    """Promote a dating relationship to a marriage. Joined wealth and
+    happiness boost as in #50."""
+    from . import relationships
+    if c.spouse is None:
+        return
+    relationships.marry(c, c.spouse, ctx["year"])
+
+
+DATING_CHECKPOINT = _choice(
+    key="dating_checkpoint",
+    title="A turning point",
+    category="life",
+    description=(
+        "You've been dating for a while now and the question is starting to "
+        "press: where is this going? You can keep dating, walk away, or "
+        "propose."
+    ),
+    # Fires every 2-3 years while in a non-married dating relationship.
+    when=lambda c, co: (
+        c.spouse is not None
+        and c.spouse.married_year is None
+        and 20 <= c.age <= 45
+    ),
+    chance=lambda c, co: 0.45,
+    choices=[
+        EventChoice(
+            key="continue",
+            label="Keep dating",
+            deltas={"happiness": +2, "wisdom": +1},
+            summary="You agreed to keep going as you are.",
+            side_effect=_dating_continue,
+        ),
+        EventChoice(
+            key="propose",
+            label="Propose",
+            deltas={"happiness": +12, "wisdom": +1},
+            summary="You proposed. They said yes.",
+            side_effect=_dating_propose,
+        ),
+        EventChoice(
+            key="break_up",
+            label="Break up",
+            deltas={"happiness": -5, "wisdom": +2},
+            summary="You ended things. It hurt, but it felt necessary.",
+            side_effect=_dating_breakup,
+        ),
+    ],
+    cooldown_years=2,
+)
+
+
 LOVE_MARRIAGE = _choice(
     key="love_marriage",
     title="A proposal",
@@ -821,9 +956,11 @@ LOVE_MARRIAGE = _choice(
         "if you see a future together. The choice is yours — and the answer "
         "matters."
     ),
+    # #93: only fires when there's no spouse at all — characters
+    # already in a dating relationship resolve via DATING_CHECKPOINT.
     when=lambda c, co: (
         24 <= c.age <= 38
-        and not c.married
+        and c.spouse is None
         # Skip in countries where the arranged-marriage choice already
         # offers this same decision in a different cultural frame.
         and not (co.primary_religion in ("Hinduism", "Islam") and co.gdp_pc < 25000)
@@ -851,6 +988,173 @@ LOVE_MARRIAGE = _choice(
         ),
     ],
     max_lifetime=1,  # #52
+)
+
+
+# ---------------------------------------------------------------------------
+# #91: Modern Western 'swipe' partner picker.
+# Fires in high-HDI countries when not currently dating/married. Rolls
+# 4 candidate Spouse instances at fire time, exposes them via the
+# dynamic_payload mechanism, and the chosen one becomes the dating
+# partner.
+# ---------------------------------------------------------------------------
+
+def _meet_candidates_payload(c, country, rng):
+    """Roll 4 candidate Spouse instances and serialize them so the
+    frontend can render a swipe picker. The dating partner is whichever
+    one the player picks via apply_decision."""
+    from . import relationships
+    candidates = []
+    for _ in range(4):
+        sp = relationships.roll_spouse(c, country, 0, rng)
+        sp.married_year = None
+        candidates.append(sp.to_dict())
+    return {"candidates": candidates}
+
+
+def _meet_candidates_pick(c, ctx):
+    """Read the chosen candidate from pending_event['candidates'] and
+    attach as the dating partner. Choice keys are 'pick_0' .. 'pick_3'."""
+    from .character import Spouse
+    choice_key = ctx.get("choice_key", "")
+    pending = ctx.get("pending_event") or {}
+    candidates = pending.get("candidates") or []
+    if not choice_key.startswith("pick_"):
+        return
+    try:
+        idx = int(choice_key.split("_", 1)[1])
+    except ValueError:
+        return
+    if idx < 0 or idx >= len(candidates):
+        return
+    c.spouse = Spouse.from_dict(candidates[idx])
+    # met_year is not known to the candidate roller (year=0); set it to
+    # the current calendar year so the dating-history math is right.
+    c.spouse.met_year = ctx["year"]
+
+
+MEET_CANDIDATES = _choice(
+    key="meet_candidates",
+    title="A few people caught your eye",
+    category="life",
+    description=(
+        "You've been single and looking. Tonight a handful of candidates "
+        "have crossed your path — pick the one who feels right, or wait "
+        "for someone better."
+    ),
+    when=lambda c, co: (
+        20 <= c.age <= 38
+        and c.spouse is None
+        and co.hdi >= 0.80
+    ),
+    chance=lambda c, co: 0.20,
+    choices=[
+        EventChoice(key="pick_0", label="Pick the first",
+                    deltas={"happiness": +5}, summary="You started dating.",
+                    side_effect=_meet_candidates_pick),
+        EventChoice(key="pick_1", label="Pick the second",
+                    deltas={"happiness": +5}, summary="You started dating.",
+                    side_effect=_meet_candidates_pick),
+        EventChoice(key="pick_2", label="Pick the third",
+                    deltas={"happiness": +5}, summary="You started dating.",
+                    side_effect=_meet_candidates_pick),
+        EventChoice(key="pick_3", label="Pick the fourth",
+                    deltas={"happiness": +5}, summary="You started dating.",
+                    side_effect=_meet_candidates_pick),
+        EventChoice(key="skip", label="None of the above",
+                    deltas={"wisdom": +1},
+                    summary="You decided no one was the right fit and went home alone."),
+    ],
+    cooldown_years=3,
+    dynamic_payload=_meet_candidates_payload,
+)
+
+
+# ---------------------------------------------------------------------------
+# #96: Choice-event divorce. Replaces the silent yearly roll with a
+# strain-driven decision the player resolves: counseling / push through /
+# separate. Fires when relationship_strain crosses the threshold.
+# ---------------------------------------------------------------------------
+
+def _divorce_counseling(c, ctx=None):
+    """Counseling drains money but boosts compatibility and resets strain."""
+    if c.spouse is None:
+        return
+    cost = max(2000, c.salary // 8)
+    paid = min(cost, c.money + max(0, c.family_wealth))
+    from_money = min(c.money, paid)
+    c.money -= from_money
+    c.family_wealth -= max(0, paid - from_money)
+    c.spouse.compatibility = min(99, c.spouse.compatibility + 12)
+    c.spouse.relationship_strain = 20
+
+
+def _divorce_push_through(c, ctx=None):
+    """Push through — strain partially resets but the underlying
+    compatibility doesn't budge."""
+    if c.spouse is None:
+        return
+    c.spouse.relationship_strain = 30
+
+
+def _divorce_separate(c, ctx):
+    """Separate now — fires the same archive + clear path that the
+    silent divorce_check uses, including the wealth split."""
+    if c.spouse is None:
+        return
+    former = c.spouse
+    split = max(0, c.family_wealth // 2)
+    c.family_wealth -= split
+    former.ended_year = c.age
+    former.end_state = "divorced"
+    c.previous_spouses.append(former)
+    c.spouse = None
+    c.family = [
+        fm for fm in c.family
+        if not (fm.relation == "spouse" and fm.name == former.name)
+    ]
+
+
+DIVORCE_CONSIDERATION = _choice(
+    key="divorce_consideration",
+    title="Something has to give",
+    category="life",
+    description=(
+        "You and your spouse have grown apart. The arguments come faster "
+        "than the apologies. You can try counseling, push through, or "
+        "separate quietly."
+    ),
+    when=lambda c, co: (
+        c.spouse is not None
+        and c.spouse.alive
+        and c.spouse.married_year is not None
+        and c.spouse.relationship_strain >= 50
+    ),
+    chance=lambda c, co: 0.55,
+    choices=[
+        EventChoice(
+            key="counseling",
+            label="Try counseling",
+            deltas={"wisdom": +2, "happiness": -2},
+            summary="You went to counseling. It cost money and effort but you came out stronger.",
+            side_effect=_divorce_counseling,
+        ),
+        EventChoice(
+            key="push_through",
+            label="Push through",
+            deltas={"wisdom": +1, "happiness": -3},
+            summary="You decided to grit your teeth and stay. The strain eased a little.",
+            side_effect=_divorce_push_through,
+        ),
+        EventChoice(
+            key="separate",
+            label="Separate quietly",
+            deltas={"happiness": -10, "wisdom": +3},
+            summary="You separated. Your family wealth was split.",
+            side_effect=_divorce_separate,
+        ),
+    ],
+    cooldown_years=3,
 )
 
 
@@ -2909,7 +3213,17 @@ EVENT_REGISTRY: list[Event] = [
     RELIGIOUS_SCHOOL,
     DOWRY_NEGOTIATION,
     BILINGUAL_SCHOOLING,
+    # #93: dating flow goes BEFORE LOVE_MARRIAGE so a character without
+    # a partner picks up MEET_PARTNER first; once they have a dating
+    # spouse the DATING_CHECKPOINT path takes over and LOVE_MARRIAGE's
+    # `c.spouse is None` gate keeps it dormant.
+    MEET_CANDIDATES,   # #91 — high-HDI swipe picker (ranked first so
+                       # urban Western players see it before MEET_PARTNER)
+    MEET_PARTNER,
+    DATING_CHECKPOINT,
     LOVE_MARRIAGE,
+    # #96: choice-event divorce. Fires when relationship strain > 50.
+    DIVORCE_CONSIDERATION,
 ]
 
 

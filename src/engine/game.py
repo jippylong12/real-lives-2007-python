@@ -259,6 +259,10 @@ class Game:
         if rel_msg:
             log.append(TurnEvent("relationship", "Relationship", "life", rel_msg))
             char.remember(rel_msg)
+        # #96: tick relationship strain. Low-compat marriages accumulate
+        # strain faster; once it crosses the threshold the
+        # DIVORCE_CONSIDERATION choice event becomes eligible.
+        relationships.update_strain(char)
         # #50: age_family now accepts country + rng so it can run the
         # spouse death roll. Notes are spouse-death markers we fan out
         # into TurnEvents below.
@@ -307,7 +311,7 @@ class Game:
                 # Pause for player choice — serialize the event into pending.
                 # NOTE: cooldown/lifetime recording for choice events happens
                 # in apply_decision once the player resolves it (#52).
-                self.state.pending_event = {
+                pending: dict = {
                     "key": ev.key,
                     "title": ev.title,
                     "category": ev.category,
@@ -316,6 +320,15 @@ class Game:
                         {"key": ch.key, "label": ch.label} for ch in ev.choices
                     ],
                 }
+                # #91: events with a dynamic_payload (e.g., MEET_CANDIDATES
+                # rolling N candidate spouses) merge extra fields into
+                # pending_event so the frontend can render a custom
+                # picker UI.
+                if ev.dynamic_payload is not None:
+                    extra = ev.dynamic_payload(char, country, self.rng)
+                    if extra:
+                        pending.update(extra)
+                self.state.pending_event = pending
                 self._checkpoint_rng()
                 return TurnResult(
                     self.state.year, char.age, log, self.state.pending_event,
@@ -454,7 +467,16 @@ class Game:
             # _accept_proposal, which rolls a full Spouse) accept an
             # optional ctx kwarg. Existing side effects ignore it via
             # the try/except below.
-            ctx = {"year": self.state.year, "country": country, "rng": self.rng}
+            # #91: ctx now also exposes the pending_event payload + the
+            # chosen choice_key so dynamic-payload events (the swipe
+            # picker) can read the candidate the player picked.
+            ctx = {
+                "year": self.state.year,
+                "country": country,
+                "rng": self.rng,
+                "pending_event": dict(self.state.pending_event),
+                "choice_key": choice_key,
+            }
             try:
                 choice.side_effect(char, ctx)
             except TypeError:

@@ -2090,6 +2090,17 @@ function renderGame() {
     $("#decision-desc").textContent = g.pending_event.description;
     const btns = $("#decision-buttons");
     btns.innerHTML = "";
+    // #91: events that ship a `candidates` payload (MEET_CANDIDATES)
+    // get a card grid above the choice buttons so the player can see
+    // who they're picking. The choice buttons stay below as the
+    // commit action.
+    const cardHost = ensureCandidateCardHost();
+    if (g.pending_event.candidates && g.pending_event.candidates.length) {
+      renderCandidateCards(cardHost, g.pending_event.candidates);
+    } else {
+      cardHost.innerHTML = "";
+      cardHost.classList.add("hidden");
+    }
     for (const ch of g.pending_event.choices) {
       const b = document.createElement("button");
       b.className = "btn";
@@ -2102,6 +2113,53 @@ function renderGame() {
     modal.classList.add("hidden");
     $("#btn-advance").disabled = !c.alive;
   }
+}
+
+// #91: build (and cache) a card grid host directly above the decision
+// modal's button row. Lazily injected so existing choice events keep
+// rendering identically when no candidates are present.
+function ensureCandidateCardHost() {
+  let host = document.getElementById("candidate-cards");
+  if (host) return host;
+  host = document.createElement("div");
+  host.id = "candidate-cards";
+  host.className = "candidate-cards hidden";
+  const btns = document.getElementById("decision-buttons");
+  if (btns && btns.parentNode) {
+    btns.parentNode.insertBefore(host, btns);
+  }
+  return host;
+}
+
+function renderCandidateCards(host, candidates) {
+  host.innerHTML = "";
+  host.classList.remove("hidden");
+  candidates.forEach((cand, idx) => {
+    const card = document.createElement("div");
+    card.className = "candidate-card";
+    const attrs = cand.attributes || {};
+    const compat = cand.compatibility ?? "?";
+    const job = cand.job || "—";
+    card.innerHTML = `
+      <div class="cc-head">
+        <span class="cc-name">${escapeHtml(cand.name || "—")}</span>
+        <span class="cc-age muted">age ${cand.age ?? "—"}</span>
+      </div>
+      <div class="cc-job muted">${escapeHtml(job)}</div>
+      <div class="cc-attrs">
+        <span title="Intelligence">int ${attrs.intelligence ?? "—"}</span>
+        <span title="Appearance">app ${attrs.appearance ?? "—"}</span>
+        <span title="Conscience">con ${attrs.conscience ?? "—"}</span>
+        <span title="Wisdom">wis ${attrs.wisdom ?? "—"}</span>
+      </div>
+      <div class="cc-compat">compatibility <strong>${compat}</strong></div>
+      <button class="btn cc-pick" data-idx="${idx}">Pick this one</button>
+    `;
+    card.querySelector(".cc-pick").addEventListener("click", () => {
+      decide(`pick_${idx}`);
+    });
+    host.appendChild(card);
+  });
 }
 
 function renderTurn(turn) {
