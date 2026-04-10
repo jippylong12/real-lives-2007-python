@@ -991,6 +991,81 @@ def test_handicraft_worker_is_terminal_freelance():
     )
 
 
+def test_education_path_vocational_choice_does_not_get_clobbered_at_age_18():
+    """#83 followup regression: when the player picks 'vocational' from
+    EDUCATION_PATH at age 17, the auto secondary-completion branch in
+    education.update_education must not re-roll their track at age 18.
+    The user reported the trade picker (VOCATIONAL_TRACK) never fired
+    because the auto-branch clobbered school_track between turns."""
+    from src.engine import education
+    from src.engine.events import _education_vocational
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.in_school = True
+    char.school_track = "secondary"
+    char.education = EducationLevel.PRIMARY
+    char.age = 17
+
+    # Simulate picking 'vocational' on the EDUCATION_PATH event.
+    _education_vocational(char)
+    assert char.school_track == "vocational"
+    assert char.in_school is True
+    assert char.education == EducationLevel.SECONDARY  # bumped on entry
+
+    # Advance one year — at 18 the auto-branch must NOT re-roll the
+    # track. school_track stays "vocational".
+    char.age = 18
+    education.update_education(char, country, rng)
+    assert char.school_track == "vocational", (
+        f"auto-branch clobbered the user's choice; school_track is {char.school_track!r}"
+    )
+    assert char.in_school is True
+
+    # Year 19: still in school
+    char.age = 19
+    education.update_education(char, country, rng)
+    assert char.school_track == "vocational"
+    assert char.in_school is True
+
+    # Year 20: graduates and (with vocation_field set) gets a starter job.
+    char.vocation_field = "trades"
+    char.age = 20
+    msg = education.update_education(char, country, rng)
+    assert char.in_school is False
+    assert char.school_track is None
+    assert char.education == EducationLevel.VOCATIONAL
+    assert char.job is not None, f"vocational grad should have starter job, msg={msg}"
+
+
+def test_education_path_university_choice_does_not_get_clobbered():
+    """Same regression as the vocational case but for university."""
+    from src.engine import education
+    from src.engine.events import _education_university
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(1)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.in_school = True
+    char.school_track = "secondary"
+    char.education = EducationLevel.PRIMARY
+    char.age = 17
+
+    _education_university(char)
+    assert char.school_track == "university"
+    assert char.education == EducationLevel.SECONDARY
+
+    char.age = 18
+    education.update_education(char, country, rng)
+    assert char.school_track == "university", (
+        f"auto-branch clobbered the user's choice; school_track is {char.school_track!r}"
+    )
+    assert char.in_school is True
+
+
 def test_vocational_graduation_places_starter_job_in_chosen_field():
     """#83 followup: when a character finishes vocational school with
     a vocation_field set (via VOCATIONAL_TRACK), the graduation event

@@ -674,30 +674,37 @@ CONVERSION_OFFER = _choice(
 
 
 def _education_university(c):
-    # Stay in school — education.update_education will auto-promote at 18
-    # to SECONDARY, then to UNIVERSITY at 22. school_track lets the
-    # vocational vs university completion branches and the UI tell
-    # them apart while in school.
+    # Stay in school. Bump education to SECONDARY immediately — the
+    # event fires at age 17 as the "finish secondary + decide next
+    # step" moment, so the player has *just* completed secondary by
+    # picking this. Bumping here also disarms the age-18 auto-branch
+    # in education.update_education which would otherwise re-roll
+    # the track and clobber the player's choice.
     c.in_school = True
     c.school_track = "university"
+    c.education = EducationLevel.SECONDARY
 
 
 def _education_vocational(c):
-    # Enter a 2-year vocational program. Mirror the university path:
-    # stay in school, set school_track, DO NOT grant the credential
-    # on entry (granted on graduation by education.update_education at
-    # age 20). Previously this immediately set in_school=False and
-    # granted education=VOCATIONAL, which made the player think they
-    # were in school but the engine treated them as a graduated adult.
+    # Enter a 2-year vocational program. Mirror university entry:
+    # stay in school, set school_track, bump to SECONDARY (the
+    # credential earned by reaching this branching moment). The
+    # VOCATIONAL credential is granted at age 20 by the
+    # vocational-completion branch in education.update_education.
+    # Previously this set in_school=False and education=VOCATIONAL
+    # immediately, lying to the player about being in school.
     c.in_school = True
     c.school_track = "vocational"
+    c.education = EducationLevel.SECONDARY
 
 
 def _education_dropout(c):
-    # Leave school. Education stays at whatever level was already
-    # completed (primary or none).
+    # Leave school after secondary, having earned the secondary
+    # credential. Same education bump as the university/vocational
+    # paths since this fires at the same end-of-secondary moment.
     c.in_school = False
     c.school_track = None
+    c.education = EducationLevel.SECONDARY
 
 
 def _set_vocation(field):

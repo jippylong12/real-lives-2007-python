@@ -56,7 +56,19 @@ def update_education(character: Character, country: Country, rng: random.Random)
     # KEEP in_school=True and only flip school_track. The credential
     # (VOCATIONAL / UNIVERSITY) is granted on completion, NOT on entry —
     # mirrors how university already works.
-    if a == SECONDARY_END_AGE + 1 and character.education == EducationLevel.PRIMARY and character.in_school:
+    #
+    # This is a fallback path. The normal flow goes through the
+    # EDUCATION_PATH choice event in events.py which fires at age 17,
+    # bumps education to SECONDARY immediately, and sets school_track
+    # to "vocational" or "university" — which makes the education
+    # gate here false so this branch is a no-op for those characters.
+    # The school_track guard is belt-and-suspenders: even if some
+    # other path leaves the character at education=PRIMARY but
+    # already-tracked, don't clobber the user's choice.
+    if (a == SECONDARY_END_AGE + 1
+            and character.education == EducationLevel.PRIMARY
+            and character.in_school
+            and character.school_track not in ("vocational", "university")):
         character.education = EducationLevel.SECONDARY
         intel = character.attributes.intelligence
         wealth = character.money + character.family_wealth
