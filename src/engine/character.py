@@ -150,6 +150,15 @@ class Spouse:
     # 'divorced', 'widowed', or None for an ongoing marriage.
     ended_year: int | None = None
     end_state: str | None = None
+    # #94: needed so the disease engine's urban_skew modifier works on
+    # the spouse the same way it does on the player. Synced from the
+    # host character at marriage time and on emigration.
+    is_urban: bool = True
+    # #96: divorce-strain accumulator. Each year, the strain rises in
+    # proportion to (100 - compatibility). When it crosses a threshold
+    # the DIVORCE_CONSIDERATION choice event fires, letting the player
+    # choose counseling / separation / push through.
+    relationship_strain: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -170,6 +179,8 @@ class Spouse:
             "diseases": {k: dict(v) for k, v in self.diseases.items()},
             "ended_year": self.ended_year,
             "end_state": self.end_state,
+            "is_urban": self.is_urban,
+            "relationship_strain": self.relationship_strain,
         }
 
     @classmethod
@@ -192,6 +203,8 @@ class Spouse:
             diseases={k: dict(v) for k, v in d.get("diseases", {}).items()},
             ended_year=d.get("ended_year"),
             end_state=d.get("end_state"),
+            is_urban=d.get("is_urban", True),
+            relationship_strain=d.get("relationship_strain", 0),
         )
 
 

@@ -264,11 +264,13 @@ def emigrate(
 
     # Spouse (if any) moves with you. Their country is updated and
     # their job/salary cleared so they re-roll their working life in
-    # the new country.
+    # the new country. is_urban is re-synced from the player so the
+    # disease engine's urban_skew applies symmetrically (#94).
     if char.spouse and char.spouse.alive:
         char.spouse.country_code = target_country.code
         char.spouse.job = None
         char.spouse.salary = 0
+        char.spouse.is_urban = char.is_urban
 
     # Cultural displacement happiness hit, tempered by language match.
     happiness_hit = -10
