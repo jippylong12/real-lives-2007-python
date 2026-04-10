@@ -956,6 +956,34 @@ def test_vocational_school_has_duration_and_grants_credential_on_completion():
     assert msg and "graduated from vocational" in msg.lower()
 
 
+def test_modern_self_employment_kinds_loaded_as_freelance():
+    """#83: the new modern self-employment kinds (online seller, content
+    creator, food vendor, gig worker, freelance consultant) load from
+    the synthetic-ladder seed and are flagged is_freelance=True with
+    no promotion ladder."""
+    from src.engine import careers
+
+    expected = {
+        "online seller":        "business",
+        "content creator":      "arts",
+        "food vendor":          "service",
+        "gig worker":           "service",
+        "freelance consultant": "business",
+    }
+    for name, expected_category in expected.items():
+        job = careers.get_job(name)
+        assert job is not None, f"{name} did not load"
+        assert job.is_freelance, f"{name} should be is_freelance=True"
+        assert job.category == expected_category, (
+            f"{name} category {job.category!r} != {expected_category!r}"
+        )
+        # No promotion ladder — entrepreneurs run their venture
+        # indefinitely.
+        assert job.promotes_to is None, (
+            f"{name} should be standalone but promotes_to={job.promotes_to!r}"
+        )
+
+
 def test_university_track_still_works_after_school_track_field_added():
     """#82-followup: ensure the existing university path still progresses
     correctly through 4 years of in-school time after we added the

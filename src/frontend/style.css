@@ -464,6 +464,19 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   font-weight: 700;
   color: var(--ink-mute);
 }
+/* Freelance tag next to the category in the career card (#83) */
+.career-freelance-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #b9904a;
+  background: #f7eecf;
+  border-radius: 999px;
+}
 .career-promos {
   color: var(--ink-mute);
   font-variant-numeric: tabular-nums;

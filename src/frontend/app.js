@@ -831,11 +831,16 @@ function closeJobBoard() {
   $("#jobboard-modal").classList.add("hidden");
 }
 
+// Pseudo-category constant for the Self-employment tab. Distinct from
+// the real job categories so renderJobBoardList knows to filter on
+// is_freelance instead of an exact category match. (#83)
+const SELF_EMPLOYED_TAB = "Self-employment";
+
 function renderJobBoardTabs() {
   const tabs = $("#jobboard-tabs");
-  const cats = ["All", ...new Set(jobboardState.listings.map((l) => l.category).filter(Boolean))].sort((a, b) =>
-    a === "All" ? -1 : b === "All" ? 1 : a.localeCompare(b)
-  );
+  // Tab order: All, Self-employment, then alphabetical real categories.
+  const realCats = [...new Set(jobboardState.listings.map((l) => l.category).filter(Boolean))].sort();
+  const cats = ["All", SELF_EMPLOYED_TAB, ...realCats];
   tabs.innerHTML = "";
   for (const c of cats) {
     const btn = document.createElement("button");
@@ -854,7 +859,11 @@ function renderJobBoardList() {
   const host = $("#jobboard-list");
   host.innerHTML = "";
   let listings = jobboardState.listings;
-  if (jobboardState.category !== "All") {
+  if (jobboardState.category === SELF_EMPLOYED_TAB) {
+    // Self-employment tab pulls every is_freelance listing across all
+    // real categories. (#83)
+    listings = listings.filter((l) => l.is_freelance);
+  } else if (jobboardState.category !== "All") {
     listings = listings.filter((l) => l.category === jobboardState.category);
   }
   // Hide long shots and out-of-reach unless the player toggled them on (#58).
@@ -1283,6 +1292,11 @@ function renderGame() {
     } else {
       careerEl.classList.remove("hidden");
       const ladderProgress = Math.min(100, Math.round(100 * career.years_in_role / career.years_to_promote));
+      // #83: a true entrepreneur is freelance with no next rung in the
+      // ladder. Promotable freelancers (writer → published author,
+      // artist → exhibited artist) keep their normal ladder UI.
+      const isEntrepreneur = !!career.is_freelance && !career.next_job;
+
       let nextLine = "";
       let gatesLine = "";
       if (career.next_job) {
@@ -1295,6 +1309,8 @@ function renderGame() {
           const chips = missing.map((m) => `<span class="gate-chip">${escapeHtml(m)}</span>`).join("");
           gatesLine = `<div class="career-gates">Needs ${chips}</div>`;
         }
+      } else if (isEntrepreneur) {
+        nextLine = `<div class="career-next muted">Self-employed — earnings vary year to year based on talent and luck.</div>`;
       } else {
         nextLine = `<div class="career-next muted">Top of the ladder.</div>`;
       }
@@ -1307,11 +1323,15 @@ function renderGame() {
       // clicks silently and leave the player wondering why nothing
       // happens — always show a clickable button with feedback on the
       // blocked path.
+      //
+      // #83: true entrepreneurs (freelance + no ladder) skip the raise
+      // and promotion buttons entirely — they don't have a boss or a
+      // ladder to climb. They keep the Retire button.
       const raiseLive    = !!career.can_request_raise;
       const promoLive    = !!career.can_request_promotion;
       const retireLive   = !!career.can_retire;
-      const showRaiseBtn = raiseLive || eligibleByYears;
-      const showPromoBtn = promoLive || (eligibleByYears && career.next_job);
+      const showRaiseBtn = !isEntrepreneur && (raiseLive || eligibleByYears);
+      const showPromoBtn = !isEntrepreneur && (promoLive || (eligibleByYears && career.next_job));
       // Retire is always offered when employed — the blocked variant
       // surfaces the age / wealth gate up-front.
       const showRetireBtn = !!career.current_job;
@@ -1329,13 +1349,23 @@ function renderGame() {
           ? `<button id="btn-retire" class="btn xs">Retire</button>`
           : `<button id="btn-retire-blocked" class="btn xs blocked" data-reason="${escapeHtml(career.retire_blocked_reason || "not eligible")}">Retire</button>`;
 
+      // Years label — for ladder jobs show progress toward promotion;
+      // for entrepreneurs just show how long they've been at it.
+      const yearsLabel = isEntrepreneur
+        ? `${career.years_in_role} year${career.years_in_role === 1 ? "" : "s"} self-employed`
+        : `${career.years_in_role} / ${career.years_to_promote} yrs in role`;
+      // Hide the ladder progress bar for entrepreneurs (no ladder).
+      const barHtml = isEntrepreneur
+        ? ""
+        : `<div class="career-bar"><span style="width:${ladderProgress}%"></span></div>`;
+
       careerEl.innerHTML = `
         <div class="career-head">
-          <span class="career-cat">${cat}</span>
+          <span class="career-cat">${cat}${career.is_freelance ? ' <span class="career-freelance-tag">freelance</span>' : ""}</span>
           <span class="career-promos">${career.promotion_count} promotion${career.promotion_count === 1 ? "" : "s"}</span>
         </div>
-        <div class="career-bar"><span style="width:${ladderProgress}%"></span></div>
-        <div class="career-yrs">${career.years_in_role} / ${career.years_to_promote} yrs in role</div>
+        ${barHtml}
+        <div class="career-yrs">${yearsLabel}</div>
         ${nextLine}
         ${gatesLine}
         ${(raiseBtn || promoBtn || retireBtn) ? `<div class="career-actions">${raiseBtn} ${promoBtn} ${retireBtn}</div>` : ""}

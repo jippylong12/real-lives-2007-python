@@ -549,6 +549,18 @@ SYNTHETIC_JOB_LADDERS: list[dict] = [
     {"name": "street musician",    "min_education": 0, "min_intelligence": 20, "min_age": 12, "max_age": 90, "salary_low":   6000, "salary_high":  16000, "urban_only": 1, "rural_only": 0, "category": "arts", "promotes_to": "musician", "is_freelance": 1},
     # 'musician' existing binary; patched.
     {"name": "recording artist",   "min_education": 0, "min_intelligence": 30, "min_age": 20, "max_age": 80, "salary_low":  50000, "salary_high": 250000, "urban_only": 1, "rural_only": 0, "category": "arts", "promotes_to": None, "is_freelance": 1},
+
+    # ----- Modern self-employment (#83) — standalone freelance kinds
+    # the 2007 binary doesn't have. Each is a single-rung path with
+    # wide salary variance via is_freelance. No promotion ladder —
+    # the player runs the venture indefinitely. Categories chosen so
+    # the relevant_attribute (intelligence/artistic/appearance/strength)
+    # actually rewards a coherent character build.
+    {"name": "online seller",        "min_education": 0, "min_intelligence": 30, "min_age": 16, "max_age": 70, "salary_low":  8000, "salary_high":  60000, "urban_only": 0, "rural_only": 0, "category": "business", "promotes_to": None, "is_freelance": 1},
+    {"name": "content creator",      "min_education": 0, "min_intelligence": 25, "min_age": 14, "max_age": 70, "salary_low":  4000, "salary_high":  80000, "urban_only": 0, "rural_only": 0, "category": "arts",     "promotes_to": None, "is_freelance": 1},
+    {"name": "food vendor",          "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 70, "salary_low": 10000, "salary_high":  35000, "urban_only": 1, "rural_only": 0, "category": "service",  "promotes_to": None, "is_freelance": 1},
+    {"name": "gig worker",           "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 65, "salary_low":  6000, "salary_high":  25000, "urban_only": 1, "rural_only": 0, "category": "service",  "promotes_to": None, "is_freelance": 1},
+    {"name": "freelance consultant", "min_education": 4, "min_intelligence": 60, "min_age": 25, "max_age": 75, "salary_low": 40000, "salary_high": 200000, "urban_only": 0, "rural_only": 0, "category": "business", "promotes_to": None, "is_freelance": 1},
 ]
 
 

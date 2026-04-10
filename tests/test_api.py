@@ -283,3 +283,49 @@ def test_invest_validation_insufficient_funds(client):
     realestate = next(p for p in invs if "real estate" in p["name"])
     r = client.post(f"/api/game/{gid}/invest", json={"product_id": realestate["id"], "amount": 100000})
     assert r.status_code == 400
+
+
+def test_self_employment_kinds_in_job_board_and_career_payload(client):
+    """#83: the new modern self-employment kinds appear on the job
+    board with is_freelance=True, and an applied freelance job
+    surfaces is_freelance in the /game career payload so the frontend
+    can swap raise/promo buttons for entrepreneur UI."""
+    from src.engine import careers
+    from src.engine.game import load_game
+    from src.engine.world import get_country
+
+    g = client.post("/api/game/new", json={"country_code": "us", "seed": 23}).json()
+    gid = g["id"]
+
+    # Advance the character to age 25 so they can see all self-employment kinds.
+    while g["character"]["age"] < 25:
+        rr = client.post(f"/api/game/{gid}/advance").json()
+        if rr["turn"]["pending_decision"]:
+            client.post(f"/api/game/{gid}/decision", json={"choice_key": rr["turn"]["pending_decision"]["choices"][0]["key"]})
+        g = rr["game"]
+        if rr["turn"]["died"]:
+            pytest.skip("character died young")
+
+    # /job_board should include the new freelance kinds (with show_all
+    # toggled on so out_of_reach + long_shot show too).
+    listings = client.get(f"/api/game/{gid}/job_board").json()
+    listing_names = {l["name"] for l in listings}
+    for name in ("online seller", "content creator", "food vendor", "gig worker", "freelance consultant"):
+        assert name in listing_names, f"{name} missing from job board"
+    # Each new kind is flagged is_freelance.
+    for l in listings:
+        if l["name"] in ("online seller", "content creator", "food vendor", "gig worker", "freelance consultant"):
+            assert l["is_freelance"] is True, f"{l['name']} should be is_freelance"
+
+    # Manually park the character in a freelance job (bypassing the
+    # accept-probability roll for test reliability).
+    game = load_game(gid)
+    food_vendor = careers.get_job("food vendor")
+    assert food_vendor is not None
+    careers._set_job(game.state.character, get_country("us"), food_vendor, game.rng)
+    game.save()
+
+    # The career payload exposes is_freelance.
+    g = client.get(f"/api/game/{gid}").json()
+    assert g["career"]["current_job"] == "food vendor"
+    assert g["career"]["is_freelance"] is True

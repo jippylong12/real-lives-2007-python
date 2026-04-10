@@ -188,6 +188,11 @@ def _career_summary(character, country) -> dict | None:
         # #82: early retirement
         "can_retire": can_retire_now,
         "retire_blocked_reason": retire_reason,
+        # #83: self-employment indicator. The frontend hides raise /
+        # promotion buttons for true entrepreneurs (freelance + no
+        # next rung). Promotable freelancers like writer→published
+        # author keep their normal ladder UI.
+        "is_freelance": bool(job.is_freelance),
     }
 
 
