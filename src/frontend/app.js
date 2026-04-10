@@ -1177,6 +1177,48 @@ async function showStartScreen() {
   renderSlotGrid();
 }
 
+// #95: render a "Marriages" section in the death screen listing every
+// spouse the character ever had, with span (years married) and end state
+// (divorced / widowed / still married at death). Only renders if there's
+// at least one prior spouse — single-marriage characters keep the simple
+// "Married: yes/no" stats row.
+function renderMarriagesSection(c) {
+  const prev = c.previous_spouses || [];
+  const current = c.spouse;
+  if (prev.length === 0) {
+    // Tear down any leftover section from a previous render so the
+    // archived-life view doesn't bleed state.
+    const existing = document.getElementById("death-marriages");
+    if (existing) existing.remove();
+    return;
+  }
+  let host = document.getElementById("death-marriages");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "death-marriages";
+    host.className = "death-marriages";
+    const diseases = document.getElementById("death-diseases");
+    diseases.parentNode.insertBefore(host, diseases);
+  }
+  const lines = [];
+  lines.push('<h3 class="ds-section-title">Marriages</h3>');
+  const renderEntry = (s, label) => {
+    const married = s.married_year != null;
+    const span = (s.ended_year != null && s.married_year != null)
+      ? ` · ${Math.max(0, s.ended_year - s.married_year)} years`
+      : "";
+    return `<div class="marriage-entry"><span class="m-name">${escapeHtml(s.name || "—")}</span>` +
+           `<span class="m-state muted">${escapeHtml(label)}${span}</span></div>`;
+  };
+  for (const s of prev) {
+    lines.push(renderEntry(s, s.end_state || "ended"));
+  }
+  if (current) {
+    lines.push(renderEntry(current, "still married at death"));
+  }
+  host.innerHTML = lines.join("");
+}
+
 function showDeathScreen(turn) {
   $("#screen-game").classList.add("hidden");
   $("#screen-statistics").classList.add("hidden");
@@ -1232,6 +1274,12 @@ function showDeathScreen(turn) {
     row.innerHTML = `<span>${k}</span><strong>${v}</strong>`;
     summary.appendChild(row);
   }
+
+  // #95: marriages history. If the character had any prior spouses
+  // (divorced or widowed), render a Marriages section that lists every
+  // marriage with name, span, and end state. The current spouse (if
+  // any) appears at the bottom as 'still married'.
+  renderMarriagesSection(c);
 
   // Diseases list with treated/permanent annotation.
   const dis = $("#death-diseases");

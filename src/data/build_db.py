@@ -122,7 +122,8 @@ CREATE TABLE IF NOT EXISTS countries (
     safe_water_pct          REAL NOT NULL,
     health_services_pct     REAL NOT NULL,
     at_war                  INTEGER NOT NULL DEFAULT 0,    -- #17, from binary
-    military_conscription   INTEGER NOT NULL DEFAULT 0     -- #17, from binary
+    military_conscription   INTEGER NOT NULL DEFAULT 0,    -- #17, from binary
+    divorce_rate            REAL                           -- #92, curated; NULL = HDI fallback
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -312,26 +313,39 @@ CREATE INDEX IF NOT EXISTS idx_life_archive_died_year ON life_archive(died_year)
 """
 
 
-# Idempotent post-create migrations for the life_archive table.
-# CREATE TABLE IF NOT EXISTS won't add new columns to an existing
-# table, so columns added after the table first shipped need ALTER
-# TABLE statements that swallow "duplicate column name" errors.
+# Idempotent post-create migrations. CREATE TABLE IF NOT EXISTS won't
+# add new columns to an existing table, so columns added after a table
+# first shipped need ALTER TABLE statements that swallow the "duplicate
+# column name" error so re-runs are no-ops.
 LIFE_ARCHIVE_MIGRATIONS = [
     "ALTER TABLE life_archive ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
 ]
+COUNTRIES_MIGRATIONS = [
+    # #92: country-level lifetime divorce probability. NULL means the
+    # engine should fall back to the HDI heuristic.
+    "ALTER TABLE countries ADD COLUMN divorce_rate REAL",
+]
 
 
-def _apply_life_archive_migrations(conn: sqlite3.Connection) -> None:
-    """Run idempotent ALTER TABLE migrations for the life_archive
-    table. Each migration is wrapped in a try/except so re-running
-    a migration that's already been applied is a no-op."""
-    for sql in LIFE_ARCHIVE_MIGRATIONS:
+def _apply_idempotent_migrations(conn: sqlite3.Connection, statements: list[str]) -> None:
+    """Run a list of ALTER TABLE statements, swallowing the
+    'duplicate column name' error so re-running migrations on an
+    already-up-to-date database is a no-op."""
+    for sql in statements:
         try:
             conn.execute(sql)
         except sqlite3.OperationalError as e:
-            # 'duplicate column name' is the expected no-op signal.
             if "duplicate column name" not in str(e).lower():
                 raise
+
+
+def _apply_life_archive_migrations(conn: sqlite3.Connection) -> None:
+    """Backwards-compat shim for the original life-archive migration helper."""
+    _apply_idempotent_migrations(conn, LIFE_ARCHIVE_MIGRATIONS)
+
+
+def _apply_countries_migrations(conn: sqlite3.Connection) -> None:
+    _apply_idempotent_migrations(conn, COUNTRIES_MIGRATIONS)
 
 
 def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
@@ -354,6 +368,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
         # Idempotent post-create migrations for tables that ship
         # additional columns over time.
         _apply_life_archive_migrations(conn)
+        _apply_countries_migrations(conn)
 
         # 1. Recovered schema from .dat files.
         parsed_files = parse_dat.parse_all(data_dir)
@@ -441,6 +456,10 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
 
             at_war = 1 if bin_row.get("AtWar") else 0
             conscription = 1 if bin_row.get("MilitaryConscription") else 0
+            # #92: lifetime divorce probability per country, curated from
+            # real-world data. None means the engine should fall back to
+            # the HDI heuristic in relationships.divorce_check.
+            divorce_rate = seed.COUNTRY_DIVORCE_RATES.get(c["code"])
             conn.execute(
                 """
                 INSERT OR REPLACE INTO countries (
@@ -449,8 +468,8 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     primary_religion, primary_language, capital, currency,
                     war_freq, disaster_freq, crime_rate, corruption,
                     safe_water_pct, health_services_pct,
-                    at_war, military_conscription
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    at_war, military_conscription, divorce_rate
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     c["code"], c["name"], c["region"], population, c["gdp_pc"],
@@ -459,7 +478,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     c["primary_religion"], c["primary_language"], c["capital"], c["currency"],
                     c["war_freq"], c["disaster_freq"], c["crime_rate"], c["corruption"],
                     c["safe_water_pct"], c["health_services_pct"],
-                    at_war, conscription,
+                    at_war, conscription, divorce_rate,
                 ),
             )
 

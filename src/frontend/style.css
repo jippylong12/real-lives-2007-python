@@ -944,6 +944,31 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   margin-bottom: 1rem;
 }
 
+/* #95: marriage history block in the death retrospective. Lists every
+   spouse a character ever had with end state + span. Renders only when
+   the character had more than one marriage so single-marriage lives
+   keep the simple "Married: yes/no" stats row. */
+.death-marriages {
+  display: flex; flex-direction: column;
+  margin-bottom: 1rem;
+}
+.death-marriages .ds-section-title {
+  margin: 1.6rem 0 0.6rem;
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+}
+.marriage-entry {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(20, 18, 14, 0.08);
+}
+.marriage-entry:last-child { border-bottom: none; }
+.marriage-entry .m-name { font-weight: 600; }
+.marriage-entry .m-state { font-size: 13px; }
+
 /* ---------- Footer ---------- */
 .footer { padding: 24px; text-align: center; font-size: 12px; }
 

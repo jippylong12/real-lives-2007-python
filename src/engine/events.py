@@ -2290,7 +2290,12 @@ EVENT_REGISTRY: list[Event] = [
         "romance_breakup", "Painful breakup",
         "You went through a painful breakup. It hurt for longer than you expected.",
         when=lambda c, co: 16 <= c.age <= 45 and not c.married,
-        chance=lambda c, co: 0.10,
+        # #97: low-compat dating relationships break up more often. With
+        # no spouse object the rate stays flat (no partner to be incompat
+        # with — the legacy single-roll path).
+        chance=lambda c, co: (
+            0.10 * (1.6 if c.spouse and c.spouse.compatibility < 40 else 1.0)
+        ),
         cooldown_years=3, deltas={"happiness": -5, "wisdom": +3},
     ),
     _simple_passive(
@@ -2303,14 +2308,26 @@ EVENT_REGISTRY: list[Event] = [
     _simple_passive(
         "romance_anniversary", "Celebrated an anniversary",
         "You and your spouse marked another year together.",
-        when=lambda c, co: c.married, chance=lambda c, co: 0.50,
+        when=lambda c, co: c.married,
+        # #97: high-compat marriages celebrate more, low-compat ones less.
+        chance=lambda c, co: 0.50 * (
+            1.30 if c.spouse and c.spouse.compatibility > 75 else
+            0.65 if c.spouse and c.spouse.compatibility < 40 else
+            1.00
+        ),
         cooldown_years=0, deltas={"happiness": +2},
     ),
     _simple_passive(
         "romance_getaway", "Romantic getaway",
         "You and your spouse took a romantic getaway just for the two of you.",
         when=lambda c, co: c.married and (c.money + c.family_wealth) > 2000,
-        chance=lambda c, co: 0.10,
+        # #97: same compat bias as the anniversary roll — happy marriages
+        # take more trips together; unhappy ones cocoon.
+        chance=lambda c, co: 0.10 * (
+            1.40 if c.spouse and c.spouse.compatibility > 75 else
+            0.60 if c.spouse and c.spouse.compatibility < 40 else
+            1.00
+        ),
         cooldown_years=4, deltas={"happiness": +5},
         money_delta=-800,
     ),
@@ -2331,7 +2348,13 @@ EVENT_REGISTRY: list[Event] = [
     _simple_passive(
         "romance_big_argument", "Big argument with partner",
         "You and your partner had a major fight and made up.",
-        when=lambda c, co: c.married, chance=lambda c, co: 0.15,
+        when=lambda c, co: c.married,
+        # #97: low-compat marriages fight more, high-compat ones rarely.
+        chance=lambda c, co: 0.15 * (
+            1.80 if c.spouse and c.spouse.compatibility < 40 else
+            0.50 if c.spouse and c.spouse.compatibility > 75 else
+            1.00
+        ),
         cooldown_years=2, deltas={"happiness": -2, "wisdom": +2},
     ),
     _simple_passive(
@@ -2345,7 +2368,12 @@ EVENT_REGISTRY: list[Event] = [
         "romance_partner_disapproved", "Partner's family disapproved",
         "Your partner's family didn't approve. It put pressure on the relationship.",
         when=lambda c, co: 18 <= c.age <= 35 and not c.married,
-        chance=lambda c, co: 0.04,
+        # #97: a high-compat dating partner makes their family less likely
+        # to derail the relationship; only meaningful once a Spouse exists
+        # (the dating-flow PR will populate it more frequently).
+        chance=lambda c, co: 0.04 * (
+            0.5 if c.spouse and c.spouse.compatibility > 75 else 1.0
+        ),
         cooldown_years=6, deltas={"happiness": -3, "wisdom": +2},
     ),
 

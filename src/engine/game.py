@@ -275,12 +275,18 @@ class Game:
                 char.remember(f"Your spouse {name} died of {cause}.")
 
         # #50: divorce check. Yearly chance scaled by compatibility +
-        # country HDI. Silent automatic for v1; CHOICE-event variant
-        # is filed as #95.
+        # country divorce_rate (#92, falls back to HDI when unset).
+        # Silent automatic for v1; CHOICE-event variant is filed as #96.
         if relationships.divorce_check(char, country, self.rng):
             former = char.spouse
             split = max(0, char.family_wealth // 2)
             char.family_wealth -= split
+            # #95: archive the former spouse with end metadata so the
+            # death retrospective can render the full marriage history.
+            if former is not None:
+                former.ended_year = char.age
+                former.end_state = "divorced"
+                char.previous_spouses.append(former)
             char.spouse = None
             # Mirror to the family list — the spouse FamilyMember
             # entry should reflect the breakup.
