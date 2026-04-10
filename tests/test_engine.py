@@ -2190,6 +2190,10 @@ def test_emigration_descent_route_works_for_return():
     assert char.country_code == "de"
     assert "us" in char.previous_countries
 
+    # Advance past the #98 cooldown — descent eligibility is the
+    # focus of this test, not the cooldown gate (covered separately).
+    char.age = 36
+
     # Now drop intelligence so the skilled-worker route would fail.
     char.attributes.intelligence = 30
     char.education = 1
@@ -2237,6 +2241,128 @@ def test_emigration_blocked_for_minors():
     )
     assert not eligible
     assert "young" in reason.lower() or "16" in reason
+
+
+def test_emigration_cooldown_blocks_immediate_second_move():
+    """#98 — after emigrating, the cooldown gate prevents another move
+    until at least EMIGRATION_COOLDOWN_YEARS have passed, even if the
+    character would otherwise qualify (e.g., via the descent route)."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 200_000
+
+    # First move: US → DE.
+    result = emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert result.outcome == "emigrated"
+    assert char.last_emigration_age == 30
+
+    # Try to immediately bounce back to the US — descent route would
+    # qualify but cooldown should block it.
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(
+        char, get_country("de"), get_country("us"),
+    )
+    assert not eligible
+    assert reason and ("settled" in reason.lower() or "wait" in reason.lower())
+
+    # Advance 5 years and the gate clears.
+    char.age = 35
+    eligible, routes, _reason = emigration.is_eligible_to_emigrate(
+        char, get_country("de"), get_country("us"),
+    )
+    assert eligible
+    assert "descent" in routes
+
+
+def test_emigration_cooldown_survives_round_trip_serialization():
+    """The new last_emigration_age field is round-tripped through
+    Character.to_dict / from_dict so a save/load doesn't lose the
+    cooldown state."""
+    from src.engine import emigration
+    from src.engine.character import Character
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 50_000
+
+    emigration.emigrate(char, get_country("de"), 2030, rng)
+    payload = char.to_dict()
+    rehydrated = Character.from_dict(payload)
+    assert rehydrated.last_emigration_age == 30
+
+
+def test_emigration_picks_a_known_magnet_city_for_us():
+    """#100 — sampling many emigrations to a country with a curated
+    magnet list lands the player in a magnet city the vast majority
+    of the time. Tests the weighting, not a deterministic outcome."""
+    from src.data.seed import MIGRATION_MAGNETS
+    from src.engine import emigration
+
+    magnets_lower = {n.lower() for n in MIGRATION_MAGNETS["us"]}
+    rng = random.Random(123)
+    hits = 0
+    trials = 80
+    for _ in range(trials):
+        city, _is_urban = emigration.pick_emigration_city(get_country("us"), rng)
+        # Strip the "a village near " prefix when present so rural
+        # placements still count toward the underlying-city tally.
+        bare = city.replace("a village near ", "").lower()
+        if bare in magnets_lower:
+            hits += 1
+    # Heavy weighting (10× vs 0.4×) plus a long curated list should
+    # land at least 70% of arrivals in a magnet city. The remaining
+    # 30% headroom keeps the test stable across rng seeds.
+    assert hits / trials >= 0.7, f"only {hits}/{trials} landings in a magnet city"
+
+
+def test_emigration_skilled_worker_auto_assigns_job_in_vocation_field():
+    """#101 — a skilled-worker emigrant who already has a vocation
+    field gets a starter job in that field on arrival, instead of
+    needing to manually find work."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 80_000
+    char.vocation_field = "stem"
+    char.job = None
+    char.salary = 0
+
+    result = emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert result.outcome == "emigrated"
+    assert "skilled_worker" in result.routes
+    # Auto-assign should have populated job + salary in the new country.
+    assert char.job is not None, "skilled-worker emigrant should arrive with a job"
+    assert char.salary > 0
+    # Message reflects the assignment.
+    assert "skilled-worker" in result.message or char.job in result.message
+
+
+def test_emigration_refugee_does_not_auto_assign_job():
+    """Refugee/family routes really do start from scratch — only
+    skilled_worker triggers the auto-assign in #101."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("af"), rng)  # Afghanistan, at_war=1
+    char.age = 30
+    char.family_wealth = 5_000
+    char.vocation_field = "stem"
+    char.job = None
+    char.salary = 0
+
+    result = emigration.emigrate(char, get_country("se"), 2030, rng)
+    assert result.outcome == "emigrated"
+    assert "refugee" in result.routes
+    assert "skilled_worker" not in result.routes
+    assert char.job is None
+    assert char.salary == 0
 
 
 # ---------- #50 Better romance ----------

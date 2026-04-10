@@ -26,10 +26,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .character import Character, EducationLevel
-from .world import Country, all_countries, get_country, pick_birth_city
+from .world import Country, all_countries, cities_for, get_country
 
 if TYPE_CHECKING:
     pass
+
+
+# #98: Minimum number of years between emigrations regardless of route.
+# Real visas take time to process and migrant lives take time to settle —
+# without this gate a player could bounce between countries every year
+# via the descent route once they had any travel history.
+EMIGRATION_COOLDOWN_YEARS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +133,16 @@ def is_eligible_to_emigrate(
     if char.age < 16:
         return False, [], "too young to emigrate independently"
 
+    # #98: cooldown gate. A character who recently emigrated can't move
+    # again until at least EMIGRATION_COOLDOWN_YEARS have passed.
+    if char.last_emigration_age is not None:
+        years_since = char.age - char.last_emigration_age
+        if years_since < EMIGRATION_COOLDOWN_YEARS:
+            wait = EMIGRATION_COOLDOWN_YEARS - years_since
+            return False, [], (
+                f"you only just settled — wait {wait} more year(s) before moving again"
+            )
+
     routes: list[str] = []
     if _qualifies_skilled_worker(char, src, tgt):
         routes.append("skilled_worker")
@@ -160,6 +177,48 @@ def emigration_cost(char: Character) -> int:
     return max(500, int(max(0, char.family_wealth) * 0.20))
 
 
+def pick_emigration_city(target: Country, rng: random.Random) -> tuple[str, bool]:
+    """Pick an arrival city for an emigrant (#100).
+
+    Migrants cluster in 'magnet cities' — well-known immigrant hubs —
+    at much higher rates than the general population. The curated
+    ``MIGRATION_MAGNETS`` table in seed.py lists those hubs per
+    target country.
+
+    The pick is heavily weighted toward magnet cities (10× the base
+    rank weight) but still allows the occasional non-magnet landing
+    so a player isn't always handed the same destination. Migrants
+    also land urban much more often than the country's general
+    population because the visa logistics + jobs that anchor
+    migration are concentrated in cities.
+    """
+    from ..data.seed import MIGRATION_MAGNETS
+
+    cities = cities_for(target.code)
+    if not cities:
+        return target.capital, True
+
+    magnets_lower = {n.lower() for n in MIGRATION_MAGNETS.get(target.code, ())}
+    if magnets_lower:
+        weights = [
+            (10.0 / c.rank if c.name.lower() in magnets_lower else 0.4 / c.rank)
+            for c in cities
+        ]
+    else:
+        # No curated list for this country — fall back to the same
+        # rank-weighting that pick_birth_city uses.
+        weights = [1.0 / c.rank for c in cities]
+
+    chosen = rng.choices(cities, weights=weights, k=1)[0]
+    # Migrants land in actual cities ~90% of the time regardless of the
+    # target country's overall urban_pct — visa sponsors and jobs are
+    # almost never in remote villages.
+    is_urban = rng.random() < 0.90
+    if is_urban:
+        return chosen.name, True
+    return f"a village near {chosen.name}", False
+
+
 def emigrate(
     char: Character, target_country: Country, year: int, rng: random.Random
 ) -> EmigrationResult:
@@ -187,8 +246,9 @@ def emigrate(
     if char.country_code not in char.previous_countries:
         char.previous_countries.append(char.country_code)
 
-    # Pick a new city + roll urban/rural in the target country.
-    new_city, new_is_urban = pick_birth_city(target_country, rng)
+    # Pick a new city in the target country, weighted toward known
+    # diaspora hubs for that country (#100).
+    new_city, new_is_urban = pick_emigration_city(target_country, rng)
 
     # Update character state.
     char.country_code = target_country.code
@@ -199,6 +259,8 @@ def emigrate(
     char.job = None
     char.salary = 0
     char.years_in_role = 0
+    # #98: stamp the cooldown.
+    char.last_emigration_age = char.age
 
     # Spouse (if any) moves with you. Their country is updated and
     # their job/salary cleared so they re-roll their working life in
@@ -219,6 +281,20 @@ def emigrate(
         f"Emigrated from {src.name} to {target_country.name} "
         f"on a {route_label} visa. Settled in {new_city}."
     )
+
+    # #101: skilled-worker route auto-assigns a starter job in the
+    # player's existing vocation field. Skilled migrants were admitted
+    # *because* of their skills — making them re-roll Find Work after
+    # arrival breaks the fiction. Refugee/family/marriage routes still
+    # start from scratch (their visa wasn't conditional on a job offer).
+    if "skilled_worker" in routes and char.vocation_field:
+        # Local import — careers.py imports from world.py so we keep
+        # the symbol lazily-loaded to avoid an import cycle.
+        from .careers import assign_job
+        job_msg = assign_job(char, target_country, rng)
+        if job_msg and char.job:
+            msg += f" Started fresh as a {char.job} on the skilled-worker visa."
+
     char.remember(msg)
 
     return EmigrationResult(
