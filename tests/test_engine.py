@@ -2039,18 +2039,183 @@ def test_vocation_field_constrains_assigned_jobs():
     )
 
 
+# ---------- #50 Better romance ----------
+
+def test_spouse_dataclass_round_trip():
+    """#50: a Spouse round-trips through Character.to_dict / from_dict
+    with all fields preserved."""
+    from src.engine import relationships
+    from src.engine.character import Character, Spouse
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    relationships.marry(char, spouse, 2030)
+    assert char.spouse is spouse
+
+    d = char.to_dict()
+    restored = Character.from_dict(d)
+    assert restored.spouse is not None
+    assert restored.spouse.name == spouse.name
+    assert restored.spouse.age == spouse.age
+    assert restored.spouse.salary == spouse.salary
+    assert restored.spouse.compatibility == spouse.compatibility
+    assert restored.spouse.married_year == 2030
+    assert restored.spouse.attributes.intelligence == spouse.attributes.intelligence
+    assert restored.married is True
+
+
+def test_legacy_marriage_migration():
+    """#50: an old save with married=True + spouse_name='X' but no
+    spouse object should rehydrate as a Spouse stub on load."""
+    from src.engine.character import Character
+    legacy = {
+        "id": "abc123", "name": "Test", "gender": 1, "age": 35,
+        "country_code": "us", "city": "NYC", "is_urban": True,
+        "attributes": {"health": 80, "happiness": 70, "intelligence": 60,
+                       "artistic": 50, "musical": 50, "athletic": 50,
+                       "strength": 50, "endurance": 50, "appearance": 60,
+                       "conscience": 60, "wisdom": 50, "resistance": 50},
+        "family_wealth": 50000, "money": 10000, "debt": 0,
+        "education": 4, "in_school": False,
+        "married": True, "spouse_name": "Jane Doe",
+    }
+    char = Character.from_dict(legacy)
+    assert char.spouse is not None
+    assert char.spouse.name == "Jane Doe"
+    assert char.spouse.married_year is not None
+    assert char.married is True
+
+
+def test_love_marriage_creates_full_spouse():
+    """#50: the LOVE_MARRIAGE accept choice runs _accept_proposal
+    which creates a full Spouse with rolled attributes."""
+    from src.engine import careers
+    from src.engine.events import _accept_proposal
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 28
+    assert char.spouse is None
+    _accept_proposal(char, ctx={"year": 2030, "country": country, "rng": rng})
+    assert char.spouse is not None
+    assert char.spouse.name
+    assert char.spouse.attributes is not None
+    assert char.spouse.attributes.intelligence > 0
+    assert char.spouse.married_year == 2030
+    assert char.married is True
+
+
+def test_joined_wealth_on_marriage():
+    """#50: marrying merges the spouse's family_wealth into the player's."""
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.family_wealth = 10_000
+
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.family_wealth = 5_000
+
+    relationships.marry(char, spouse, 2030)
+    assert char.family_wealth == 15_000
+
+
+def test_spouse_income_added_to_yearly():
+    """#50: spouse.salary contributes 80% to the household income."""
+    from src.engine import careers, relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.in_school = False
+    char.education = 4
+    char.attributes.intelligence = 70
+    char.age = 30
+    char.salary = 60_000
+    char.job = "office worker"
+    char.lifetime_earnings = 0
+
+    # Roll a spouse with a known salary, marry, then run the year.
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.salary = 80_000
+    spouse.alive = True
+    relationships.marry(char, spouse, 2030)
+
+    starting_money = char.money
+    careers.yearly_income(char, country, rng)
+    # Net should reflect (60k own income + 80% of 80k spouse) - expenses.
+    # Without the spouse, char would be net negative or near zero;
+    # the spouse's contribution should make the year clearly positive.
+    delta = char.money - starting_money
+    assert delta > 0, f"net income with spouse should be positive, got {delta}"
+
+
+def test_spouse_ages_yearly_via_age_family():
+    """#50: age_family ticks spouse.age every year."""
+    from src.engine import relationships
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    relationships.marry(char, spouse, 2030)
+    starting_age = spouse.age
+
+    relationships.age_family(char, country, rng)
+    assert char.spouse.age == starting_age + 1
+
+
+def test_spouse_eventually_dies_in_old_age():
+    """#50: an aged spouse eventually dies via the simple death roll."""
+    from src.engine import relationships
+    rng = random.Random(42)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.age = 85
+    relationships.marry(char, spouse, 2030)
+
+    died = False
+    for _ in range(50):
+        notes = relationships.age_family(char, country, rng)
+        if any(n.startswith("spouse_died:") for n in notes):
+            died = True
+            break
+    assert died, "85+ spouse should die within 50 years of rolls"
+    assert char.spouse.alive is False
+
+
+def test_divorce_eventually_for_low_compatibility():
+    """#50: a low-compatibility marriage in a high-HDI country should
+    eventually trigger divorce_check."""
+    from src.engine import relationships
+    rng = random.Random(7)
+    country = get_country("us")  # HDI ~0.92
+    char = create_random_character(country, rng)
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.compatibility = 25
+    relationships.marry(char, spouse, 2030)
+
+    fired = 0
+    for _ in range(500):
+        if relationships.divorce_check(char, country, rng):
+            fired += 1
+    assert fired > 0, "low-compatibility marriage in US should trigger divorce at least once in 500 rolls"
+
+
 def test_pregnancy_event_actually_adds_child():
     """Issue #39: the had_child event used to apply happiness deltas but
     forget to append a FamilyMember to character.children, leaving the
     sidebar 'children' counter at 0 for the entire game."""
     from src.engine.character import create_random_character
     from src.engine.events import EVENT_REGISTRY
+    from src.engine import relationships
 
     rng = random.Random(0)
     char = create_random_character(get_country("us"), rng)
     char.age = 30
-    char.married = True
-    char.spouse_name = "Test Spouse"
+    # #50: married now requires a Spouse object. Use the public marry helper.
+    spouse = relationships.roll_spouse(char, get_country("us"), 2007, rng)
+    relationships.marry(char, spouse, 2007)
     assert len(char.children) == 0
 
     pregnancy = next(e for e in EVENT_REGISTRY if e.key == "had_child")

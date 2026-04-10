@@ -881,6 +881,12 @@ def yearly_income(character: Character, country: Country, rng: random.Random) ->
     else:
         income = 0
 
+    # #50: spouse income contributes 80% of their salary to the
+    # household. The remaining 20% is the spouse's personal expenses.
+    # Skipped when the spouse is deceased or has no salary.
+    if character.spouse and character.spouse.alive and character.spouse.salary > 0:
+        income += int(character.spouse.salary * 0.8)
+
     # #82: country-scaled baseline cost of living. Children and full-time
     # students live on parental support (engine doesn't model parents
     # explicitly), so they pay nothing. Every other adult — employed,

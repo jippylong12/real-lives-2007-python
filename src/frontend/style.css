@@ -1387,6 +1387,49 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   color: #8a6817;
 }
 
+/* #50: spouse card in the sidebar with attribute mini-bars. */
+.spouse-card {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px;
+  padding: 4px 0;
+}
+.spouse-name {
+  font-family: var(--serif);
+  font-size: 14px;
+}
+.spouse-attrs {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: 6px;
+}
+.sa-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 28px;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.sa-row span:first-child {
+  text-transform: capitalize;
+}
+.sa-bar {
+  height: 5px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.sa-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.sa-row strong {
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Death actions row to fit the new "Back to statistics" button */
 #death-actions {
   display: flex;

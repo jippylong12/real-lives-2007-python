@@ -695,6 +695,29 @@ MONASTIC_RETREAT = _choice(
 )
 
 
+def _accept_proposal(c, ctx=None):
+    """#50: roll a full Spouse via relationships.roll_spouse, mark
+    them as married this year, and apply joined wealth. Used by both
+    LOVE_MARRIAGE and ARRANGED_MARRIAGE side_effects.
+
+    Accepts an optional ctx dict with 'year', 'country', 'rng' so the
+    roll is deterministic + country-aware. Falls back to a fresh
+    unseeded Random if called without ctx (legacy callers / tests)."""
+    from . import relationships
+    if ctx is None:
+        from . import world
+        import random as _random
+        country = world.get_country(c.country_code)
+        rng = _random.Random()
+        year = 0
+    else:
+        country = ctx["country"]
+        rng = ctx["rng"]
+        year = ctx["year"]
+    spouse = relationships.roll_spouse(c, country, year, rng)
+    relationships.marry(c, spouse, year)
+
+
 ARRANGED_MARRIAGE = _choice(
     key="arranged_marriage",
     title="An arranged match",
@@ -708,7 +731,8 @@ ARRANGED_MARRIAGE = _choice(
     choices=[
         EventChoice(key="accept", label="Accept the match",
                     deltas={"happiness": +4, "conscience": +2},
-                    summary="You agreed to the arranged marriage. The wedding will be next year."),
+                    summary="You agreed to the arranged marriage. The wedding will be next year.",
+                    side_effect=_accept_proposal),  # #50: was missing — latent bug
         EventChoice(key="defer", label="Ask for more time",
                     deltas={"happiness": -2, "wisdom": +1},
                     summary="You asked your family to wait. They were disappointed but understood."),
@@ -786,15 +810,6 @@ def _set_vocation(field):
     def _do(c):
         c.vocation_field = field
     return _do
-
-
-def _accept_proposal(c):
-    from .character import Gender, _random_name
-    import random as _random
-    rng = _random.Random()
-    spouse_gender = Gender.MALE if c.gender == Gender.FEMALE else Gender.FEMALE
-    c.spouse_name = _random_name(spouse_gender, rng)
-    c.married = True
 
 
 LOVE_MARRIAGE = _choice(

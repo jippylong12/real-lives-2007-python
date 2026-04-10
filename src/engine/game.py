@@ -259,7 +259,41 @@ class Game:
         if rel_msg:
             log.append(TurnEvent("relationship", "Relationship", "life", rel_msg))
             char.remember(rel_msg)
-        relationships.age_family(char)
+        # #50: age_family now accepts country + rng so it can run the
+        # spouse death roll. Notes are spouse-death markers we fan out
+        # into TurnEvents below.
+        notes = relationships.age_family(char, country, self.rng)
+        for note in notes:
+            if note.startswith("spouse_died:"):
+                _, name, cause = note.split(":", 2)
+                msg = f"{name} died of {cause}. The house feels different."
+                log.append(TurnEvent(
+                    "spouse_died", "Your spouse died", "life", msg,
+                    deltas={"happiness": -15, "wisdom": +3},
+                ))
+                char.attributes.adjust(happiness=-15, wisdom=+3)
+                char.remember(f"Your spouse {name} died of {cause}.")
+
+        # #50: divorce check. Yearly chance scaled by compatibility +
+        # country HDI. Silent automatic for v1; CHOICE-event variant
+        # is filed as #95.
+        if relationships.divorce_check(char, country, self.rng):
+            former = char.spouse
+            split = max(0, char.family_wealth // 2)
+            char.family_wealth -= split
+            char.spouse = None
+            # Mirror to the family list — the spouse FamilyMember
+            # entry should reflect the breakup.
+            char.family = [fm for fm in char.family
+                           if not (fm.relation == "spouse" and fm.name == (former.name if former else None))]
+            log.append(TurnEvent(
+                "divorce", "Divorce", "life",
+                f"You and {former.name if former else 'your spouse'} divorced. "
+                f"Your family wealth was split.",
+                deltas={"happiness": -10, "wisdom": +2},
+            ))
+            char.attributes.adjust(happiness=-10, wisdom=+2)
+            char.remember(f"Divorced {former.name if former else 'your spouse'}.")
 
         # 7. Random life events
         for ev in events.roll_events(char, country, self.rng):
@@ -410,7 +444,15 @@ class Game:
         for k, v in choice.moral_delta.items():
             char.moral_ledger[k] = char.moral_ledger.get(k, 0) + v
         if choice.side_effect is not None:
-            choice.side_effect(char)
+            # #50: side effects that need year/country/rng (e.g.,
+            # _accept_proposal, which rolls a full Spouse) accept an
+            # optional ctx kwarg. Existing side effects ignore it via
+            # the try/except below.
+            ctx = {"year": self.state.year, "country": country, "rng": self.rng}
+            try:
+                choice.side_effect(char, ctx)
+            except TypeError:
+                choice.side_effect(char)
         # #52: record the choice event firing for cooldown / lifetime
         # tracking. Done after the side_effect since some side effects
         # mutate state we want reflected in the recorded age.

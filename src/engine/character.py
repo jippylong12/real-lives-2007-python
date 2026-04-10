@@ -119,6 +119,71 @@ class FamilyMember:
 
 
 @dataclass
+class Spouse:
+    """A full character-like representation of a spouse or dating
+    partner (#50). Promotes the marriage system from a flag + name
+    to a real entity that ages, earns, develops diseases, and dies.
+
+    `married_year is None` means dating but not married yet — kept
+    distinct so a multi-step dating flow can layer on top later (#93).
+    """
+    name: str
+    gender: Gender
+    age: int
+    attributes: Attributes
+    education: EducationLevel
+    job: str | None
+    salary: int
+    family_wealth: int
+    country_code: str
+    met_year: int
+    married_year: int | None = None
+    compatibility: int = 50          # 0-100, rolled at meeting time
+    alive: bool = True
+    cause_of_death: str | None = None
+    diseases: dict[str, dict] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "gender": int(self.gender),
+            "age": self.age,
+            "attributes": self.attributes.to_dict(),
+            "education": int(self.education),
+            "job": self.job,
+            "salary": self.salary,
+            "family_wealth": self.family_wealth,
+            "country_code": self.country_code,
+            "met_year": self.met_year,
+            "married_year": self.married_year,
+            "compatibility": self.compatibility,
+            "alive": self.alive,
+            "cause_of_death": self.cause_of_death,
+            "diseases": {k: dict(v) for k, v in self.diseases.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Spouse":
+        return cls(
+            name=d["name"],
+            gender=Gender(d["gender"]),
+            age=d["age"],
+            attributes=Attributes(**d["attributes"]),
+            education=EducationLevel(d.get("education", 2)),
+            job=d.get("job"),
+            salary=d.get("salary", 0),
+            family_wealth=d.get("family_wealth", 0),
+            country_code=d["country_code"],
+            met_year=d.get("met_year", 0),
+            married_year=d.get("married_year"),
+            compatibility=d.get("compatibility", 50),
+            alive=d.get("alive", True),
+            cause_of_death=d.get("cause_of_death"),
+            diseases={k: dict(v) for k, v in d.get("diseases", {}).items()},
+        )
+
+
+@dataclass
 class LoanHolding:
     """A single open loan the player has taken out."""
     product_id: int
@@ -173,8 +238,12 @@ class Character:
     years_in_role: int = 0
     promotion_count: int = 0
     last_raise_request_age: int | None = None  # cooldown gate (#55)
-    married: bool = False
-    spouse_name: str | None = None
+    # #50: marriage was a (married: bool, spouse_name: str) pair. Now
+    # it's a full Spouse dataclass with attributes, salary, age, etc.
+    # The `married` and `spouse_name` properties below derive from
+    # `spouse` so existing event/UI code that reads `c.married` keeps
+    # working without rewrites.
+    spouse: "Spouse | None" = None
     children: list[FamilyMember] = field(default_factory=list)
     family: list[FamilyMember] = field(default_factory=list)
     loans: list[LoanHolding] = field(default_factory=list)
@@ -224,6 +293,16 @@ class Character:
         if a <= 64:  return LifeStage.MIDDLE_AGED
         return LifeStage.ELDERLY
 
+    # #50: derived from `spouse`. Existing event/UI code that reads
+    # `c.married` or `c.spouse_name` keeps working without rewrites.
+    @property
+    def married(self) -> bool:
+        return self.spouse is not None and self.spouse.married_year is not None
+
+    @property
+    def spouse_name(self) -> str | None:
+        return self.spouse.name if self.spouse is not None else None
+
     def remember(self, line: str) -> None:
         self.history.append(f"Age {self.age}: {line}")
 
@@ -249,6 +328,11 @@ class Character:
             "years_in_role": self.years_in_role,
             "promotion_count": self.promotion_count,
             "last_raise_request_age": self.last_raise_request_age,
+            # #50: married + spouse_name are derived properties; the
+            # full Spouse object is the source of truth. Serialize it
+            # explicitly. Also keep the legacy keys for any
+            # backwards-compat consumers (frontend reads c.married).
+            "spouse": self.spouse.to_dict() if self.spouse is not None else None,
             "married": self.married,
             "spouse_name": self.spouse_name,
             "children": [asdict(c) for c in self.children],
@@ -279,6 +363,33 @@ class Character:
         family = [FamilyMember(**f) for f in d.get("family", [])]
         loans = [LoanHolding(**l) for l in d.get("loans", [])]
         investments = [InvestmentHolding(**i) for i in d.get("investments", [])]
+        # #50: rehydrate spouse. Two paths:
+        #   - New saves: a "spouse" dict from Spouse.to_dict()
+        #   - Legacy saves: married=True + spouse_name="X" with no
+        #     spouse object — build a minimal Spouse stub so the
+        #     marriage doesn't disappear on load.
+        spouse_obj: Spouse | None = None
+        spouse_dict = d.get("spouse")
+        if spouse_dict:
+            spouse_obj = Spouse.from_dict(spouse_dict)
+        elif d.get("married") and d.get("spouse_name"):
+            char_age = d.get("age", 25)
+            char_gender = d.get("gender", 0)
+            spouse_gender = Gender.MALE if char_gender == int(Gender.FEMALE) else Gender.FEMALE
+            spouse_obj = Spouse(
+                name=d["spouse_name"],
+                gender=spouse_gender,
+                age=max(18, char_age - 2),
+                attributes=Attributes(),
+                education=EducationLevel.SECONDARY,
+                job=None,
+                salary=0,
+                family_wealth=0,
+                country_code=d["country_code"],
+                met_year=max(0, char_age - 5),
+                married_year=max(0, char_age - 3),
+                compatibility=70,
+            )
         return cls(
             id=d["id"],
             name=d["name"],
@@ -300,8 +411,7 @@ class Character:
             years_in_role=d.get("years_in_role", 0),
             promotion_count=d.get("promotion_count", 0),
             last_raise_request_age=d.get("last_raise_request_age"),
-            married=d.get("married", False),
-            spouse_name=d.get("spouse_name"),
+            spouse=spouse_obj,
             children=children,
             family=family,
             loans=loans,

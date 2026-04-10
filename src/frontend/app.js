@@ -1604,6 +1604,32 @@ function renderGame() {
   $("#stat-married").textContent = c.married ? (c.spouse_name || "yes") : "no";
   $("#stat-kids").textContent = (c.children || []).length;
 
+  // #50: spouse card with attributes, salary, age. Hidden when not
+  // married (or only dating). The spouse object is the source of
+  // truth — c.married is derived from spouse.married_year != null.
+  const sp = c.spouse;
+  const spouseSection = $opt("#spouse-section");
+  if (spouseSection) {
+    if (sp && c.married) {
+      spouseSection.classList.remove("hidden");
+      const aliveTag = sp.alive ? "" : ' <span class="muted">· deceased</span>';
+      const jobLine = sp.job ? `${escapeHtml(sp.job)} · ${fmtMoney(sp.salary)}/yr` : "(no income)";
+      const attrs = sp.attributes || {};
+      const attrBars = ["intelligence", "appearance", "wisdom", "conscience"]
+        .map((k) => {
+          const v = attrs[k] || 0;
+          return `<div class="sa-row"><span>${k}</span><div class="sa-bar"><span style="width:${v}%"></span></div><strong>${v}</strong></div>`;
+        }).join("");
+      $opt("#spouse-card").innerHTML = `
+        <div class="spouse-name"><strong>${escapeHtml(sp.name)}</strong>${aliveTag}</div>
+        <div class="muted">${escapeHtml(jobLine)}</div>
+        <div class="muted">age ${sp.age} · compatibility ${sp.compatibility}</div>
+        <div class="spouse-attrs">${attrBars}</div>`;
+    } else {
+      spouseSection.classList.add("hidden");
+    }
+  }
+
   // Headline health bar (always visible — #47)
   const hh = $("#health-headline");
   const h = c.attributes?.health ?? 0;
