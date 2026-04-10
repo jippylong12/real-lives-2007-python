@@ -287,6 +287,10 @@ class Character:
     # — moving back to a country you previously lived in doesn't
     # need a fresh skilled-worker / refugee path.
     previous_countries: list[str] = field(default_factory=list)
+    # #98: age at the most recent emigration. Gates the cooldown so a
+    # character can't bounce between countries every year — real visas
+    # take time to process and migrant lives take time to settle.
+    last_emigration_age: int | None = None
 
     @property
     def life_stage(self) -> LifeStage:
@@ -360,6 +364,7 @@ class Character:
             "peak_net_worth": self.peak_net_worth,
             "peak_attributes": dict(self.peak_attributes),
             "previous_countries": list(self.previous_countries),
+            "last_emigration_age": self.last_emigration_age,
         }
         return d
 
@@ -437,6 +442,7 @@ class Character:
             peak_net_worth=d.get("peak_net_worth", 0),
             peak_attributes=dict(d.get("peak_attributes", {})),
             previous_countries=list(d.get("previous_countries", [])),
+            last_emigration_age=d.get("last_emigration_age"),
         )
 
 

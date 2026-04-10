@@ -1212,6 +1212,20 @@ function showDeathScreen(turn) {
     ["Top wisdom", c.attributes?.wisdom ?? 0],
     ["Top conscience", c.attributes?.conscience ?? 0],
   ];
+
+  // #99: multi-leg emigration history. If the character lived in
+  // more than one country across their life, render the chain
+  // (origin → … → death country) so the retrospective surfaces the
+  // full migrant arc, not just the final country.
+  const prevCodes = c.previous_countries || [];
+  if (prevCodes.length > 0) {
+    const codeToName = (code) => {
+      const found = (state.countries || []).find((x) => x.code === code);
+      return found ? found.name : code.toUpperCase();
+    };
+    const chain = [...prevCodes.map(codeToName), co.name];
+    stats.push(["Lived in", `${chain.join(" → ")} (${chain.length} countries)`]);
+  }
   for (const [k, v] of stats) {
     const row = document.createElement("div");
     row.className = "ds-row";

@@ -586,6 +586,81 @@ BINARY_JOB_PROMOTES_TO_PATCHES: dict[str, str] = {
 }
 
 
+# Migrant magnet cities (#100): per-target-country lists of cities that
+# disproportionately concentrate immigrant populations. Used by
+# emigration.pick_emigration_city to weight arrivals toward known
+# diaspora hubs instead of the uniform rank-weighted city pick that
+# pick_birth_city uses for newborns.
+#
+# Hand-curated to match the actual largest immigration destinations as
+# of the mid-2020s. Cities not in the country_cities table are silently
+# ignored at lookup time, so additions are safe even if the city
+# isn't yet known to the world.dat extract.
+MIGRATION_MAGNETS: dict[str, list[str]] = {
+    # North America
+    "us": ["New York", "Los Angeles", "Houston", "Chicago", "Miami",
+           "Dallas", "San Francisco", "Boston", "Seattle", "Phoenix",
+           "Washington"],
+    "ca": ["Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa",
+           "Edmonton", "Mississauga", "Brampton"],
+    "mx": ["Mexico City", "Tijuana", "Monterrey", "Guadalajara"],
+    # Western & Northern Europe
+    "gb": ["London", "Manchester", "Birmingham", "Leeds", "Glasgow",
+           "Liverpool", "Bristol"],
+    "de": ["Berlin", "Munich", "Frankfurt", "Hamburg", "Cologne",
+           "Stuttgart", "Düsseldorf", "Dortmund"],
+    "fr": ["Paris", "Marseille", "Lyon", "Nice", "Toulouse",
+           "Strasbourg", "Bordeaux"],
+    "es": ["Madrid", "Barcelona", "Valencia", "Seville", "Málaga",
+           "Bilbao"],
+    "it": ["Milan", "Rome", "Turin", "Naples", "Bologna"],
+    "nl": ["Amsterdam", "Rotterdam", "The Hague", "Utrecht", "Eindhoven"],
+    "be": ["Brussels", "Antwerp", "Ghent", "Charleroi"],
+    "ch": ["Zurich", "Geneva", "Basel", "Bern", "Lausanne"],
+    "at": ["Vienna", "Graz", "Linz", "Salzburg"],
+    "se": ["Stockholm", "Gothenburg", "Malmö", "Uppsala"],
+    "no": ["Oslo", "Bergen", "Stavanger", "Trondheim"],
+    "dk": ["Copenhagen", "Aarhus", "Odense", "Aalborg"],
+    "fi": ["Helsinki", "Espoo", "Tampere", "Vantaa"],
+    "ie": ["Dublin", "Cork", "Galway", "Limerick"],
+    "pt": ["Lisbon", "Porto", "Braga", "Coimbra"],
+    "is": ["Reykjavík", "Kópavogur", "Hafnarfjörður"],
+    # Oceania
+    "au": ["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide",
+           "Canberra", "Gold Coast"],
+    "nz": ["Auckland", "Wellington", "Christchurch", "Hamilton"],
+    # Gulf / Middle East — heavy expat economies
+    "ae": ["Dubai", "Abu Dhabi", "Sharjah", "Al Ain"],
+    "sa": ["Riyadh", "Jeddah", "Mecca", "Dammam", "Medina"],
+    "qa": ["Doha", "Al Wakrah", "Al Rayyan"],
+    "kw": ["Kuwait City", "Al Ahmadi", "Hawally"],
+    "bh": ["Manama", "Riffa", "Muharraq"],
+    "om": ["Muscat", "Salalah", "Sohar"],
+    "il": ["Tel Aviv", "Jerusalem", "Haifa", "Rishon LeZion"],
+    "tr": ["Istanbul", "Ankara", "Izmir", "Bursa", "Antalya"],
+    # East & Southeast Asia
+    "sg": ["Singapore", "Jurong", "Tampines", "Woodlands"],
+    "hk": ["Hong Kong", "Kowloon", "Tsuen Wan"],
+    "jp": ["Tokyo", "Osaka", "Yokohama", "Nagoya", "Sapporo", "Kobe"],
+    "kr": ["Seoul", "Busan", "Incheon", "Daegu"],
+    "tw": ["Taipei", "Kaohsiung", "Taichung", "Tainan"],
+    "my": ["Kuala Lumpur", "George Town", "Johor Bahru", "Ipoh"],
+    "th": ["Bangkok", "Chiang Mai", "Pattaya", "Phuket"],
+    # South America
+    "br": ["São Paulo", "Rio de Janeiro", "Brasília", "Salvador",
+           "Curitiba", "Porto Alegre"],
+    "ar": ["Buenos Aires", "Córdoba", "Rosario", "Mendoza"],
+    "cl": ["Santiago", "Valparaíso", "Concepción"],
+    "uy": ["Montevideo", "Salto", "Punta del Este"],
+    # Africa — major economic hubs
+    "za": ["Johannesburg", "Cape Town", "Durban", "Pretoria"],
+    "ng": ["Lagos", "Abuja", "Port Harcourt", "Kano"],
+    "ke": ["Nairobi", "Mombasa", "Kisumu"],
+    "eg": ["Cairo", "Alexandria", "Giza"],
+    "ma": ["Casablanca", "Rabat", "Marrakech", "Tangier"],
+}
+
+
 # Hand-bundled secondary city lists for countries the world.dat extractor
 # can't anchor on (#9). Most are tail-of-pool entries (their data block in
 # the binary is too short to contain a usable city run) or microstates whose
