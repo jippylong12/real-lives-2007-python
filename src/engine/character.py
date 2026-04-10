@@ -126,6 +126,10 @@ class Spouse:
 
     `married_year is None` means dating but not married yet — kept
     distinct so a multi-step dating flow can layer on top later (#93).
+
+    `ended_year` and `end_state` (#95) are populated when the marriage
+    ends (divorce or widowhood) so the death retrospective can render
+    a complete marriage history.
     """
     name: str
     gender: Gender
@@ -142,6 +146,10 @@ class Spouse:
     alive: bool = True
     cause_of_death: str | None = None
     diseases: dict[str, dict] = field(default_factory=dict)
+    # #95: populated when the marriage ends. end_state is one of
+    # 'divorced', 'widowed', or None for an ongoing marriage.
+    ended_year: int | None = None
+    end_state: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -160,6 +168,8 @@ class Spouse:
             "alive": self.alive,
             "cause_of_death": self.cause_of_death,
             "diseases": {k: dict(v) for k, v in self.diseases.items()},
+            "ended_year": self.ended_year,
+            "end_state": self.end_state,
         }
 
     @classmethod
@@ -180,6 +190,8 @@ class Spouse:
             alive=d.get("alive", True),
             cause_of_death=d.get("cause_of_death"),
             diseases={k: dict(v) for k, v in d.get("diseases", {}).items()},
+            ended_year=d.get("ended_year"),
+            end_state=d.get("end_state"),
         )
 
 
@@ -244,6 +256,11 @@ class Character:
     # `spouse` so existing event/UI code that reads `c.married` keeps
     # working without rewrites.
     spouse: "Spouse | None" = None
+    # #95: archive of marriages that ended (divorce or widowhood) so
+    # the death retrospective can show the full marriage history. The
+    # current spouse stays in `spouse` until the marriage ends, then
+    # gets pushed here with `ended_year` + `end_state` populated.
+    previous_spouses: list["Spouse"] = field(default_factory=list)
     children: list[FamilyMember] = field(default_factory=list)
     family: list[FamilyMember] = field(default_factory=list)
     loans: list[LoanHolding] = field(default_factory=list)
@@ -343,6 +360,7 @@ class Character:
             # explicitly. Also keep the legacy keys for any
             # backwards-compat consumers (frontend reads c.married).
             "spouse": self.spouse.to_dict() if self.spouse is not None else None,
+            "previous_spouses": [s.to_dict() for s in self.previous_spouses],
             "married": self.married,
             "spouse_name": self.spouse_name,
             "children": [asdict(c) for c in self.children],
@@ -402,6 +420,9 @@ class Character:
                 married_year=max(0, char_age - 3),
                 compatibility=70,
             )
+        previous_spouses = [
+            Spouse.from_dict(s) for s in d.get("previous_spouses", [])
+        ]
         return cls(
             id=d["id"],
             name=d["name"],
@@ -424,6 +445,7 @@ class Character:
             promotion_count=d.get("promotion_count", 0),
             last_raise_request_age=d.get("last_raise_request_age"),
             spouse=spouse_obj,
+            previous_spouses=previous_spouses,
             children=children,
             family=family,
             loans=loans,

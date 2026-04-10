@@ -44,10 +44,15 @@ class Country:
     health_services_pct: float
     at_war: int = 0                    # binary AtWar flag (#17)
     military_conscription: int = 0     # binary MilitaryConscription flag (#17)
+    divorce_rate: float | None = None  # #92, lifetime probability per marriage
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Country":
-        return cls(**{k: row[k] for k in row.keys()})
+        # Filter to fields the dataclass actually accepts so older
+        # databases that don't have a column yet (or newer ones with
+        # extra columns we haven't surfaced) don't blow up.
+        accepted = set(cls.__dataclass_fields__.keys())
+        return cls(**{k: row[k] for k in row.keys() if k in accepted})
 
     @property
     def flag_filename(self) -> str:

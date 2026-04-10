@@ -586,6 +586,68 @@ BINARY_JOB_PROMOTES_TO_PATCHES: dict[str, str] = {
 }
 
 
+# Lifetime divorce probability by country (#92). Approximations of the
+# real-world fraction of marriages that end in divorce, used by
+# relationships.divorce_check to scale the per-year roll. Countries not
+# in this dict fall back to the HDI heuristic.
+#
+# Sources cluster around UN/Eurostat/national statistics agencies — these
+# are illustrative not authoritative, but capture the rough rank order:
+# Belgium / Portugal / Russia / Belarus at the top (~50%+), India /
+# Philippines / Sri Lanka / Malta at the bottom (<5%), with the US/UK/
+# Western Europe in the 35-50% band and Latin America / Africa /
+# Muslim-majority states clustering lower.
+COUNTRY_DIVORCE_RATES: dict[str, float] = {
+    # North America
+    "us": 0.45, "ca": 0.38, "mx": 0.17,
+    # Western Europe
+    "gb": 0.42, "ie": 0.18, "fr": 0.45, "de": 0.41, "be": 0.55,
+    "nl": 0.40, "lu": 0.50, "ch": 0.42, "at": 0.40, "li": 0.40,
+    "es": 0.55, "pt": 0.65, "it": 0.30, "mt": 0.05,
+    # Northern Europe
+    "se": 0.50, "no": 0.45, "dk": 0.45, "fi": 0.50, "is": 0.42,
+    # Eastern Europe
+    "ru": 0.50, "by": 0.55, "ua": 0.45, "md": 0.35,
+    "pl": 0.35, "cz": 0.50, "sk": 0.40, "hu": 0.50, "ro": 0.30,
+    "bg": 0.30, "rs": 0.25, "hr": 0.30, "si": 0.40, "ba": 0.20,
+    "mk": 0.20, "al": 0.10, "me": 0.20,
+    "ee": 0.55, "lv": 0.55, "lt": 0.50,
+    # Southern Europe / Mediterranean
+    "gr": 0.40, "cy": 0.30,
+    # East Asia
+    "jp": 0.35, "kr": 0.45, "cn": 0.30, "hk": 0.35, "tw": 0.35, "mn": 0.10,
+    # South & Southeast Asia
+    "in": 0.02, "pk": 0.05, "bd": 0.10, "lk": 0.03, "np": 0.05,
+    "id": 0.20, "th": 0.20, "vn": 0.10, "ph": 0.005, "my": 0.20,
+    "sg": 0.20, "kh": 0.10, "la": 0.05, "mm": 0.10,
+    # Oceania
+    "au": 0.40, "nz": 0.40, "fj": 0.20,
+    # Middle East
+    "il": 0.30, "tr": 0.25, "ir": 0.30, "iq": 0.15, "sa": 0.30,
+    "ae": 0.30, "qa": 0.30, "kw": 0.30, "bh": 0.30, "om": 0.20,
+    "jo": 0.30, "lb": 0.25, "sy": 0.20, "ye": 0.10,
+    # North Africa
+    "eg": 0.40, "ma": 0.10, "tn": 0.20, "dz": 0.15, "ly": 0.20,
+    # Sub-Saharan Africa
+    "ng": 0.10, "za": 0.30, "ke": 0.05, "et": 0.10, "tz": 0.10,
+    "ug": 0.05, "rw": 0.10, "gh": 0.10, "ci": 0.10, "sn": 0.10,
+    "ml": 0.10, "ne": 0.05, "td": 0.10, "cm": 0.10, "ao": 0.15,
+    "mz": 0.10, "zm": 0.15, "zw": 0.10, "bw": 0.20, "na": 0.20,
+    "mg": 0.10, "mw": 0.10, "sl": 0.10, "lr": 0.10, "gn": 0.10,
+    # South America
+    "br": 0.25, "ar": 0.30, "cl": 0.10, "uy": 0.30, "py": 0.20,
+    "pe": 0.15, "co": 0.20, "ve": 0.20, "ec": 0.20, "bo": 0.10,
+    "gy": 0.20, "sr": 0.20,
+    # Central America & Caribbean
+    "gt": 0.10, "hn": 0.10, "sv": 0.10, "ni": 0.10, "cr": 0.30,
+    "pa": 0.20, "bz": 0.20, "cu": 0.55, "do": 0.30, "ht": 0.20,
+    "jm": 0.30, "tt": 0.30, "bs": 0.30, "bb": 0.30,
+    # Caucasus / Central Asia
+    "ge": 0.30, "am": 0.20, "az": 0.15, "kz": 0.40, "uz": 0.10,
+    "kg": 0.20, "tj": 0.10, "tm": 0.10, "af": 0.05,
+}
+
+
 # Migrant magnet cities (#100): per-target-country lists of cities that
 # disproportionately concentrate immigrant populations. Used by
 # emigration.pick_emigration_city to weight arrivals toward known

@@ -2491,7 +2491,10 @@ def test_spouse_ages_yearly_via_age_family():
 
 
 def test_spouse_eventually_dies_in_old_age():
-    """#50: an aged spouse eventually dies via the simple death roll."""
+    """#50: an aged spouse eventually dies via the simple death roll.
+    #95: on death the spouse is moved into previous_spouses with
+    end_state='widowed' and the current spouse slot is cleared, so the
+    character is properly classified as widowed (not still married)."""
     from src.engine import relationships
     rng = random.Random(42)
     country = get_country("us")
@@ -2507,7 +2510,15 @@ def test_spouse_eventually_dies_in_old_age():
             died = True
             break
     assert died, "85+ spouse should die within 50 years of rolls"
-    assert char.spouse.alive is False
+    # #95: the current slot should now be empty, with the dead spouse
+    # archived in previous_spouses.
+    assert char.spouse is None
+    assert len(char.previous_spouses) == 1
+    archived = char.previous_spouses[0]
+    assert archived.alive is False
+    assert archived.end_state == "widowed"
+    assert archived.cause_of_death is not None
+    assert char.married is False  # widow, not "still married"
 
 
 def test_divorce_eventually_for_low_compatibility():
@@ -2526,6 +2537,158 @@ def test_divorce_eventually_for_low_compatibility():
         if relationships.divorce_check(char, country, rng):
             fired += 1
     assert fired > 0, "low-compatibility marriage in US should trigger divorce at least once in 500 rolls"
+
+
+def test_country_divorce_rate_field_loaded():
+    """#92: countries with curated divorce_rate values surface them on
+    the Country dataclass; countries without one have None."""
+    us = get_country("us")
+    inn = get_country("in")
+    pt = get_country("pt")
+    assert us.divorce_rate is not None
+    assert inn.divorce_rate is not None
+    assert pt.divorce_rate is not None
+    # Real-world rank order: PT > US >> IN
+    assert pt.divorce_rate > us.divorce_rate > inn.divorce_rate
+    assert inn.divorce_rate < 0.05
+    assert pt.divorce_rate > 0.50
+
+
+def test_country_divorce_rate_drives_divorce_check_distribution():
+    """#92: a marriage in Portugal (high divorce_rate) should fire
+    divorce_check far more often than the same marriage in India over
+    the same number of rolls. Tests the country signal flowing through,
+    not a single deterministic outcome."""
+    from src.engine import relationships
+    rng = random.Random(0)
+    pt = get_country("pt")
+    inn = get_country("in")
+
+    def fire_count(country):
+        local_rng = random.Random(0)
+        char = create_random_character(country, local_rng)
+        spouse = relationships.roll_spouse(char, country, 2030, local_rng)
+        spouse.compatibility = 50  # neutral compat — country must do the work
+        relationships.marry(char, spouse, 2030)
+        fired = 0
+        for _ in range(2000):
+            if relationships.divorce_check(char, country, local_rng):
+                fired += 1
+        return fired
+
+    pt_fires = fire_count(pt)
+    in_fires = fire_count(inn)
+    assert pt_fires > in_fires * 5, (
+        f"Portugal ({pt_fires}) should divorce far more often "
+        f"than India ({in_fires}) over 2000 rolls"
+    )
+
+
+def test_previous_spouses_round_trip_serialization():
+    """#95: a character with a divorced ex-spouse round-trips through
+    Character.to_dict / from_dict without losing the previous_spouses
+    history or the ended_year/end_state metadata."""
+    from src.engine import relationships
+    from src.engine.character import Character
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.age = 30
+    spouse = relationships.roll_spouse(char, country, 2025, rng)
+    relationships.marry(char, spouse, 2025)
+    # Manually archive as if a divorce had fired.
+    spouse.ended_year = 35
+    spouse.end_state = "divorced"
+    char.previous_spouses.append(spouse)
+    char.spouse = None
+
+    payload = char.to_dict()
+    rehydrated = Character.from_dict(payload)
+    assert rehydrated.spouse is None
+    assert len(rehydrated.previous_spouses) == 1
+    archived = rehydrated.previous_spouses[0]
+    assert archived.end_state == "divorced"
+    assert archived.ended_year == 35
+    assert archived.name == spouse.name
+
+
+def test_divorce_in_game_loop_archives_to_previous_spouses():
+    """#95: when the silent divorce roll fires inside the yearly tick,
+    the former spouse lands in previous_spouses with end_state='divorced'.
+    Drives the game loop directly so the full divorce path runs."""
+    from src.engine import relationships
+    from src.engine import game as game_module
+    from src.engine.game import Game
+    rng = random.Random(0)
+    country = get_country("us")
+    g = Game.new(country_code="us", seed=0)
+    char = g.state.character
+    char.age = 35
+    spouse = relationships.roll_spouse(char, country, 2030, rng)
+    spouse.compatibility = 10  # very low → divorce-prone
+    relationships.marry(char, spouse, 2030)
+
+    # Force the divorce branch by replacing divorce_check on the
+    # imported relationships module that game.py reaches through.
+    original = game_module.relationships.divorce_check
+    game_module.relationships.divorce_check = lambda c, co, _r: True
+    try:
+        g.advance_year()
+    finally:
+        game_module.relationships.divorce_check = original
+
+    assert char.spouse is None
+    assert len(char.previous_spouses) == 1
+    archived = char.previous_spouses[0]
+    assert archived.end_state == "divorced"
+    assert archived.ended_year is not None
+
+
+def test_compatibility_biases_anniversary_event_rate():
+    """#97: a high-compat marriage celebrates anniversaries more often
+    than a low-compat one, even with the same base chance."""
+    from src.engine.events import EVENT_REGISTRY
+    from src.engine import relationships
+    country = get_country("us")
+
+    def fire_rate(compat):
+        local_rng = random.Random(0)
+        char = create_random_character(country, local_rng)
+        char.age = 35
+        spouse = relationships.roll_spouse(char, country, 2030, local_rng)
+        spouse.compatibility = compat
+        relationships.marry(char, spouse, 2030)
+        ev = next(e for e in EVENT_REGISTRY if e.key == "romance_anniversary")
+        return ev.probability(char, country)
+
+    high = fire_rate(85)
+    low = fire_rate(30)
+    assert high > low, f"high-compat anniversary chance ({high}) should beat low-compat ({low})"
+    assert high > 0.55  # 0.50 base × 1.30 boost
+    assert low < 0.40   # 0.50 base × 0.65 penalty
+
+
+def test_compatibility_biases_big_argument_event_rate():
+    """#97: a low-compat marriage fights more often than a high-compat one."""
+    from src.engine.events import EVENT_REGISTRY
+    from src.engine import relationships
+    country = get_country("us")
+
+    def fire_rate(compat):
+        local_rng = random.Random(0)
+        char = create_random_character(country, local_rng)
+        char.age = 35
+        spouse = relationships.roll_spouse(char, country, 2030, local_rng)
+        spouse.compatibility = compat
+        relationships.marry(char, spouse, 2030)
+        ev = next(e for e in EVENT_REGISTRY if e.key == "romance_big_argument")
+        return ev.probability(char, country)
+
+    low = fire_rate(20)
+    high = fire_rate(85)
+    assert low > high, f"low-compat argument chance ({low}) should exceed high-compat ({high})"
+    assert low > 0.20   # 0.15 base × 1.80 boost
+    assert high < 0.10  # 0.15 base × 0.50 penalty
 
 
 def test_pregnancy_event_actually_adds_child():

@@ -146,20 +146,53 @@ def _spouse_death_check(spouse: Spouse, character: Character, country: Country, 
     return False, None
 
 
-# #50: yearly chance the marriage ends in divorce. Heuristic: low
-# compatibility + high HDI = more divorce. Country-level divorce_rate
-# is filed as a follow-up (#92).
+# #50: baseline yearly chance the marriage ends in divorce. The country
+# field (#92) lets the per-year roll match real-world rates: a marriage
+# in Portugal (lifetime 0.65) is far more likely to dissolve than one in
+# India (lifetime 0.02). Until #92 the rate was a flat HDI heuristic.
 DIVORCE_BASE_RATE = 0.005
+
+# A "typical" marriage runs ~30 years before death/divorce, so to map a
+# lifetime divorce probability into a per-year roll we divide by an
+# expected duration. This is intentionally crude — the goal is to make
+# country differences visible, not to model survival curves.
+_DIVORCE_EXPECTED_MARRIAGE_YEARS = 30
 
 
 def divorce_check(character: Character, country: Country, rng: random.Random) -> bool:
+    """Yearly probability that the current marriage ends in divorce.
+
+    If the country has a curated `divorce_rate` (#92), the lifetime
+    probability is converted into a per-year hazard and then biased by
+    the spouse's compatibility — a 25-compat marriage is meaningfully
+    more fragile than a 75-compat one even in the same country.
+
+    Without a country value the function falls back to the original
+    HDI-based heuristic so countries we haven't curated still divorce
+    at a believable rate.
+    """
     if not character.spouse or not character.spouse.alive:
         return False
     if character.spouse.married_year is None:
         return False
+
     incompat = max(0, 100 - character.spouse.compatibility) / 100
-    hdi_factor = 0.3 + (country.hdi or 0.5) * 0.7
-    p = DIVORCE_BASE_RATE * hdi_factor * (1 + incompat * 2)
+
+    if country.divorce_rate is not None:
+        # Approximate per-year hazard from the lifetime probability.
+        # 1 - (1 - p_year)^N = lifetime → p_year ≈ lifetime / N for
+        # small lifetimes; we use a flat scale since incompat already
+        # supplies most of the spread.
+        per_year = country.divorce_rate / _DIVORCE_EXPECTED_MARRIAGE_YEARS
+        # Compatibility shifts the rate by ±2× across the 0-100 range
+        # (centered at 50). Very compatible marriages are roughly 1/3
+        # the country baseline; very incompatible ones up to 3×.
+        compat_factor = 0.4 + incompat * 2.6
+        p = per_year * compat_factor
+    else:
+        hdi_factor = 0.3 + (country.hdi or 0.5) * 0.7
+        p = DIVORCE_BASE_RATE * hdi_factor * (1 + incompat * 2)
+
     return rng.random() < p
 
 
@@ -168,7 +201,14 @@ def age_family(character: Character, country: Country | None = None, rng: random
     strings the caller can fan out into TurnEvents.
 
     #50: also ages the spouse and runs the spouse death check.
-    Returns 'spouse_died:NAME:CAUSE' for the caller to render."""
+    Returns 'spouse_died:NAME:CAUSE' for the caller to render.
+
+    #95: when the spouse dies, the marriage is closed out (ended_year
+    + end_state='widowed') and the spouse object is moved into
+    `character.previous_spouses`. The current `character.spouse` is
+    cleared so the character is correctly classified as widowed
+    (rather than 'still married to a corpse') and is free to remarry.
+    """
     notes: list[str] = []
     for member in character.family + character.children:
         if not member.alive:
@@ -180,13 +220,24 @@ def age_family(character: Character, country: Country | None = None, rng: random
         if rng is not None and country is not None:
             died, cause = _spouse_death_check(character.spouse, character, country, rng)
             if died:
-                character.spouse.alive = False
-                character.spouse.cause_of_death = cause
-                notes.append(f"spouse_died:{character.spouse.name}:{cause or 'illness'}")
+                spouse = character.spouse
+                spouse.alive = False
+                spouse.cause_of_death = cause
+                # Use the character's current age as a proxy for the
+                # ended_year — the death retrospective shows marriage
+                # spans relative to the character's age, not calendar
+                # years, so this is the easiest stable handle.
+                spouse.ended_year = character.age
+                spouse.end_state = "widowed"
+                notes.append(f"spouse_died:{spouse.name}:{cause or 'illness'}")
+                # Archive the spouse + clear the current slot so the
+                # character is now classified as widowed.
+                character.previous_spouses.append(spouse)
+                character.spouse = None
                 # Mirror into the family list so the FamilyMember
                 # entry reflects the death too.
                 for fm in character.family:
-                    if fm.relation == "spouse" and fm.name == character.spouse.name:
+                    if fm.relation == "spouse" and fm.name == spouse.name:
                         fm.alive = False
                         break
     return notes
