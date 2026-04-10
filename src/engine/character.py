@@ -281,6 +281,12 @@ class Character:
     lifetime_earnings: int = 0
     peak_net_worth: int = 0
     peak_attributes: dict[str, int] = field(default_factory=dict)
+    # #49: countries the character has lived in before. Populated by
+    # the emigration action. Used by the death retrospective ('lived
+    # in 3 countries') and for the citizenship-by-descent visa route
+    # — moving back to a country you previously lived in doesn't
+    # need a fresh skilled-worker / refugee path.
+    previous_countries: list[str] = field(default_factory=list)
 
     @property
     def life_stage(self) -> LifeStage:
@@ -353,6 +359,7 @@ class Character:
             "lifetime_earnings": self.lifetime_earnings,
             "peak_net_worth": self.peak_net_worth,
             "peak_attributes": dict(self.peak_attributes),
+            "previous_countries": list(self.previous_countries),
         }
         return d
 
@@ -429,6 +436,7 @@ class Character:
             lifetime_earnings=d.get("lifetime_earnings", 0),
             peak_net_worth=d.get("peak_net_worth", 0),
             peak_attributes=dict(d.get("peak_attributes", {})),
+            previous_countries=list(d.get("previous_countries", [])),
         )
 
 

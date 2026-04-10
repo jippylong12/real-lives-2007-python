@@ -94,6 +94,10 @@ class TreatDiseaseRequest(BaseModel):
     disease_key: str
 
 
+class EmigrateRequest(BaseModel):
+    country_code: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -609,6 +613,48 @@ def create_app() -> FastAPI:
             "outcome": result.outcome,
             "message": result.message,
             "former_job": result.former_job,
+            "game": _serialize_game(game),
+        }
+
+    # ---------- Emigration (#49) ----------
+    @app.get("/api/game/{game_id}/emigration_options")
+    def emigration_options(game_id: str):
+        """Return per-country eligibility for the player. Each entry
+        has the country code, name, region, HDI, gdp_pc, eligibility
+        flag, matched visa routes, and a blocking reason if not
+        eligible. Used by the picker UI to color tiles."""
+        from ..engine import emigration
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        return emigration.list_emigration_options(game.state.character)
+
+    @app.post("/api/game/{game_id}/emigrate")
+    def emigrate(game_id: str, req: EmigrateRequest):
+        """Move the character to a different country. Outcomes:
+        emigrated / not_eligible. Validates the visa gate, deducts
+        relocation cost, clears job/salary, picks a new city, moves
+        the spouse along."""
+        from ..engine import emigration
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        target = get_country(req.country_code)
+        if target is None:
+            raise HTTPException(status_code=404, detail="country not found")
+        result = emigration.emigrate(
+            game.state.character, target, game.state.year, game.rng
+        )
+        if result.outcome == "not_eligible":
+            raise HTTPException(status_code=400, detail=result.message)
+        game.save()
+        return {
+            "outcome": result.outcome,
+            "message": result.message,
+            "cost": result.cost,
+            "routes": list(result.routes),
+            "new_city": result.new_city,
+            "new_country_code": result.new_country_code,
             "game": _serialize_game(game),
         }
 

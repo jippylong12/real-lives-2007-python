@@ -831,6 +831,87 @@ function closeJobBoard() {
   $("#jobboard-modal").classList.add("hidden");
 }
 
+// ---------- Emigration (#49) ----------
+const emigrationState = {
+  options: [],
+};
+
+async function openEmigrationPicker() {
+  log("openEmigrationPicker");
+  try {
+    emigrationState.options = await api(`/api/game/${state.game.id}/emigration_options`);
+    log(`fetched ${emigrationState.options.length} emigration options`);
+    renderEmigrationPicker();
+    $("#emigration-modal").classList.remove("hidden");
+  } catch (e) {
+    logErr("openEmigrationPicker failed", e);
+    showToast(`Couldn't load emigration options: ${e.message}`, { kind: "error" });
+  }
+}
+
+function closeEmigrationPicker() {
+  $("#emigration-modal").classList.add("hidden");
+}
+
+function renderEmigrationPicker() {
+  const grid = $("#emigration-grid");
+  grid.innerHTML = "";
+  // Sort: eligible first, then alphabetical by name.
+  const sorted = [...emigrationState.options].sort((a, b) => {
+    if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  // Cost shown in the header — same for all targets so pull from any entry.
+  const costStr = sorted.length ? fmtMoney(sorted[0].estimated_cost) : "—";
+  $("#emigration-cost").textContent = `~${costStr} relocation cost`;
+  for (const opt of sorted) {
+    const tile = document.createElement("button");
+    tile.className = `country-tile emigration-tile ${opt.eligible ? "eligible" : "blocked"}`;
+    const routeText = opt.eligible
+      ? opt.routes.map(r => r.replace(/_/g, " ")).join(" · ")
+      : (opt.blocked_reason || "blocked");
+    tile.innerHTML = `
+      <img src="/flags/${opt.code}.bmp" alt="">
+      <div class="et-name">${escapeHtml(opt.name)}</div>
+      <div class="et-route muted">${escapeHtml(routeText)}</div>
+    `;
+    if (opt.eligible) {
+      tile.onclick = () => confirmEmigrate(opt);
+    } else {
+      tile.disabled = true;
+      tile.title = opt.blocked_reason || "blocked";
+    }
+    grid.appendChild(tile);
+  }
+}
+
+async function confirmEmigrate(opt) {
+  const ok = await showConfirm({
+    title: `Move to ${opt.name}?`,
+    body: `You'll move via a ${opt.routes[0].replace(/_/g, " ")} visa. Your job will be cleared and roughly ${fmtMoney(opt.estimated_cost)} of your family wealth goes to visa fees and relocation. Your spouse and children come with you.`,
+    confirmText: "Move",
+    cancelText: "Cancel",
+    destructive: true,
+  });
+  if (!ok) return;
+  log(`emigrate(${opt.code})`);
+  try {
+    const res = await api(`/api/game/${state.game.id}/emigrate`, {
+      method: "POST",
+      body: JSON.stringify({ country_code: opt.code }),
+    });
+    state.game = res.game;
+    showToast(res.message, { kind: "success" });
+    closeEmigrationPicker();
+    renderGame();
+    loadHealthcare();
+    loadPurchases();
+  } catch (e) {
+    logErr("emigrate failed", e);
+    showToast(`Couldn't emigrate: ${e.message}`, { kind: "error" });
+  }
+}
+
 // Pseudo-category constant for the Self-employment tab. Distinct from
 // the real job categories so renderJobBoardList knows to filter on
 // is_freelance instead of an exact category match. (#83)
@@ -1597,6 +1678,11 @@ function renderGame() {
   if (dropBtn) {
     dropBtn.classList.toggle("hidden", !c.can_drop_out);
   }
+  // #49: Move abroad button — visible from age 16 onward.
+  const emigrateBtn = $opt("#btn-emigrate");
+  if (emigrateBtn) {
+    emigrateBtn.classList.toggle("hidden", c.age < 16);
+  }
   $("#stat-salary").textContent = c.salary ? fmtMoney(c.salary) + "/yr" : "—";
   $("#stat-money").textContent = fmtMoney(c.money);
   $("#stat-portfolio").textContent = fmtMoney(g.portfolio_value || 0);
@@ -2284,6 +2370,9 @@ async function init() {
   $("#btn-drop-out").addEventListener("click", dropOutOfSchool);
   $("#btn-find-work").addEventListener("click", openJobBoard);
   $("#btn-jobboard-close").addEventListener("click", closeJobBoard);
+  // #49: emigration
+  $("#btn-emigrate").addEventListener("click", openEmigrationPicker);
+  $("#btn-emigration-close").addEventListener("click", closeEmigrationPicker);
   $("#jobboard-show-all").addEventListener("change", (e) => {
     jobboardState.show_all = e.target.checked;
     renderJobBoardList();

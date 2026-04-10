@@ -66,6 +66,8 @@
             <div class="character-meta">
               <h3 id="char-name">—</h3>
               <p id="char-where" class="muted">—</p>
+              <!-- #49: emigration. Visible when age >= 16. -->
+              <button id="btn-emigrate" class="btn xs hidden">Move abroad</button>
             </div>
           </div>
 
@@ -274,6 +276,24 @@
         <p id="jobboard-msg" class="muted"></p>
         <div id="jobboard-tabs" class="region-tabs jobboard-tabs"></div>
         <div id="jobboard-list" class="jobboard-list"></div>
+      </div>
+    </div>
+
+    <!-- Emigration picker modal (#49). Eligible countries appear
+         green with their visa route; blocked countries are dimmed
+         with a tooltip explaining what's missing. -->
+    <div id="emigration-modal" class="modal-backdrop hidden">
+      <div class="modal-card panel emigration">
+        <div class="emigration-header">
+          <h3>Move abroad</h3>
+          <span id="emigration-cost" class="muted"></span>
+          <button id="btn-emigration-close" class="btn xs">Close</button>
+        </div>
+        <p class="muted">
+          Pick a country to move to. Eligible countries are highlighted;
+          dimmed ones list what's blocking you.
+        </p>
+        <div id="emigration-grid" class="emigration-grid"></div>
       </div>
     </div>
 

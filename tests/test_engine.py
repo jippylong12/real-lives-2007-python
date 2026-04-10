@@ -2039,6 +2039,206 @@ def test_vocation_field_constrains_assigned_jobs():
     )
 
 
+# ---------- #49 Emigration ----------
+
+def test_emigration_skilled_worker_path():
+    """A university grad with IQ 70 in Mali can emigrate to Germany
+    on the skilled worker path."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("ml"), rng)
+    char.age = 28
+    char.education = 4  # university
+    char.attributes.intelligence = 70
+    char.family_wealth = 5000
+
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(
+        char, get_country("ml"), get_country("de"),
+    )
+    assert eligible
+    assert "skilled_worker" in routes
+
+
+def test_emigration_blocked_for_unqualified():
+    """Primary-school farmhand with no money and no spoken language
+    overlap can't emigrate to Iceland."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("ml"), rng)
+    char.age = 25
+    char.education = 1  # primary
+    char.attributes.intelligence = 40
+    char.family_wealth = 200
+
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(
+        char, get_country("ml"), get_country("is"),
+    )
+    assert not eligible
+    assert reason  # human-readable
+    assert "skilled worker" in reason or "investor" in reason
+
+
+def test_emigration_refugee_path():
+    """A character in a country with at_war=1 can emigrate to a
+    high-HDI target as a refugee."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("af"), rng)  # Afghanistan, at_war=1
+    char.age = 30
+    char.family_wealth = 1000
+
+    af = get_country("af")
+    se = get_country("se")
+    assert af.at_war == 1
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(char, af, se)
+    assert eligible
+    assert "refugee" in routes
+
+
+def test_emigration_investor_path():
+    """A wealthy character bypasses skilled worker gates."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 1  # not a university grad
+    char.attributes.intelligence = 50
+    # 50× target gdp_pc — pick a target with low gdp_pc to make this cheap
+    target = get_country("ke")  # Kenya
+    char.family_wealth = target.gdp_pc * 60
+
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(
+        char, get_country("us"), target,
+    )
+    assert eligible
+    assert "investor" in routes
+
+
+def test_emigration_clears_job_and_picks_new_city():
+    """The actual emigrate() call clears job/salary/years_in_role and
+    picks a new city in the target country."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 50000
+    char.job = "office worker"
+    char.salary = 60000
+    char.years_in_role = 5
+    original_city = char.city
+
+    result = emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert result.outcome == "emigrated"
+    assert char.country_code == "de"
+    assert char.city != original_city
+    assert char.job is None
+    assert char.salary == 0
+    assert char.years_in_role == 0
+
+
+def test_emigration_costs_family_wealth():
+    """Emigration costs ~20% of family_wealth (deducted from the
+    character on a successful move)."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 100_000
+
+    starting_wealth = char.family_wealth
+    result = emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert result.outcome == "emigrated"
+    deducted = starting_wealth - char.family_wealth
+    # ~20% with floor of $500
+    assert 18_000 <= deducted <= 22_000
+    assert result.cost == deducted
+
+
+def test_emigration_appends_to_previous_countries():
+    """After emigrating, the source country is appended to
+    previous_countries — used for descent route + retrospective."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 30_000
+
+    assert "us" not in char.previous_countries
+    emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert "us" in char.previous_countries
+    assert char.country_code == "de"
+
+
+def test_emigration_descent_route_works_for_return():
+    """A character who emigrated US → DE can return to the US via
+    the descent route without re-qualifying as a skilled worker."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 100_000
+    # First move: US → DE
+    emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert char.country_code == "de"
+    assert "us" in char.previous_countries
+
+    # Now drop intelligence so the skilled-worker route would fail.
+    char.attributes.intelligence = 30
+    char.education = 1
+
+    # Return to US — should qualify via descent.
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(
+        char, get_country("de"), get_country("us"),
+    )
+    assert eligible
+    assert "descent" in routes
+
+
+def test_emigration_spouse_moves_too():
+    """An emigrating character's spouse moves with them. The spouse's
+    country_code updates and their job is cleared (to be re-rolled
+    in the new country)."""
+    from src.engine import emigration, relationships
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 30
+    char.education = 4
+    char.attributes.intelligence = 75
+    char.family_wealth = 50_000
+    spouse = relationships.roll_spouse(char, get_country("us"), 2028, rng)
+    spouse.salary = 50_000
+    spouse.job = "office worker"
+    relationships.marry(char, spouse, 2028)
+
+    emigration.emigrate(char, get_country("de"), 2030, rng)
+    assert char.spouse is not None
+    assert char.spouse.country_code == "de"
+    assert char.spouse.job is None
+    assert char.spouse.salary == 0
+
+
+def test_emigration_blocked_for_minors():
+    """Characters under 16 cannot emigrate independently."""
+    from src.engine import emigration
+    rng = random.Random(0)
+    char = create_random_character(get_country("us"), rng)
+    char.age = 12
+
+    eligible, routes, reason = emigration.is_eligible_to_emigrate(
+        char, get_country("us"), get_country("de"),
+    )
+    assert not eligible
+    assert "young" in reason.lower() or "16" in reason
+
+
 # ---------- #50 Better romance ----------
 
 def test_spouse_dataclass_round_trip():
