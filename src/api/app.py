@@ -53,6 +53,7 @@ class NewGameRequest(BaseModel):
     country_code: Optional[str] = Field(default=None, description="ISO alpha-2 country code; random if omitted")
     seed: Optional[int] = Field(default=None, description="RNG seed for reproducible runs")
     slot: Optional[int] = Field(default=None, description="Save slot 1-5 (#79); omit for unslotted save")
+    player_name: Optional[str] = Field(default=None, description="Player name for multi-player scoping (#85)")
 
 
 class DecisionRequest(BaseModel):
@@ -381,14 +382,19 @@ def create_app() -> FastAPI:
         return facts
 
     @app.get("/api/games")
-    def games():
-        return list_games()
+    def games(player: Optional[str] = None):
+        """List saved games, optionally scoped to ``?player=NAME`` (#85)."""
+        return list_games(player_name=player)
 
     @app.get("/api/slots")
-    def slots():
+    def slots(player: Optional[str] = None):
         """Return the 5 save slots (#79). Each slot is one of:
-        empty / alive / dead. Frontend renders this as the start screen."""
-        rows = list_slots()
+        empty / alive / dead. Frontend renders this as the start screen.
+
+        #85: when ``?player=NAME`` is set, only slots owned by that
+        player (plus unscoped legacy slots) are surfaced.
+        """
+        rows = list_slots(player_name=player)
         # Backfill country_name from the world catalog so the frontend
         # doesn't need a second lookup per slot.
         for row in rows:
@@ -410,6 +416,7 @@ def create_app() -> FastAPI:
             country_code=req.country_code,
             seed=req.seed,
             slot=req.slot,
+            player_name=req.player_name,
         )
         game.save()
         return _serialize_game(game)
@@ -859,42 +866,63 @@ def create_app() -> FastAPI:
     # ---- Cross-life statistics dashboard (#70) ----
     from ..engine import statistics
 
+    @app.get("/api/statistics/players")
+    def stats_players():
+        """Distinct player names with at least one archived life (#85).
+        Drives the dashboard player picker."""
+        return statistics.list_players()
+
     @app.get("/api/statistics/global")
-    def stats_global():
+    def stats_global(player: Optional[str] = None):
         """Top-line aggregates across the whole life archive."""
-        return statistics.global_stats()
+        return statistics.global_stats(player=player)
 
     @app.get("/api/statistics/by_country")
-    def stats_by_country():
+    def stats_by_country(player: Optional[str] = None):
         """One row per country with at least one archived life."""
-        return statistics.per_country_stats()
+        return statistics.per_country_stats(player=player)
 
     @app.get("/api/statistics/by_career")
-    def stats_by_career():
+    def stats_by_career(player: Optional[str] = None):
         """Top final jobs by occurrence with avg lifespan + earnings."""
-        return statistics.career_stats()
+        return statistics.career_stats(player=player)
 
     @app.get("/api/statistics/talents")
-    def stats_talents():
+    def stats_talents(player: Optional[str] = None):
         """Per-attribute talent counts (lives that reached peak >= 75)."""
-        return statistics.talent_stats()
+        return statistics.talent_stats(player=player)
 
     @app.get("/api/statistics/milestones")
-    def stats_milestones():
+    def stats_milestones(player: Optional[str] = None):
         """Best-of cards: oldest, wealthiest, most decorated, etc."""
-        return statistics.milestones()
+        return statistics.milestones(player=player)
 
     @app.get("/api/statistics/lives")
-    def stats_lives(limit: int = 10, offset: int = 0):
+    def stats_lives(limit: int = 10, offset: int = 0, player: Optional[str] = None):
         """Recent archived lives (most recent first). Default limit
         is intentionally small — the curated permanent set lives in
         /api/statistics/favorites."""
-        return statistics.list_lives(limit=limit, offset=offset)
+        return statistics.list_lives(limit=limit, offset=offset, player=player)
 
     @app.get("/api/statistics/favorites")
-    def stats_favorites():
+    def stats_favorites(player: Optional[str] = None):
         """Permanent curated set of favorited lives. No limit."""
-        return statistics.list_favorites()
+        return statistics.list_favorites(player=player)
+
+    @app.patch("/api/statistics/lives/{archive_id}/notes")
+    async def stats_set_notes(archive_id: str, req: Request):
+        """#89: set the free-text notes column on an archived life.
+        Body: {\"notes\": str}. Notes are capped at 5000 chars."""
+        try:
+            payload = json.loads((await req.body()).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        notes = payload.get("notes")
+        if notes is not None and not isinstance(notes, str):
+            raise HTTPException(status_code=400, detail="'notes' must be a string")
+        if not statistics.update_life_notes(archive_id, notes or ""):
+            raise HTTPException(status_code=404, detail="archived life not found")
+        return {"id": archive_id, "notes": (notes or "")[:statistics.NOTES_MAX_LEN]}
 
     @app.patch("/api/statistics/lives/{archive_id}/favorite")
     async def stats_set_favorite(archive_id: str, req: Request):

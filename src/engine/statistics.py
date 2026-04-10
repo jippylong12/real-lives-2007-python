@@ -145,6 +145,12 @@ def _build_row(state: "GameState") -> dict:
         "peak_wisdom": peaks.get("wisdom"),
         "peak_resistance": peaks.get("resistance"),
         "snapshot_json": json.dumps(snapshot),
+        # #85: stamp the player on the archive row so multi-player
+        # installs can scope statistics by player. NULL = unscoped.
+        "player_name": getattr(state, "player_name", None),
+        # #89: free-text player notes attached to a specific life.
+        # Default empty; the PATCH endpoint sets it later.
+        "notes": "",
     }
 
 
@@ -158,6 +164,7 @@ _INSERT_COLS = (
     "peak_strength", "peak_endurance", "peak_appearance", "peak_conscience",
     "peak_wisdom", "peak_resistance",
     "snapshot_json",
+    "player_name", "notes",   # #85, #89
 )
 _INSERT_SQL = (
     f"INSERT OR REPLACE INTO life_archive ({', '.join(_INSERT_COLS)}) "
@@ -182,6 +189,15 @@ def _append_jsonl_sidecar(row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row) + "\n")
+
+
+def _backfill_row_defaults(row: dict) -> dict:
+    """Fill in newer columns on legacy rows so a sidecar replay can
+    still restore them after a schema migration. Defaults match the
+    `_build_row` defaults for fresh writes."""
+    row.setdefault("player_name", None)  # #85
+    row.setdefault("notes", "")          # #89
+    return row
 
 
 def restore_jsonl_into_db() -> int:
@@ -211,6 +227,8 @@ def restore_jsonl_into_db() -> int:
                 rid = row.get("id")
                 if not rid or rid in existing_ids:
                     continue
+                # Backfill columns added after the row was written.
+                row = _backfill_row_defaults(row)
                 # Defensive: ensure all expected columns are present.
                 if not all(c in row for c in _INSERT_COLS):
                     logger.warning("life_archive: sidecar row missing columns, skipped (id=%s)", rid)
@@ -230,11 +248,41 @@ def restore_jsonl_into_db() -> int:
 # Aggregation queries
 # ---------------------------------------------------------------------------
 
-def global_stats() -> dict:
-    """Top-line aggregates across the whole archive."""
+# #85: build a (where_clause, params) pair scoping a query to a player.
+# Pass None for the legacy unscoped behavior. When set, returns rows
+# tagged with that exact player_name OR with NULL (unscoped legacy
+# rows are visible to everyone). The where_clause is composable with
+# additional WHEREs via " AND " concatenation.
+def _player_scope(player: str | None) -> tuple[str, tuple]:
+    if player is None:
+        return "1=1", ()
+    return "(player_name IS NULL OR player_name = ?)", (player,)
+
+
+def list_players() -> list[str]:
+    """Return the distinct non-null player names that have at least one
+    archived life. Drives the player picker dropdown on the dashboard."""
     conn = get_connection()
     try:
-        n_lives = conn.execute("SELECT COUNT(*) FROM life_archive").fetchone()[0]
+        rows = conn.execute(
+            "SELECT DISTINCT player_name FROM life_archive "
+            "WHERE player_name IS NOT NULL AND player_name != '' "
+            "ORDER BY player_name"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [r[0] for r in rows]
+
+
+def global_stats(player: str | None = None) -> dict:
+    """Top-line aggregates across the archive, optionally scoped to one
+    player (#85)."""
+    conn = get_connection()
+    try:
+        scope, params = _player_scope(player)
+        n_lives = conn.execute(
+            f"SELECT COUNT(*) FROM life_archive WHERE {scope}", params
+        ).fetchone()[0]
         if n_lives == 0:
             return {
                 "total_lives": 0, "distinct_countries": 0,
@@ -242,7 +290,8 @@ def global_stats() -> dict:
                 "total_lifetime_earnings": 0, "total_marriages": 0,
                 "total_children": 0,
             }
-        row = conn.execute("""
+        row = conn.execute(
+            f"""
             SELECT
                 COUNT(*) AS n_lives,
                 COUNT(DISTINCT country_code) AS distinct_countries,
@@ -252,7 +301,10 @@ def global_stats() -> dict:
                 SUM(married) AS total_marriages,
                 SUM(children_count) AS total_children
             FROM life_archive
-        """).fetchone()
+            WHERE {scope}
+            """,
+            params,
+        ).fetchone()
         return {
             "total_lives": int(row["n_lives"]),
             "distinct_countries": int(row["distinct_countries"]),
@@ -266,12 +318,14 @@ def global_stats() -> dict:
         conn.close()
 
 
-def per_country_stats() -> list[dict]:
+def per_country_stats(player: str | None = None) -> list[dict]:
     """One row per country with at least one archived life. Sorted by
-    n_lives desc."""
+    n_lives desc. Optionally scoped to a single player (#85)."""
     conn = get_connection()
+    scope, params = _player_scope(player)
     try:
-        rows = conn.execute("""
+        rows = conn.execute(
+            f"""
             SELECT
                 country_code,
                 country_name,
@@ -280,29 +334,31 @@ def per_country_stats() -> list[dict]:
                 MAX(age_at_death) AS longest_lived,
                 MAX(lifetime_earnings) AS highest_earning
             FROM life_archive
+            WHERE {scope}
             GROUP BY country_code
             ORDER BY n_lives DESC, country_name ASC
-        """).fetchall()
+            """,
+            params,
+        ).fetchall()
         out = []
         for r in rows:
-            # Most common job + cause of death require a sub-aggregate.
             top_job_row = conn.execute(
-                """
+                f"""
                 SELECT final_job, COUNT(*) AS n
                 FROM life_archive
-                WHERE country_code = ? AND final_job IS NOT NULL
+                WHERE country_code = ? AND final_job IS NOT NULL AND {scope}
                 GROUP BY final_job ORDER BY n DESC LIMIT 1
                 """,
-                (r["country_code"],),
+                (r["country_code"], *params),
             ).fetchone()
             top_cause_row = conn.execute(
-                """
+                f"""
                 SELECT cause_of_death, COUNT(*) AS n
                 FROM life_archive
-                WHERE country_code = ? AND cause_of_death IS NOT NULL
+                WHERE country_code = ? AND cause_of_death IS NOT NULL AND {scope}
                 GROUP BY cause_of_death ORDER BY n DESC LIMIT 1
                 """,
-                (r["country_code"],),
+                (r["country_code"], *params),
             ).fetchone()
             out.append({
                 "country_code": r["country_code"],
@@ -319,11 +375,13 @@ def per_country_stats() -> list[dict]:
         conn.close()
 
 
-def career_stats() -> list[dict]:
+def career_stats(player: str | None = None) -> list[dict]:
     """Top 10 final jobs by occurrence with avg lifespan + earnings."""
     conn = get_connection()
+    scope, params = _player_scope(player)
     try:
-        rows = conn.execute("""
+        rows = conn.execute(
+            f"""
             SELECT
                 final_job,
                 COUNT(*) AS n_lives,
@@ -331,11 +389,13 @@ def career_stats() -> list[dict]:
                 AVG(lifetime_earnings) AS avg_earnings,
                 MAX(lifetime_earnings) AS max_earnings
             FROM life_archive
-            WHERE final_job IS NOT NULL
+            WHERE final_job IS NOT NULL AND {scope}
             GROUP BY final_job
             ORDER BY n_lives DESC
             LIMIT 10
-        """).fetchall()
+            """,
+            params,
+        ).fetchall()
         return [{
             "job": r["final_job"],
             "n_lives": int(r["n_lives"]),
@@ -347,18 +407,21 @@ def career_stats() -> list[dict]:
         conn.close()
 
 
-def talent_stats() -> dict:
+def talent_stats(player: str | None = None) -> dict:
     """For each peak attribute, count how many lives reached >= 75."""
     conn = get_connection()
+    scope, params = _player_scope(player)
     try:
         out: dict[str, dict] = {}
         for attr in _PEAK_ATTRIBUTES:
             col = f"peak_{attr}"
             row = conn.execute(
-                f"SELECT COUNT(*) AS n FROM life_archive WHERE {col} >= 75"
+                f"SELECT COUNT(*) AS n FROM life_archive WHERE {col} >= 75 AND {scope}",
+                params,
             ).fetchone()
             avg_row = conn.execute(
-                f"SELECT AVG({col}) AS a FROM life_archive WHERE {col} IS NOT NULL"
+                f"SELECT AVG({col}) AS a FROM life_archive WHERE {col} IS NOT NULL AND {scope}",
+                params,
             ).fetchone()
             out[attr] = {
                 "talented_count": int(row["n"] or 0),
@@ -369,9 +432,10 @@ def talent_stats() -> dict:
         conn.close()
 
 
-def milestones() -> dict:
+def milestones(player: str | None = None) -> dict:
     """One winner per category — small dict with name, country, value, id."""
     conn = get_connection()
+    scope, params = _player_scope(player)
     try:
         def _fetch(order_by: str) -> dict | None:
             r = conn.execute(
@@ -380,8 +444,10 @@ def milestones() -> dict:
                        lifetime_earnings, promotion_count,
                        diseases_count, children_count
                 FROM life_archive
+                WHERE {scope}
                 ORDER BY {order_by} LIMIT 1
-                """
+                """,
+                params,
             ).fetchone()
             if not r:
                 return None
@@ -406,25 +472,32 @@ def milestones() -> dict:
         conn.close()
 
 
-def list_lives(limit: int = 10, offset: int = 0) -> dict:
+def list_lives(limit: int = 10, offset: int = 0, player: str | None = None) -> dict:
     """Paginated archive list (most recent first). Default limit is 10
     — the dashboard's 'Recent lives' section is intentionally short
     to keep the screen scannable. Use list_favorites() for the
-    permanent set the player has explicitly bookmarked."""
+    permanent set the player has explicitly bookmarked.
+
+    #85: optionally scoped to a single player.
+    """
     conn = get_connection()
+    scope, params = _player_scope(player)
     try:
-        total = conn.execute("SELECT COUNT(*) FROM life_archive").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM life_archive WHERE {scope}", params
+        ).fetchone()[0]
         rows = conn.execute(
-            """
+            f"""
             SELECT id, name, country_code, country_name, gender,
                    born_year, died_year, age_at_death, cause_of_death,
                    final_job, lifetime_earnings, peak_net_worth,
-                   married, children_count, is_favorite
+                   married, children_count, is_favorite, notes
             FROM life_archive
+            WHERE {scope}
             ORDER BY archived_at DESC
             LIMIT ? OFFSET ?
             """,
-            (limit, offset),
+            (*params, limit, offset),
         ).fetchall()
         return {
             "total": int(total),
@@ -434,22 +507,24 @@ def list_lives(limit: int = 10, offset: int = 0) -> dict:
         conn.close()
 
 
-def list_favorites() -> list[dict]:
+def list_favorites(player: str | None = None) -> list[dict]:
     """Return every favorited life — no limit, no pagination. The
     permanent curated set the player wants to keep visible across
     all their playtime."""
     conn = get_connection()
+    scope, params = _player_scope(player)
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, name, country_code, country_name, gender,
                    born_year, died_year, age_at_death, cause_of_death,
                    final_job, lifetime_earnings, peak_net_worth,
-                   married, children_count, is_favorite
+                   married, children_count, is_favorite, notes
             FROM life_archive
-            WHERE is_favorite = 1
+            WHERE is_favorite = 1 AND {scope}
             ORDER BY archived_at DESC
-            """
+            """,
+            params,
         ).fetchall()
         return [_row_to_summary(r) for r in rows]
     finally:
@@ -457,6 +532,13 @@ def list_favorites() -> list[dict]:
 
 
 def _row_to_summary(r) -> dict:
+    # #89: surface the notes field so the past-lives list can show a
+    # marker icon next to lives that have notes attached.
+    notes = ""
+    try:
+        notes = r["notes"] or ""
+    except (KeyError, IndexError):
+        notes = ""
     return {
         "id": r["id"],
         "name": r["name"],
@@ -473,7 +555,33 @@ def _row_to_summary(r) -> dict:
         "married": bool(r["married"]),
         "children_count": int(r["children_count"]),
         "is_favorite": bool(r["is_favorite"]),
+        "notes": notes,
+        "has_notes": bool(notes and notes.strip()),
     }
+
+
+# #89: per-life player notes
+NOTES_MAX_LEN = 5000
+
+
+def update_life_notes(archive_id: str, notes: str) -> bool:
+    """Set the free-text notes column on an archived life. Truncates
+    to NOTES_MAX_LEN chars to prevent unbounded bloat. Returns True if
+    the row was found, False otherwise."""
+    if notes is None:
+        notes = ""
+    if len(notes) > NOTES_MAX_LEN:
+        notes = notes[:NOTES_MAX_LEN]
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE life_archive SET notes = ? WHERE id = ?",
+            (notes, archive_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
 
 def set_favorite(archive_id: str, is_favorite: bool) -> bool:
@@ -599,6 +707,7 @@ def import_archive(payload_str: str) -> dict:
             if not rid or rid in existing_ids:
                 skipped += 1
                 continue
+            row = _backfill_row_defaults(row)
             if not all(c in row for c in _INSERT_COLS):
                 skipped += 1
                 continue

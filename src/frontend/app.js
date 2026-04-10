@@ -704,10 +704,36 @@ const slotState = {
   pendingSlot: null,  // slot the country picker is currently scoped to
 };
 
+// #85: active player name. Persists in localStorage so multi-player
+// installs survive a refresh. Empty string = unscoped (legacy view).
+function getActivePlayer() {
+  try {
+    return (localStorage.getItem("rl_active_player") || "").trim();
+  } catch {
+    return "";
+  }
+}
+function setActivePlayer(name) {
+  try {
+    localStorage.setItem("rl_active_player", (name || "").trim());
+  } catch {
+    /* localStorage may be disabled — non-fatal */
+  }
+}
+function playerQuery() {
+  const p = getActivePlayer();
+  return p ? `?player=${encodeURIComponent(p)}` : "";
+}
+function playerSuffix() {
+  // For endpoints that already have a query string.
+  const p = getActivePlayer();
+  return p ? `&player=${encodeURIComponent(p)}` : "";
+}
+
 async function loadSlots() {
   try {
-    slotState.slots = await api("/api/slots");
-    log(`loaded ${slotState.slots.length} slots`);
+    slotState.slots = await api(`/api/slots${playerQuery()}`);
+    log(`loaded ${slotState.slots.length} slots (player=${getActivePlayer() || "—"})`);
   } catch (e) {
     logErr("loadSlots failed", e);
     slotState.slots = [];
@@ -1090,6 +1116,11 @@ async function newGame(countryCode) {
   try {
     const body = { slot };
     if (countryCode) body.country_code = countryCode;
+    // #85: stamp the active player on the game so save slots and
+    // statistics filter correctly across multiple players sharing
+    // the same install.
+    const player = getActivePlayer();
+    if (player) body.player_name = player;
     state.game = await api("/api/game/new", {
       method: "POST",
       body: JSON.stringify(body),
@@ -1304,6 +1335,57 @@ function showDeathScreen(turn) {
     li.textContent = line;
     tl.appendChild(li);
   }
+
+  // #89: per-life player notes editor. Only meaningful when viewing
+  // an archived life (the active death screen has no archive id yet).
+  renderNotesEditor();
+}
+
+function renderNotesEditor() {
+  // Only render the notes editor when viewing an archived life — the
+  // live death screen doesn't have an archive id until the next
+  // dashboard load.
+  const existing = document.getElementById("death-notes");
+  if (!_viewingArchivedLife || !_viewingArchiveId) {
+    if (existing) existing.remove();
+    return;
+  }
+  const initial = _viewingNotes || "";
+  let host = existing;
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "death-notes";
+    host.className = "death-notes";
+    const tl = document.getElementById("death-timeline");
+    if (tl && tl.parentNode) {
+      tl.parentNode.insertBefore(host, tl.nextSibling);
+    }
+  }
+  host.innerHTML = `
+    <h3 class="ds-section-title">Notes</h3>
+    <textarea id="death-notes-textarea" maxlength="5000" rows="4"
+              placeholder="Why did this life matter? Add a note (saved on blur)."></textarea>
+    <div id="death-notes-status" class="muted notes-status"></div>
+  `;
+  const ta = host.querySelector("#death-notes-textarea");
+  const status = host.querySelector("#death-notes-status");
+  ta.value = initial;
+  ta.addEventListener("blur", async () => {
+    if (!_viewingArchiveId) return;
+    try {
+      status.textContent = "Saving…";
+      const res = await api(`/api/statistics/lives/${_viewingArchiveId}/notes`, {
+        method: "PATCH",
+        body: JSON.stringify({ notes: ta.value }),
+      });
+      _viewingNotes = res.notes || "";
+      status.textContent = _viewingNotes ? "Saved." : "Note cleared.";
+      setTimeout(() => { status.textContent = ""; }, 2000);
+    } catch (e) {
+      logErr("save notes failed", e);
+      status.textContent = `Couldn't save: ${e.message}`;
+    }
+  });
 }
 
 // =====================================================================
@@ -1319,6 +1401,9 @@ let _viewingArchivedLife = false;
 // used by the favorite toggle button. Set by viewArchivedLife().
 let _viewingArchiveId = null;
 let _viewingIsFavorite = false;
+// #89: notes for the currently-displayed archived life. Pre-populated
+// from the past-lives summary so the editor opens with the latest text.
+let _viewingNotes = "";
 
 async function showStatisticsScreen() {
   log("showStatisticsScreen");
@@ -1331,14 +1416,18 @@ async function showStatisticsScreen() {
 
 async function loadStatistics() {
   try {
+    // #85: scope every aggregation to the active player. Empty player
+    // = unscoped (legacy global view).
+    const q = playerQuery();
+    const livesQ = `?limit=10${playerSuffix()}`;
     const [globalStats, byCountry, byCareer, talents, milestones, lives, favorites] = await Promise.all([
-      api("/api/statistics/global"),
-      api("/api/statistics/by_country"),
-      api("/api/statistics/by_career"),
-      api("/api/statistics/talents"),
-      api("/api/statistics/milestones"),
-      api("/api/statistics/lives?limit=10"),
-      api("/api/statistics/favorites"),
+      api(`/api/statistics/global${q}`),
+      api(`/api/statistics/by_country${q}`),
+      api(`/api/statistics/by_career${q}`),
+      api(`/api/statistics/talents${q}`),
+      api(`/api/statistics/milestones${q}`),
+      api(`/api/statistics/lives${livesQ}`),
+      api(`/api/statistics/favorites${q}`),
     ]);
     if (globalStats.total_lives === 0) {
       $("#stats-empty").classList.remove("hidden");
@@ -1463,9 +1552,11 @@ function renderTalents(t) {
 
 function _lifeRowHtml(l) {
   const star = l.is_favorite ? '<span class="pl-star" title="favorite">★</span>' : "";
+  // #89: tiny note marker if this life has player notes attached.
+  const note = l.has_notes ? '<span class="pl-note" title="has notes">📝</span>' : "";
   return `
     <div class="past-life-row" data-archive-id="${escapeHtml(l.id)}">
-      <div class="pl-name">${escapeHtml(l.name)} ${star}</div>
+      <div class="pl-name">${escapeHtml(l.name)} ${star} ${note}</div>
       <div class="pl-meta">
         <span>${escapeHtml(l.country_name)}</span> ·
         <span>${l.born_year}-${l.died_year}</span> ·
@@ -1479,6 +1570,7 @@ function _lifeRowHtml(l) {
 
 function renderFavoritesList(favorites) {
   const host = $("#stats-favorites");
+  _favoritesCache = favorites || [];   // #89: cache for notes lookup
   if (!favorites || favorites.length === 0) {
     host.innerHTML = '<p class="muted">No favorites yet — view a past life and click ★ to keep it here permanently.</p>';
     return;
@@ -1492,6 +1584,7 @@ function renderFavoritesList(favorites) {
 function renderPastLivesList(payload) {
   const host = $("#stats-lives");
   const lives = payload.lives || [];
+  _pastLivesCache = lives;             // #89: cache for notes lookup
   if (lives.length === 0) {
     host.innerHTML = '<p class="muted">No archived lives yet.</p>';
     $("#stats-lives-pager").innerHTML = "";
@@ -1513,9 +1606,10 @@ async function viewArchivedLife(archiveId) {
     state.game = snapshot;
     _viewingArchivedLife = true;
     _viewingArchiveId = archiveId;
-    // Look up the favorite state from the lists we already rendered
-    // (cheap; avoids a second round trip).
+    // Look up the favorite + notes state from the lists we already
+    // rendered (cheap; avoids a second round trip).
     _viewingIsFavorite = _isArchiveFavorited(archiveId);
+    _viewingNotes = _archiveNotesFor(archiveId);
     $("#btn-back-to-stats").classList.remove("hidden");
     _updateFavoriteButton();
     $("#btn-toggle-favorite").classList.remove("hidden");
@@ -1527,6 +1621,27 @@ async function viewArchivedLife(archiveId) {
     showToast(`Couldn't load that life: ${e.message}`, { kind: "error" });
   }
 }
+
+// #89: pull notes for an archived life out of whatever rendered list
+// we already have so the editor opens with the latest text without a
+// second round trip. The PATCH endpoint is the source of truth on save.
+function _archiveNotesFor(archiveId) {
+  // Search the past-lives + favorites lists for an entry with this id.
+  // Both lists carry data attributes via _lifeRowHtml; the underlying
+  // data lives on a per-list cache we set during render.
+  const lists = [_pastLivesCache, _favoritesCache];
+  for (const cache of lists) {
+    if (!cache) continue;
+    const found = cache.find((l) => l.id === archiveId);
+    if (found) return found.notes || "";
+  }
+  return "";
+}
+
+// Caches populated by renderPastLivesList / renderFavoritesList so the
+// notes lookup above can avoid an extra fetch.
+let _pastLivesCache = null;
+let _favoritesCache = null;
 
 function _isArchiveFavorited(archiveId) {
   // Look at the rendered favorites list (data attributes) — quicker
@@ -2524,6 +2639,25 @@ async function init() {
     e.target.value = "";  // allow re-importing the same file
   });
   $("#stats-clear-btn").addEventListener("click", clearNonFavorites);
+  // #85: player name input on the start screen. Updates localStorage
+  // and reloads slots so the picker re-scopes immediately.
+  const playerInput = $opt("#player-name-input");
+  const savePlayerBtn = $opt("#btn-save-player");
+  if (playerInput) {
+    playerInput.value = getActivePlayer();
+    const apply = async () => {
+      setActivePlayer(playerInput.value);
+      await loadSlots();
+      renderSlotGrid();
+      showToast(getActivePlayer()
+        ? `Now playing as ${getActivePlayer()}`
+        : "Switched to shared (unscoped) view", { kind: "info" });
+    };
+    if (savePlayerBtn) savePlayerBtn.addEventListener("click", apply);
+    playerInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") apply();
+    });
+  }
   log("init: loading countries + finance products");
   await loadCountries();
   await loadFinanceProducts();

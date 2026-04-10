@@ -263,9 +263,13 @@ CREATE TABLE IF NOT EXISTS games (
     -- Multiple games can share a slot (history of dead lives in that
     -- slot); the "current" game in slot N is the most recent by
     -- updated_at.
-    slot        INTEGER
+    slot        INTEGER,
+    -- #85: per-player scoping. NULL means "unscoped" so legacy games
+    -- and players who haven't picked a name still see their stuff.
+    player_name TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_games_slot ON games(slot);
+CREATE INDEX IF NOT EXISTS idx_games_player ON games(player_name);
 
 -- Cross-life statistics archive (#70). Every completed life writes a
 -- row here on death — used by the statistics dashboard to aggregate
@@ -319,6 +323,16 @@ CREATE INDEX IF NOT EXISTS idx_life_archive_died_year ON life_archive(died_year)
 # column name" error so re-runs are no-ops.
 LIFE_ARCHIVE_MIGRATIONS = [
     "ALTER TABLE life_archive ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+    # #85: per-player scoping. NULL means "unscoped" (legacy rows).
+    "ALTER TABLE life_archive ADD COLUMN player_name TEXT",
+    # #89: free-text player notes attached to a specific life. Empty
+    # by default; capped at 5000 chars by the API layer.
+    "ALTER TABLE life_archive ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+]
+GAMES_MIGRATIONS = [
+    # #85: per-player scoping for save slots so multiple players sharing
+    # one DB don't see each other's slots. NULL means "unscoped".
+    "ALTER TABLE games ADD COLUMN player_name TEXT",
 ]
 COUNTRIES_MIGRATIONS = [
     # #92: country-level lifetime divorce probability. NULL means the
@@ -348,6 +362,10 @@ def _apply_countries_migrations(conn: sqlite3.Connection) -> None:
     _apply_idempotent_migrations(conn, COUNTRIES_MIGRATIONS)
 
 
+def _apply_games_migrations(conn: sqlite3.Connection) -> None:
+    _apply_idempotent_migrations(conn, GAMES_MIGRATIONS)
+
+
 def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -369,6 +387,7 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
         # additional columns over time.
         _apply_life_archive_migrations(conn)
         _apply_countries_migrations(conn)
+        _apply_games_migrations(conn)
 
         # 1. Recovered schema from .dat files.
         parsed_files = parse_dat.parse_all(data_dir)

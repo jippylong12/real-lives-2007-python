@@ -63,6 +63,10 @@ class GameState:
     started_at: str                        # ISO timestamp
     pending_event: Optional[dict] = None   # full event awaiting decision
     slot: Optional[int] = None             # save slot 1-5 (#79)
+    # #85: per-player scoping. NULL means "unscoped" (the legacy
+    # default that anonymous players still see). When set, save slots
+    # and statistics filter to lives created by this player.
+    player_name: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +78,7 @@ class GameState:
             "started_at": self.started_at,
             "pending_event": self.pending_event,
             "slot": self.slot,
+            "player_name": self.player_name,
         }
 
     @classmethod
@@ -87,6 +92,7 @@ class GameState:
             started_at=d["started_at"],
             pending_event=d.get("pending_event"),
             slot=d.get("slot"),
+            player_name=d.get("player_name"),
         )
 
 
@@ -108,6 +114,7 @@ class Game:
         country_code: str | None = None,
         seed: int | None = None,
         slot: int | None = None,
+        player_name: str | None = None,
     ) -> "Game":
         seed = seed if seed is not None else random.SystemRandom().randint(0, 2**31 - 1)
         rng = random.Random(seed)
@@ -123,6 +130,7 @@ class Game:
             year=2007,                # original game's release year as the in-game start
             started_at=datetime.now(timezone.utc).isoformat(),
             slot=slot,
+            player_name=player_name or None,
         )
         character.remember(f"Born in {country.capital}, {country.name}.")
         return cls(state)
@@ -511,13 +519,14 @@ def save_game(game: Game) -> None:
         state_json = json.dumps(game.state.to_dict())
         conn.execute(
             """
-            INSERT INTO games (id, created_at, updated_at, state_json, slot)
-            VALUES (?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at,
-                                          state_json = excluded.state_json,
-                                          slot       = excluded.slot
+            INSERT INTO games (id, created_at, updated_at, state_json, slot, player_name)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET updated_at  = excluded.updated_at,
+                                          state_json  = excluded.state_json,
+                                          slot        = excluded.slot,
+                                          player_name = excluded.player_name
             """,
-            (game.state.id, now, now, state_json, game.state.slot),
+            (game.state.id, now, now, state_json, game.state.slot, game.state.player_name),
         )
         conn.commit()
     finally:
@@ -536,12 +545,26 @@ def load_game(game_id: str) -> Game | None:
     return Game(state)
 
 
-def list_games() -> list[dict]:
+def list_games(player_name: str | None = None) -> list[dict]:
+    """List saved games. When ``player_name`` is provided, only games
+    stamped with that player are returned (#85). Pass None for the
+    legacy unscoped behavior — returns everything regardless of player.
+    """
     conn = get_connection()
     try:
-        rows = conn.execute(
-            "SELECT id, created_at, updated_at, state_json FROM games ORDER BY updated_at DESC"
-        ).fetchall()
+        if player_name is None:
+            rows = conn.execute(
+                "SELECT id, created_at, updated_at, state_json, player_name "
+                "FROM games ORDER BY updated_at DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, created_at, updated_at, state_json, player_name "
+                "FROM games "
+                "WHERE player_name IS ? OR player_name = ? "
+                "ORDER BY updated_at DESC",
+                (None, player_name),  # also surface unscoped legacy rows
+            ).fetchall()
     finally:
         conn.close()
     out = []
@@ -555,6 +578,7 @@ def list_games() -> list[dict]:
             "country_code": s["character"]["country_code"],
             "age": s["character"]["age"],
             "alive": s["character"]["alive"],
+            "player_name": r["player_name"],
         })
     return out
 
@@ -563,28 +587,54 @@ def list_games() -> list[dict]:
 NUM_SLOTS = 5
 
 
-def list_slots() -> list[dict]:
+def list_slots(player_name: str | None = None) -> list[dict]:
     """Return one descriptor per save slot (1..NUM_SLOTS).
 
     For each slot, the "current" game is the most recently updated row
     with that slot number. Slots with no rows return state="empty".
     Otherwise the slot reports the character's name / country / age and
-    whether they're still alive."""
+    whether they're still alive.
+
+    #85: when ``player_name`` is set, the slot lookup is scoped to
+    games tagged with that player (and unscoped legacy rows). Pass
+    None for the legacy global view that surfaces every player's
+    slots indiscriminately.
+    """
     conn = get_connection()
     try:
-        rows = conn.execute(
-            """
-            SELECT g.id, g.slot, g.created_at, g.updated_at, g.state_json
-            FROM games g
-            JOIN (
-                SELECT slot, MAX(updated_at) AS m
-                FROM games
-                WHERE slot IS NOT NULL
-                GROUP BY slot
-            ) latest ON latest.slot = g.slot AND latest.m = g.updated_at
-            ORDER BY g.slot
-            """
-        ).fetchall()
+        if player_name is None:
+            rows = conn.execute(
+                """
+                SELECT g.id, g.slot, g.created_at, g.updated_at, g.state_json,
+                       g.player_name
+                FROM games g
+                JOIN (
+                    SELECT slot, MAX(updated_at) AS m
+                    FROM games
+                    WHERE slot IS NOT NULL
+                    GROUP BY slot
+                ) latest ON latest.slot = g.slot AND latest.m = g.updated_at
+                ORDER BY g.slot
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT g.id, g.slot, g.created_at, g.updated_at, g.state_json,
+                       g.player_name
+                FROM games g
+                JOIN (
+                    SELECT slot, MAX(updated_at) AS m
+                    FROM games
+                    WHERE slot IS NOT NULL
+                      AND (player_name IS NULL OR player_name = ?)
+                    GROUP BY slot
+                ) latest ON latest.slot = g.slot AND latest.m = g.updated_at
+                WHERE g.player_name IS NULL OR g.player_name = ?
+                ORDER BY g.slot
+                """,
+                (player_name, player_name),
+            ).fetchall()
     finally:
         conn.close()
     by_slot: dict[int, dict] = {}

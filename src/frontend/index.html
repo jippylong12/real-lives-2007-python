@@ -40,6 +40,16 @@
             </p>
           </div>
 
+          <!-- #85: optional player name. When set, save slots and the
+               statistics dashboard scope to this player so multiple
+               players sharing one DB don't see each other's runs. -->
+          <div class="player-bar">
+            <label for="player-name-input" class="player-bar-label">Playing as</label>
+            <input id="player-name-input" type="text" maxlength="40"
+                   placeholder="(anyone — leave blank for shared)" />
+            <button id="btn-save-player" class="btn xs">Save</button>
+          </div>
+
           <!-- Slot picker view (default) -->
           <div id="slot-picker-view" class="slot-picker-view">
             <div id="slot-grid" class="slot-grid"></div>
