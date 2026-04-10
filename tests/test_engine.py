@@ -344,6 +344,18 @@ def test_acute_categories_capped_at_one_per_year():
     )
 
 
+# Helper used by cohort-style tests below. The engine no longer auto-
+# assigns jobs in advance_year (deliberate joblessness — see commit
+# removing auto-assign), so cohort sims must explicitly drive the
+# character into the workforce each year. Mirrors what an active
+# player does via Find work / job board.
+def _seek_work_after_advance(g):
+    char = g.state.character
+    if char.job is None and not char.in_school and char.age >= 14:
+        from src.engine import careers
+        careers.assign_job(char, g.country(), g.rng)
+
+
 def test_cancer_lifetime_rates_in_real_world_ballpark():
     """Issue #24: cancer lifetime incidence in the US should be at least
     8% for breast (women) and prostate (men) — within +/- 50% of the
@@ -365,6 +377,7 @@ def test_cancer_lifetime_rates_in_real_world_ballpark():
                 r = g.advance_year()
                 if r.pending_decision:
                     g.apply_decision(r.pending_decision["choices"][0]["key"])
+                _seek_work_after_advance(g)
             if cancer_key in g.state.character.diseases:
                 hits += 1
         return hits / cohort if cohort else 0.0
@@ -391,6 +404,7 @@ def test_average_lifespan_in_real_world_ballpark_for_rich_countries():
                 r = g.advance_year()
                 if r.pending_decision:
                     g.apply_decision(r.pending_decision["choices"][0]["key"])
+                _seek_work_after_advance(g)
             ages.append(g.state.character.age)
             causes[g.state.character.cause_of_death] += 1
         return sum(ages) / len(ages), causes

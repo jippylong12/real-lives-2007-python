@@ -169,9 +169,15 @@ class Game:
             log.append(TurnEvent("education", "Education", "education", ed_msg))
             char.remember(ed_msg)
 
-        # 2. Job hunt + promotion (#51) + retirement (#75).
+        # 2. Promotion check + auto-retirement (#51, #75).
         # Tick years_in_role first so the promotion check sees the
         # accumulated experience for the year that just finished.
+        # NOTE: jobless characters are NEVER auto-assigned a new job —
+        # joblessness is a deliberate state. Players who graduate, quit,
+        # retire, or get aged out of their career stay jobless until
+        # they explicitly use Find work / job board to re-enter the
+        # workforce. The Find work flow already handles intentional
+        # entry into employment.
         if char.job is not None:
             char.years_in_role += 1
             # Forced retirement when the character ages past their job's
@@ -190,15 +196,10 @@ class Game:
                 char.salary = 0
                 char.years_in_role = 0
 
-        job_msg = careers.assign_job(char, country, self.rng)
-        if job_msg:
-            log.append(TurnEvent("job", "New job", "finance", job_msg))
-            char.remember(job_msg)
-        else:
-            promo_msg = careers.promote(char, country, self.rng)
-            if promo_msg:
-                log.append(TurnEvent("promotion", "Promotion", "finance", promo_msg))
-                char.remember(promo_msg)
+        promo_msg = careers.promote(char, country, self.rng)
+        if promo_msg:
+            log.append(TurnEvent("promotion", "Promotion", "finance", promo_msg))
+            char.remember(promo_msg)
 
         # 3. Income / expenses
         net = careers.yearly_income(char, country, self.rng)

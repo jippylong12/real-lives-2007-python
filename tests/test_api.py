@@ -11,6 +11,28 @@ def client():
     return TestClient(app)
 
 
+def _seek_work_via_engine(gid):
+    """Mirror what an active player does after each advance: if the
+    character is jobless and old enough to work, find them a job. The
+    engine no longer auto-assigns in advance_year (deliberate
+    joblessness — see commit removing auto-assign), so API tests that
+    simulate cohort play need to drive employment explicitly. Bypasses
+    the API surface because no /find_work endpoint exists; the real
+    frontend uses the job board flow which is awkward to script."""
+    from src.engine import careers
+    from src.engine.game import load_game
+    from src.engine.world import get_country
+    g = load_game(gid)
+    if g is None:
+        return
+    char = g.state.character
+    if char.job is None and not char.in_school and char.age >= 14:
+        country = get_country(char.country_code)
+        if country is not None:
+            careers.assign_job(char, country, g.rng)
+            g.save()
+
+
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
@@ -128,6 +150,9 @@ def test_invest_and_sell_round_trip(client):
         g = rr["game"]
         if rr["turn"]["died"]:
             pytest.skip("character died before reaching loan-eligible age")
+        _seek_work_via_engine(gid)
+    # Refresh after the engine-side find-work calls.
+    g = client.get(f"/api/game/{gid}").json()
 
     # Hand the character some money via loan, then invest it.
     money_before = g["character"]["money"]
@@ -173,16 +198,19 @@ def test_quit_job_clears_employment(client):
     a new one next year."""
     g = client.post("/api/game/new", json={"country_code": "us", "seed": 7}).json()
     gid = g["id"]
-    # Advance until they get a job
+    # Advance until they get a job (driving find-work via the engine
+    # since the engine no longer auto-assigns).
     for _ in range(40):
         rr = client.post(f"/api/game/{gid}/advance").json()
         if rr["turn"]["pending_decision"]:
             client.post(f"/api/game/{gid}/decision", json={"choice_key": rr["turn"]["pending_decision"]["choices"][0]["key"]})
         g = rr["game"]
-        if g["character"]["job"]:
-            break
         if rr["turn"]["died"]:
             pytest.skip("character died before getting a job")
+        _seek_work_via_engine(gid)
+        g = client.get(f"/api/game/{gid}").json()
+        if g["character"]["job"]:
+            break
     if not g["character"]["job"]:
         pytest.skip("character never got a job in 40 years")
 
@@ -208,6 +236,8 @@ def test_pay_loan_endpoint_clears_balance(client):
         g = rr["game"]
         if rr["turn"]["died"]:
             pytest.skip("character died young")
+        _seek_work_via_engine(gid)
+    g = client.get(f"/api/game/{gid}").json()
 
     # Take a personal loan
     loans = client.get("/api/loans").json()
