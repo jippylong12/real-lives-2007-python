@@ -346,6 +346,151 @@ def test_life_archive_jsonl_round_trip_after_db_wipe():
     assert row is not None, "JSONL replay didn't restore the wiped row"
 
 
+def test_player_scoping_separates_two_players_archives():
+    """#85: two players sharing one DB see only their own lives by
+    default. The 'unscoped' query (player=None) still returns both."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    # Wipe to start clean.
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.commit()
+    finally:
+        conn.close()
+
+    def play_to_death(seed, player):
+        g = Game.new(country_code="us", seed=seed, player_name=player)
+        g.state.character.age = 95
+        g.state.character.attributes.health = 5
+        for _ in range(15):
+            if not g.state.character.alive:
+                break
+            g.advance_year()
+        assert not g.state.character.alive
+        return g.state.id
+
+    alice_id = play_to_death(901, "alice")
+    bob_id = play_to_death(902, "bob")
+
+    alice_lives = statistics.list_lives(player="alice")["lives"]
+    bob_lives = statistics.list_lives(player="bob")["lives"]
+    all_lives = statistics.list_lives()["lives"]
+
+    alice_ids = {l["id"] for l in alice_lives}
+    bob_ids = {l["id"] for l in bob_lives}
+    all_ids = {l["id"] for l in all_lives}
+
+    assert alice_id in alice_ids
+    assert bob_id not in alice_ids
+    assert bob_id in bob_ids
+    assert alice_id not in bob_ids
+    assert {alice_id, bob_id}.issubset(all_ids)
+
+    # global_stats also scopes correctly
+    alice_global = statistics.global_stats(player="alice")
+    bob_global = statistics.global_stats(player="bob")
+    all_global = statistics.global_stats()
+    assert alice_global["total_lives"] == 1
+    assert bob_global["total_lives"] == 1
+    assert all_global["total_lives"] == 2
+
+
+def test_player_scoped_save_slots_isolated():
+    """#85: list_slots(player_name='alice') hides bob's slots."""
+    from src.engine import Game
+    from src.engine.game import list_slots
+    from src.data.build_db import get_connection
+
+    # Wipe games table to start clean.
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM games WHERE slot IS NOT NULL")
+        conn.commit()
+    finally:
+        conn.close()
+
+    g_alice = Game.new(country_code="us", seed=801, slot=1, player_name="alice")
+    g_alice.save()
+    g_bob = Game.new(country_code="de", seed=802, slot=2, player_name="bob")
+    g_bob.save()
+
+    alice_slots = list_slots(player_name="alice")
+    bob_slots = list_slots(player_name="bob")
+    # Each player only sees their own occupied slot.
+    alice_occupied = [s for s in alice_slots if s["state"] != "empty"]
+    bob_occupied = [s for s in bob_slots if s["state"] != "empty"]
+    assert len(alice_occupied) == 1
+    assert alice_occupied[0]["character_name"] == g_alice.state.character.name
+    assert len(bob_occupied) == 1
+    assert bob_occupied[0]["character_name"] == g_bob.state.character.name
+
+
+def test_list_players_returns_distinct_player_names():
+    """#85: list_players surfaces distinct names with at least one
+    archived life so the dashboard can render a player picker."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.commit()
+    finally:
+        conn.close()
+
+    for seed, player in [(701, "carol"), (702, "dan"), (703, "carol")]:
+        g = Game.new(country_code="us", seed=seed, player_name=player)
+        g.state.character.age = 95
+        g.state.character.attributes.health = 5
+        for _ in range(15):
+            if not g.state.character.alive:
+                break
+            g.advance_year()
+
+    players = statistics.list_players()
+    assert "carol" in players
+    assert "dan" in players
+    # No duplicates.
+    assert len(players) == len(set(players))
+
+
+def test_update_life_notes_round_trip():
+    """#89: notes set via update_life_notes survive across reads.
+    Truncation enforced at NOTES_MAX_LEN."""
+    from src.engine import statistics, Game
+
+    g = Game.new(country_code="us", seed=601)
+    g.state.character.age = 95
+    g.state.character.attributes.health = 5
+    for _ in range(15):
+        if not g.state.character.alive:
+            break
+        g.advance_year()
+    assert not g.state.character.alive
+
+    note = "This was the time my centenarian Brazilian senator survived three coups."
+    assert statistics.update_life_notes(g.state.id, note) is True
+    lives = statistics.list_lives()["lives"]
+    target = next(l for l in lives if l["id"] == g.state.id)
+    assert target["notes"] == note
+    assert target["has_notes"] is True
+
+    # Truncation
+    huge = "x" * 6000
+    statistics.update_life_notes(g.state.id, huge)
+    lives = statistics.list_lives()["lives"]
+    target = next(l for l in lives if l["id"] == g.state.id)
+    assert len(target["notes"]) == statistics.NOTES_MAX_LEN
+
+
+def test_update_life_notes_404_for_missing_id():
+    """#89: update_life_notes returns False when no row matches."""
+    from src.engine import statistics
+    assert statistics.update_life_notes("does-not-exist", "hello") is False
+
+
 def test_favorites_and_clear_non_favorites():
     """#70 followup: set_favorite + list_favorites + clear_non_favorites
     work together so the user can curate a permanent set and wipe
