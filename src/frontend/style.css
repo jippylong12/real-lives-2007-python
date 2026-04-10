@@ -1068,6 +1068,125 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   margin-left: 2px;
 }
 
+/* #85: player picker on the stats dashboard. */
+.stats-player-picker {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--paper-soft, #faf8f3);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.stats-player-picker.hidden { display: none; }
+.stats-player-picker select {
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid rgba(20, 18, 14, 0.15);
+  border-radius: 4px;
+}
+
+/* #88: filter form + chips. */
+.stats-filters {
+  margin-bottom: 12px;
+}
+.stats-filters.hidden { display: none; }
+.filter-row {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: end;
+  padding: 12px;
+  background: var(--paper-soft, #faf8f3);
+  border-radius: 6px;
+}
+.filter-row label {
+  display: flex; flex-direction: column;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.filter-row input, .filter-row select {
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1px solid rgba(20, 18, 14, 0.15);
+  border-radius: 4px;
+  background: white;
+  min-width: 100px;
+}
+.stats-filter-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 8px;
+}
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  background: rgba(132, 96, 56, 0.12);
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.filter-chip:hover { background: rgba(132, 96, 56, 0.20); }
+.chip-x { font-weight: bold; }
+
+/* #90: achievements grid. */
+.stats-achievements-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.achievement-card {
+  display: flex; gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(20, 18, 14, 0.10);
+  border-radius: 8px;
+  background: var(--paper-soft, #faf8f3);
+}
+.achievement-card.locked { opacity: 0.45; filter: grayscale(0.6); }
+.achievement-card.unlocked.tier-bronze { border-color: #b08a52; }
+.achievement-card.unlocked.tier-silver { border-color: #a0a0a0; }
+.achievement-card.unlocked.tier-gold { border-color: #c89b3a; box-shadow: 0 0 0 1px rgba(200, 155, 58, 0.20); }
+.ach-icon { font-size: 28px; line-height: 1; }
+.ach-body { flex: 1; }
+.ach-title { font-weight: 700; font-size: 14px; }
+.ach-desc { font-size: 12px; }
+
+/* #86: country map (region-grid heatmap). */
+.stats-country-map {
+  display: flex; flex-direction: column; gap: 14px;
+  margin-bottom: 16px;
+}
+.stats-country-map.hidden { display: none; }
+.map-region-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-mute);
+  margin-bottom: 6px;
+}
+.map-region-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 4px;
+}
+.map-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 8px 4px;
+  border: 1px solid rgba(20, 18, 14, 0.08);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: default;
+  text-align: center;
+}
+.map-tile-code { font-weight: 700; }
+.map-tile-n { font-size: 10px; color: var(--ink-mute); }
+.stats-view-toggle { float: right; }
+
+/* #87: chart canvas containers. */
+.stats-chart-canvas {
+  max-width: 100%;
+  margin-bottom: 16px;
+}
+.stats-chart-canvas.hidden { display: none; }
+.stats-bar-chart.hidden { display: none; }
+.stats-country-table.hidden { display: none; }
+
 /* ---------- Footer ---------- */
 .footer { padding: 24px; text-align: center; font-size: 12px; }
 

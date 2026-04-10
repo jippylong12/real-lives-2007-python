@@ -230,27 +230,52 @@
           </div>
         </div>
 
+        <!-- #85: player picker dropdown (only visible when more than
+             one player has lives in the archive). -->
+        <div id="stats-player-picker" class="stats-player-picker hidden">
+          <label for="stats-player-select">Showing</label>
+          <select id="stats-player-select">
+            <option value="">All players</option>
+          </select>
+        </div>
+
         <div id="stats-empty" class="muted hidden">No completed lives yet — finish a life to start populating the archive.</div>
 
         <h3 class="stats-section-h">Overview</h3>
         <div id="stats-global" class="stats-global-grid"></div>
 
+        <!-- #90: achievement panel. Locked entries appear grayed out. -->
+        <h3 class="stats-section-h">Achievements</h3>
+        <div id="stats-achievements" class="stats-achievements-grid"></div>
+
         <h3 class="stats-section-h">Best of</h3>
         <div id="stats-milestones" class="stats-milestones-grid"></div>
 
-        <h3 class="stats-section-h">By country</h3>
+        <h3 class="stats-section-h">
+          By country
+          <button id="stats-country-toggle" class="btn xs stats-view-toggle" data-view="table">View as map</button>
+        </h3>
         <div id="stats-country" class="stats-country-table"></div>
+        <div id="stats-country-map" class="stats-country-map hidden"></div>
 
         <h3 class="stats-section-h">By career</h3>
-        <div id="stats-career" class="stats-bar-chart"></div>
+        <canvas id="stats-career-chart" class="stats-chart-canvas" height="240"></canvas>
+        <div id="stats-career" class="stats-bar-chart hidden"></div>
 
         <h3 class="stats-section-h">Talents</h3>
-        <div id="stats-talents" class="stats-bar-chart"></div>
+        <canvas id="stats-talents-chart" class="stats-chart-canvas" height="280"></canvas>
+        <div id="stats-talents" class="stats-bar-chart hidden"></div>
 
         <h3 class="stats-section-h">Favorites</h3>
         <div id="stats-favorites" class="stats-lives-list"></div>
 
-        <h3 class="stats-section-h">Recent lives</h3>
+        <h3 class="stats-section-h">
+          Recent lives
+          <button id="stats-filters-toggle" class="btn xs stats-view-toggle">Filter</button>
+        </h3>
+        <!-- #88: filter chips + filter form (toggle-revealed) -->
+        <div id="stats-filters" class="stats-filters hidden"></div>
+        <div id="stats-filter-chips" class="stats-filter-chips"></div>
         <div id="stats-lives" class="stats-lives-list"></div>
         <div id="stats-lives-pager" class="stats-lives-pager"></div>
 
@@ -318,6 +343,11 @@
     <div id="rl-dialog-host" aria-live="polite"></div>
     <div id="rl-toast-host" class="rl-toast-host" aria-live="polite" aria-atomic="false"></div>
 
+    <!-- #87: Chart.js for the statistics dashboard. Loaded from a
+         CDN. Graceful fallback: if window.Chart isn't defined when
+         the dashboard renders, the bar charts fall back to the
+         original CSS bar layout. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

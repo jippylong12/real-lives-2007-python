@@ -314,6 +314,23 @@ CREATE TABLE IF NOT EXISTS life_archive (
 );
 CREATE INDEX IF NOT EXISTS idx_life_archive_country ON life_archive(country_code);
 CREATE INDEX IF NOT EXISTS idx_life_archive_died_year ON life_archive(died_year);
+
+-- #90: per-installation achievement unlock log. Each unlock records the
+-- archive_id of the life that triggered it so the dashboard can link
+-- "first centenarian" back to the actual run that earned it.
+-- Composite key (key, player_name) so two players sharing one DB each
+-- get their own first-centenarian unlock; player_name COALESCE'd to ''
+-- in the constraint so NULL works in the unique index.
+CREATE TABLE IF NOT EXISTS achievements_unlocked (
+    achievement_key  TEXT NOT NULL,
+    player_scope     TEXT NOT NULL DEFAULT '',  -- '' = unscoped (legacy)
+    archive_id       TEXT NOT NULL,
+    unlocked_at      TEXT NOT NULL,
+    player_name      TEXT,
+    PRIMARY KEY (achievement_key, player_scope)
+);
+CREATE INDEX IF NOT EXISTS idx_achievements_archive ON achievements_unlocked(archive_id);
+CREATE INDEX IF NOT EXISTS idx_achievements_player ON achievements_unlocked(player_name);
 """
 
 

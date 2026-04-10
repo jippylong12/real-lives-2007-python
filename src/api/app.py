@@ -287,6 +287,25 @@ def _binary_facts_summary(code: str) -> dict | None:
 
 
 def _turn_dict(result) -> dict:
+    # #90: hydrate achievement keys into full {title, description, icon, tier}
+    # records so the frontend doesn't need to round-trip back to /api/achievements
+    # to render the unlock toast.
+    unlocked_keys = list(getattr(result, "unlocked_achievements", []) or [])
+    unlocked_records: list[dict] = []
+    if unlocked_keys:
+        from ..engine.achievements import ACHIEVEMENTS
+        by_key = {a.key: a for a in ACHIEVEMENTS}
+        for k in unlocked_keys:
+            ach = by_key.get(k)
+            if ach is None:
+                continue
+            unlocked_records.append({
+                "key": ach.key,
+                "title": ach.title,
+                "description": ach.description,
+                "icon": ach.icon,
+                "tier": ach.tier,
+            })
     return {
         "year": result.year_advanced_to,
         "age": result.age,
@@ -304,6 +323,7 @@ def _turn_dict(result) -> dict:
         "pending_decision": result.pending_decision,
         "died": result.died,
         "cause_of_death": result.cause_of_death,
+        "unlocked_achievements": unlocked_records,
     }
 
 
@@ -898,11 +918,52 @@ def create_app() -> FastAPI:
         return statistics.milestones(player=player)
 
     @app.get("/api/statistics/lives")
-    def stats_lives(limit: int = 10, offset: int = 0, player: Optional[str] = None):
+    def stats_lives(
+        limit: int = 10,
+        offset: int = 0,
+        player: Optional[str] = None,
+        country: Optional[str] = None,
+        cause: Optional[str] = None,
+        job: Optional[str] = None,
+        min_age: Optional[int] = None,
+        max_age: Optional[int] = None,
+        min_net_worth: Optional[int] = None,
+        max_net_worth: Optional[int] = None,
+        name: Optional[str] = None,
+    ):
         """Recent archived lives (most recent first). Default limit
         is intentionally small — the curated permanent set lives in
-        /api/statistics/favorites."""
-        return statistics.list_lives(limit=limit, offset=offset, player=player)
+        /api/statistics/favorites.
+
+        #88: filterable by country, cause of death, final_job substring,
+        age range, net worth range, and case-insensitive name substring.
+        """
+        return statistics.list_lives(
+            limit=limit, offset=offset, player=player,
+            country=country, cause=cause, job=job,
+            min_age=min_age, max_age=max_age,
+            min_net_worth=min_net_worth, max_net_worth=max_net_worth,
+            name=name,
+        )
+
+    @app.get("/api/statistics/lives/facets")
+    def stats_lives_facets(player: Optional[str] = None):
+        """#88: distinct countries / causes / jobs that exist in the
+        archive — used to populate the filter dropdowns."""
+        return statistics.list_filter_facets(player=player)
+
+    # ---- Achievements (#90) ----
+    from ..engine import achievements as achievements_mod
+
+    @app.get("/api/achievements")
+    def list_achievements_endpoint(player: Optional[str] = None):
+        """#90: full registry with locked/unlocked state."""
+        return achievements_mod.list_achievements(player_name=player)
+
+    @app.get("/api/achievements/recent")
+    def recent_achievements(player: Optional[str] = None, limit: int = 5):
+        """#90: most recently unlocked achievements (newest first)."""
+        return achievements_mod.list_recent_unlocks(player_name=player, limit=limit)
 
     @app.get("/api/statistics/favorites")
     def stats_favorites(player: Optional[str] = None):

@@ -60,27 +60,39 @@ _PEAK_ATTRIBUTES = (
 # Write path
 # ---------------------------------------------------------------------------
 
-def write_archive_row(state: "GameState") -> None:
+def write_archive_row(state: "GameState") -> list[str]:
     """Insert a row into life_archive for a freshly-deceased character.
     Called from game.advance_year right after the character.alive flag
     flips to False. Best-effort: logs and swallows on failure since the
-    death screen shouldn't break if persistence fails."""
+    death screen shouldn't break if persistence fails.
+
+    #90: also evaluates the achievement registry against the new row
+    and returns the list of newly-unlocked achievement keys so the
+    caller can surface them in the death-screen toast.
+    """
     try:
         row = _build_row(state)
     except Exception:
         logger.exception("life_archive: failed to build row for game %s", state.id)
-        return
+        return []
     try:
         _insert_row(row)
     except Exception:
         logger.exception("life_archive: failed to insert row for game %s", state.id)
-        return
+        return []
     try:
         _append_jsonl_sidecar(row)
     except Exception:
         # Sidecar is best-effort — DB write succeeded, durability layer
         # is "nice to have". Log and continue.
         logger.exception("life_archive: failed to append sidecar for game %s", state.id)
+    # #90: evaluate achievement registry against the new row.
+    try:
+        from . import achievements
+        return achievements.evaluate_for_row(row, player_name=row.get("player_name"))
+    except Exception:
+        logger.exception("life_archive: failed to evaluate achievements for game %s", state.id)
+        return []
 
 
 def _build_row(state: "GameState") -> dict:
@@ -472,19 +484,63 @@ def milestones(player: str | None = None) -> dict:
         conn.close()
 
 
-def list_lives(limit: int = 10, offset: int = 0, player: str | None = None) -> dict:
+def list_lives(
+    limit: int = 10,
+    offset: int = 0,
+    player: str | None = None,
+    *,
+    country: str | None = None,
+    cause: str | None = None,
+    job: str | None = None,
+    min_age: int | None = None,
+    max_age: int | None = None,
+    min_net_worth: int | None = None,
+    max_net_worth: int | None = None,
+    name: str | None = None,
+) -> dict:
     """Paginated archive list (most recent first). Default limit is 10
     — the dashboard's 'Recent lives' section is intentionally short
     to keep the screen scannable. Use list_favorites() for the
     permanent set the player has explicitly bookmarked.
 
     #85: optionally scoped to a single player.
+    #88: filterable by country, cause of death, final job (substring),
+    age range, net worth range, and case-insensitive name substring.
+    Filters AND together; total reflects the filtered count.
     """
     conn = get_connection()
-    scope, params = _player_scope(player)
+    scope, scope_params = _player_scope(player)
+    where: list[str] = [scope]
+    params: list = list(scope_params)
+    if country:
+        where.append("country_code = ?")
+        params.append(country.lower())
+    if cause:
+        where.append("cause_of_death = ?")
+        params.append(cause)
+    if job:
+        where.append("final_job LIKE ?")
+        params.append(f"%{job}%")
+    if min_age is not None:
+        where.append("age_at_death >= ?")
+        params.append(int(min_age))
+    if max_age is not None:
+        where.append("age_at_death <= ?")
+        params.append(int(max_age))
+    if min_net_worth is not None:
+        where.append("peak_net_worth >= ?")
+        params.append(int(min_net_worth))
+    if max_net_worth is not None:
+        where.append("peak_net_worth <= ?")
+        params.append(int(max_net_worth))
+    if name:
+        where.append("LOWER(name) LIKE ?")
+        params.append(f"%{name.lower()}%")
+    where_sql = " AND ".join(where)
     try:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM life_archive WHERE {scope}", params
+            f"SELECT COUNT(*) FROM life_archive WHERE {where_sql}",
+            params,
         ).fetchone()[0]
         rows = conn.execute(
             f"""
@@ -493,7 +549,7 @@ def list_lives(limit: int = 10, offset: int = 0, player: str | None = None) -> d
                    final_job, lifetime_earnings, peak_net_worth,
                    married, children_count, is_favorite, notes
             FROM life_archive
-            WHERE {scope}
+            WHERE {where_sql}
             ORDER BY archived_at DESC
             LIMIT ? OFFSET ?
             """,
@@ -502,6 +558,50 @@ def list_lives(limit: int = 10, offset: int = 0, player: str | None = None) -> d
         return {
             "total": int(total),
             "lives": [_row_to_summary(r) for r in rows],
+        }
+    finally:
+        conn.close()
+
+
+def list_filter_facets(player: str | None = None) -> dict:
+    """#88: distinct values to populate the filter dropdowns. Returns
+    {countries: [{code, name}], causes: [str], jobs: [str]}."""
+    conn = get_connection()
+    scope, params = _player_scope(player)
+    try:
+        countries = conn.execute(
+            f"""
+            SELECT DISTINCT country_code, country_name
+            FROM life_archive
+            WHERE {scope}
+            ORDER BY country_name
+            """,
+            params,
+        ).fetchall()
+        causes = conn.execute(
+            f"""
+            SELECT DISTINCT cause_of_death
+            FROM life_archive
+            WHERE cause_of_death IS NOT NULL AND {scope}
+            ORDER BY cause_of_death
+            """,
+            params,
+        ).fetchall()
+        jobs = conn.execute(
+            f"""
+            SELECT DISTINCT final_job
+            FROM life_archive
+            WHERE final_job IS NOT NULL AND {scope}
+            ORDER BY final_job
+            """,
+            params,
+        ).fetchall()
+        return {
+            "countries": [
+                {"code": r["country_code"], "name": r["country_name"]} for r in countries
+            ],
+            "causes": [r["cause_of_death"] for r in causes],
+            "jobs": [r["final_job"] for r in jobs],
         }
     finally:
         conn.close()
