@@ -265,6 +265,8 @@ class Game:
         for ev in events.roll_events(char, country, self.rng):
             if ev.choices:
                 # Pause for player choice — serialize the event into pending.
+                # NOTE: cooldown/lifetime recording for choice events happens
+                # in apply_decision once the player resolves it (#52).
                 self.state.pending_event = {
                     "key": ev.key,
                     "title": ev.title,
@@ -279,6 +281,11 @@ class Game:
                     self.state.year, char.age, log, self.state.pending_event,
                     False, None,
                 )
+            # #52: record passive event firings so cooldowns + lifetime
+            # caps work. Done before apply so a side-effect that
+            # advances the character's age (rare) still records under
+            # the correct year.
+            events.record_event_fired(char, ev.key)
             result = ev.apply(char, country, self.rng)
             # apply() can return either a single EventOutcome or a list of
             # them (#36 — multi-disease years split each diagnosis into its
@@ -387,6 +394,10 @@ class Game:
             char.moral_ledger[k] = char.moral_ledger.get(k, 0) + v
         if choice.side_effect is not None:
             choice.side_effect(char)
+        # #52: record the choice event firing for cooldown / lifetime
+        # tracking. Done after the side_effect since some side effects
+        # mutate state we want reflected in the recorded age.
+        events.record_event_fired(char, ev.key)
         line = f"{ev.title}: {choice.summary}"
         char.remember(line)
 

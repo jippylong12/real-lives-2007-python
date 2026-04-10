@@ -143,6 +143,108 @@ def test_war_event_more_likely_in_high_war_country():
     assert fired_in_ua > fired_in_se
 
 
+# ---------- Event cooldowns + lifetime caps (#52) ----------
+
+def test_event_registry_has_at_least_200_events():
+    """#52 sanity check: the slice-of-life content drop must land at
+    least 200 events. Detects merge clobbers."""
+    from src.engine.events import EVENT_REGISTRY
+    assert len(EVENT_REGISTRY) >= 200, (
+        f"event registry has only {len(EVENT_REGISTRY)} entries; "
+        f"the #52 content drop should leave it at 200+"
+    )
+
+
+def test_event_cooldown_enforced():
+    """#52: an event with cooldown_years=N can't fire two years apart.
+    Uses _on_cooldown directly to avoid relying on the probabilistic
+    roll_events path."""
+    from src.engine.events import _on_cooldown, EVENT_REGISTRY
+    char = create_random_character(get_country("us"), random.Random(0))
+    char.age = 20
+    # made_friend has cooldown_years=5 per the #52 tagging.
+    made_friend = next(e for e in EVENT_REGISTRY if e.key == "made_friend")
+    assert made_friend.cooldown_years == 5
+    # Pretend it just fired at age 20.
+    char.event_history["made_friend"] = [20]
+    char.age = 21
+    assert _on_cooldown(char, made_friend), "should still be on cooldown 1 year later"
+    char.age = 24
+    assert _on_cooldown(char, made_friend), "should still be on cooldown 4 years later"
+    char.age = 25
+    assert not _on_cooldown(char, made_friend), "cooldown should clear after 5 years"
+
+
+def test_event_lifetime_cap_enforced():
+    """#52: an event with max_lifetime=1 can fire at most once. baptism
+    is tagged max_lifetime=1 by the #52 work."""
+    from src.engine.events import _on_cooldown, EVENT_REGISTRY
+    char = create_random_character(get_country("us"), random.Random(0))
+    baptism = next(e for e in EVENT_REGISTRY if e.key == "baptism")
+    assert baptism.max_lifetime == 1
+    char.event_history["baptism"] = [1]
+    # Even decades later, the lifetime cap blocks it.
+    char.age = 50
+    assert _on_cooldown(char, baptism)
+
+
+def test_annual_events_can_fire_every_year():
+    """#52: events with cooldown_years=0 (annual rhythm like Christmas)
+    must NOT be blocked by _on_cooldown no matter how recently they
+    fired."""
+    from src.engine.events import _on_cooldown, EVENT_REGISTRY
+    char = create_random_character(get_country("us"), random.Random(0))
+    christmas = next(e for e in EVENT_REGISTRY if e.key == "christmas")
+    assert christmas.cooldown_years == 0
+    assert christmas.max_lifetime == 0
+    # Even with a long firing history, no cooldown should kick in.
+    char.event_history["christmas"] = list(range(3, 60))
+    char.age = 60
+    assert not _on_cooldown(char, christmas)
+
+
+def test_event_history_serializes_round_trip():
+    """#52: character.event_history survives a save → load round trip."""
+    from src.engine.character import Character
+    char = create_random_character(get_country("us"), random.Random(0))
+    char.event_history = {
+        "made_friend": [12, 18, 25],
+        "christmas": [3, 4, 5, 6, 7],
+        "baptism": [1],
+    }
+    d = char.to_dict()
+    restored = Character.from_dict(d)
+    assert restored.event_history == char.event_history
+
+
+def test_event_variety_per_life_meaningfully_higher_than_baseline():
+    """#52: simulate a handful of lives and assert the average distinct
+    event count per life is meaningfully higher than the pre-#52
+    baseline (~5-7 events). Target: at least 25 distinct events for an
+    80-year run with 200+ events in the catalogue."""
+    from src.engine import careers
+    from src.engine.game import Game
+
+    distinct_counts = []
+    for seed in range(8):
+        g = Game.new(country_code="us", seed=seed)
+        while g.state.character.alive and g.state.character.age < 80:
+            r = g.advance_year()
+            if r.pending_decision:
+                g.apply_decision(r.pending_decision["choices"][0]["key"])
+            char = g.state.character
+            if char.job is None and not char.in_school and char.age >= 14:
+                careers.assign_job(char, g.country(), g.rng)
+        distinct_counts.append(len(g.state.character.event_history))
+
+    avg = sum(distinct_counts) / len(distinct_counts)
+    assert avg >= 25, (
+        f"average distinct events per life is only {avg:.1f}; "
+        f"the #52 cooldown + content drop should push this past 25 "
+        f"(individual counts: {distinct_counts})"
+    )
+
+
 # ---------- Game lifecycle ----------
 
 def test_game_advance_returns_turn_result():

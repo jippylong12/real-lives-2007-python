@@ -196,6 +196,12 @@ class Character:
     # Per-treatment cooldown trackers (#67). Maps treatment kind →
     # last age the character bought it.
     last_treatment: dict[str, int] = field(default_factory=dict)
+    # Per-event firing record (#52). Maps event_key → list of ages at
+    # which the event fired. events.roll_events reads this to enforce
+    # cooldown_years and max_lifetime — without it, the same event
+    # could fire 10 years in a row and milestone events like baptism
+    # could fire twice.
+    event_history: dict[str, list[int]] = field(default_factory=dict)
 
     @property
     def life_stage(self) -> LifeStage:
@@ -249,6 +255,7 @@ class Character:
             "subscriptions": {k: dict(v) for k, v in self.subscriptions.items()},
             "purchases": [dict(p) for p in self.purchases],
             "last_treatment": dict(self.last_treatment),
+            "event_history": {k: list(v) for k, v in self.event_history.items()},
         }
         return d
 
@@ -295,6 +302,7 @@ class Character:
             subscriptions=d.get("subscriptions", {}),
             purchases=d.get("purchases", []),
             last_treatment=d.get("last_treatment", {}),
+            event_history={k: list(v) for k, v in d.get("event_history", {}).items()},
         )
 
 
