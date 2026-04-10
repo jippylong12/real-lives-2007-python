@@ -1213,7 +1213,18 @@ function renderGame() {
 
   $("#stat-age").textContent = c.age;
   $("#stat-year").textContent = g.year;
-  $("#stat-edu").textContent = EDU_LABELS[c.education] || "—";
+  // Education stat shows the credential level, plus "in <track> school"
+  // when currently enrolled — gives the player a clear signal during
+  // multi-year programs (vocational, university) that they're still in
+  // school and aren't expected to be working full-time.
+  const eduLevel = EDU_LABELS[c.education] || "—";
+  if (c.in_school && c.school_track) {
+    $("#stat-edu").textContent = `${eduLevel} · in ${c.school_track} school`;
+  } else if (c.in_school) {
+    $("#stat-edu").textContent = `${eduLevel} · in school`;
+  } else {
+    $("#stat-edu").textContent = eduLevel;
+  }
   $("#stat-job").textContent = c.job || "—";
   $("#btn-quit-job").classList.toggle("hidden", !c.job);
 

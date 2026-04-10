@@ -900,6 +900,102 @@ def test_drop_out_of_school_country_gates():
     assert can_work
 
 
+def test_vocational_school_has_duration_and_grants_credential_on_completion():
+    """#82-followup: vocational school is a 2-year program. Entering it
+    sets school_track but keeps in_school=True; the credential is only
+    granted on completion at age 19. Previously the engine set
+    education=VOCATIONAL on entry and immediately flipped in_school=False,
+    which lied to the player ('entered a vocational program' but actually
+    not in school anymore)."""
+    from src.engine import education
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    # Force vocational eligibility: intelligence in the 50-59 band so the
+    # secondary→vocational branch fires (intel >= 50, < 60).
+    char.attributes.intelligence = 55
+    char.education = EducationLevel.PRIMARY
+    char.in_school = True
+    char.school_track = "secondary"
+    char.age = 18  # SECONDARY_END_AGE + 1
+
+    # Run the secondary completion branch a few times until we hit the
+    # vocational coin flip (40% chance per call).
+    msg = None
+    for _ in range(20):
+        rng_inner = random.Random(7)
+        char.attributes.intelligence = 55
+        char.education = EducationLevel.PRIMARY
+        char.in_school = True
+        char.school_track = "secondary"
+        char.age = 18
+        msg = education.update_education(char, country, rng_inner)
+        if char.school_track == "vocational":
+            break
+    assert char.school_track == "vocational", "couldn't reach vocational branch"
+    # On entry: still in school, credential is SECONDARY (not yet VOCATIONAL)
+    assert char.in_school is True
+    assert char.education == EducationLevel.SECONDARY
+    assert "vocational" in (msg or "").lower()
+
+    # Year 1 of vocational: nothing changes
+    char.age = 19
+    education.update_education(char, country, rng)
+    assert char.in_school is True
+    assert char.school_track == "vocational"
+    assert char.education == EducationLevel.SECONDARY
+
+    # Year 2 of vocational completes the program (age 20 = VOCATIONAL_END_AGE + 1)
+    char.age = 20
+    msg = education.update_education(char, country, rng)
+    assert char.in_school is False
+    assert char.school_track is None
+    assert char.education == EducationLevel.VOCATIONAL
+    assert msg and "graduated from vocational" in msg.lower()
+
+
+def test_university_track_still_works_after_school_track_field_added():
+    """#82-followup: ensure the existing university path still progresses
+    correctly through 4 years of in-school time after we added the
+    school_track field."""
+    from src.engine import education
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(1)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    # Force university acceptance: high intelligence + high family wealth.
+    char.attributes.intelligence = 80
+    char.family_wealth = 500_000
+    char.education = EducationLevel.PRIMARY
+    char.in_school = True
+    char.school_track = "secondary"
+    char.age = 18
+
+    msg = education.update_education(char, country, rng)
+    assert char.school_track == "university"
+    assert char.in_school is True
+    assert char.education == EducationLevel.SECONDARY
+    assert "university" in (msg or "").lower()
+
+    # Years 19-21: still in university, no change
+    for age in (19, 20, 21):
+        char.age = age
+        education.update_education(char, country, rng)
+        assert char.in_school is True
+        assert char.education == EducationLevel.SECONDARY
+
+    # Age 22 = UNI_END_AGE: graduate
+    char.age = 22
+    msg = education.update_education(char, country, rng)
+    assert char.in_school is False
+    assert char.school_track is None
+    assert char.education == EducationLevel.UNIVERSITY
+    assert msg and "graduated from university" in msg.lower()
+
+
 def test_buy_house_increases_family_wealth():
     """#66: a starter home purchase drains money and adds to family_wealth."""
     from src.engine import spending

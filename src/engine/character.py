@@ -156,6 +156,13 @@ class Character:
     debt: int = 0
     education: EducationLevel = EducationLevel.NONE
     in_school: bool = False
+    # Which post-secondary school the character is currently enrolled in
+    # (when ``in_school`` is True). One of "primary", "secondary",
+    # "vocational", "university" or None when not enrolled. Lets the UI
+    # show "secondary · in vocational school" instead of just the
+    # credential level, and lets the engine distinguish vocational vs
+    # university completion at age 19 vs 22.
+    school_track: str | None = None
     job: str | None = None
     salary: int = 0
     # Vocation tracking (#51): the player's chosen field of work, the
@@ -219,6 +226,7 @@ class Character:
             "debt": self.debt,
             "education": int(self.education),
             "in_school": self.in_school,
+            "school_track": self.school_track,
             "job": self.job,
             "salary": self.salary,
             "vocation_field": self.vocation_field,
@@ -265,6 +273,7 @@ class Character:
             debt=d.get("debt", 0),
             education=EducationLevel(d.get("education", 0)),
             in_school=d.get("in_school", False),
+            school_track=d.get("school_track"),
             job=d.get("job"),
             salary=d.get("salary", 0),
             vocation_field=d.get("vocation_field"),
