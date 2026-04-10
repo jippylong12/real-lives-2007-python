@@ -5,6 +5,112 @@ All notable changes to Real Lives 2007 (Python rebuild).
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] — 2026-04-10
+
+The relationship-and-world update. v1.4.0 adds three major systems —
+romance with full spouse characters, emigration to a new country mid-life,
+and a cross-life statistics dashboard — plus 200+ new slice-of-life events,
+a self-employment career path, and a wave of career/education timing fixes
+that came out of play-testing.
+
+Your spouse is now a real character with their own attributes, diseases,
+and mortality. You can date, propose, divorce (through counseling or just
+walking away), and remarry. Emigration lets you uproot to a new country
+with a cooldown to prevent bouncing, skilled-worker job assistance, and
+a multi-leg history visible in your death retrospective. The statistics
+dashboard tracks every life you've ever lived with per-player scoping,
+achievements, charts, a world map view, and searchable/filterable archives.
+
+### Added
+
+- **Emigration system** — move to a different country mid-life. Includes
+  a country picker, job-search assistance for skilled migrants, city-density
+  ranking for destination placement, a reverse-migration cooldown to
+  prevent country-bouncing, and a multi-leg emigration history visible in
+  the death retrospective
+  ([#49](https://github.com/jippylong12/real-lives-2007-python/issues/49),
+   [#98](https://github.com/jippylong12/real-lives-2007-python/issues/98),
+   [#99](https://github.com/jippylong12/real-lives-2007-python/issues/99),
+   [#100](https://github.com/jippylong12/real-lives-2007-python/issues/100),
+   [#101](https://github.com/jippylong12/real-lives-2007-python/issues/101),
+   [#102](https://github.com/jippylong12/real-lives-2007-python/issues/102)).
+- **Full romance system** — spouse is now a real `Character` with
+  attributes, diseases, and mortality. Modern Western "swipe" partner
+  picker, multi-step dating flow (meet → date → propose), choice-event
+  divorce with counseling vs. separation, spouse develops diseases via
+  the full disease engine, compatibility-influenced romance event rates,
+  country-level `divorce_rate` field, and multi-marriage history in the
+  death retrospective
+  ([#50](https://github.com/jippylong12/real-lives-2007-python/issues/50),
+   [#91](https://github.com/jippylong12/real-lives-2007-python/issues/91),
+   [#92](https://github.com/jippylong12/real-lives-2007-python/issues/92),
+   [#93](https://github.com/jippylong12/real-lives-2007-python/issues/93),
+   [#94](https://github.com/jippylong12/real-lives-2007-python/issues/94),
+   [#95](https://github.com/jippylong12/real-lives-2007-python/issues/95),
+   [#96](https://github.com/jippylong12/real-lives-2007-python/issues/96),
+   [#97](https://github.com/jippylong12/real-lives-2007-python/issues/97),
+   [#103](https://github.com/jippylong12/real-lives-2007-python/issues/103),
+   [#104](https://github.com/jippylong12/real-lives-2007-python/issues/104)).
+- **Cross-life statistics dashboard** — JSONL-backed archive of every
+  completed life. Per-player scoping, per-life notes, filter/search
+  past lives, achievement system derived from milestones, real charts
+  (replacing CSS bar charts), and a world map view for per-country
+  breakdown. Favorites and clear functionality included
+  ([#70](https://github.com/jippylong12/real-lives-2007-python/issues/70),
+   [#85](https://github.com/jippylong12/real-lives-2007-python/issues/85),
+   [#86](https://github.com/jippylong12/real-lives-2007-python/issues/86),
+   [#87](https://github.com/jippylong12/real-lives-2007-python/issues/87),
+   [#88](https://github.com/jippylong12/real-lives-2007-python/issues/88),
+   [#89](https://github.com/jippylong12/real-lives-2007-python/issues/89),
+   [#90](https://github.com/jippylong12/real-lives-2007-python/issues/90),
+   [#105](https://github.com/jippylong12/real-lives-2007-python/issues/105),
+   [#106](https://github.com/jippylong12/real-lives-2007-python/issues/106)).
+- **~200 new slice-of-life events** with per-event cooldowns and lifetime
+  caps to prevent repetition. Events capped at 2 per year to keep the
+  log readable
+  ([#52](https://github.com/jippylong12/real-lives-2007-python/issues/52)).
+- **Self-employment** as a first-class career section — dedicated
+  entrepreneurial path with vocational payoff and freelance no-crossover
+  rules
+  ([#83](https://github.com/jippylong12/real-lives-2007-python/issues/83)).
+- **Player-initiated retirement** — retire early with country-scaled
+  cost-of-living considerations
+  ([#82](https://github.com/jippylong12/real-lives-2007-python/issues/82)).
+- **Dialog/toast system** for in-game feedback, gift timeline entries,
+  and promotion gate visibility.
+
+### Changed
+
+- **Vocational school** now uses real duration with a visible enrollment
+  indicator instead of instant completion.
+- **Career picker events** fire across the full school window with
+  win priority, so education-to-job transitions are smoother.
+- **Per-job max_age** capped to category-realistic retirement norms —
+  no more 90-year-old athletes
+  ([#84](https://github.com/jippylong12/real-lives-2007-python/issues/84)).
+- **Joblessness is now a valid state** — `advance_year` no longer
+  auto-assigns jobs. Players must actively seek employment.
+
+### Fixed
+
+- **Race condition** between EDUCATION_PATH event and secondary
+  auto-completion that could skip the education choice entirely.
+- **Healthcare and spend panels** now refresh after money-changing
+  actions so affordability is always current.
+- **Statistics click error** and default to 10-life minimum for
+  meaningful aggregates.
+
+### Test coverage
+
+185 tests passing (was 99 in v1.3.0). New tests cover emigration,
+romance, statistics, self-employment, event cooldowns, and retirement.
+
+### Issues closed
+
+37 issues closed since v1.3.0: #49, #50, #52, #70, #82, #83, #84,
+#85, #86, #87, #88, #89, #90, #91, #92, #93, #94, #95, #96, #97,
+#98, #99, #100, #101, #102, #103, #104, #105, #106.
+
 ## [1.3.0] — 2026-04-09
 
 Money matters now, and so does where you save your life. v1.3.0 turns
