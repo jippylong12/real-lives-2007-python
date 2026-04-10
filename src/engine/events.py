@@ -773,12 +773,15 @@ UNIVERSITY_MAJOR = _choice(
     description=(
         "You're heading into university. Time to choose what to study — your "
         "major will shape the kind of work you can do for the rest of your "
-        "life. Pick a field that fits your strengths. When you graduate in "
-        "four years you'll start your career in this field."
+        "life. Pick a field that fits your strengths. When you graduate "
+        "you'll start your career in this field."
     ),
+    # Eligible across the whole university window (~age 18-21) so a
+    # competing choice event preempting at age 18 doesn't permanently
+    # lock the player out of picking a major.
     when=lambda c, co: (
-        c.age == 18
-        and c.school_track == "university"
+        c.school_track == "university"
+        and c.in_school
         and c.vocation_field is None
     ),
     chance=lambda c, co: 1.0,
@@ -836,12 +839,15 @@ VOCATIONAL_TRACK = _choice(
     description=(
         "You're starting vocational training. Time to pick a trade — your "
         "specialization decides which kind of skilled work you'll do for "
-        "the rest of your career. When you graduate in two years you'll "
-        "begin work as an apprentice in this field."
+        "the rest of your career. When you graduate you'll begin work as "
+        "an apprentice in this field."
     ),
+    # Eligible across the whole vocational window (~age 18-19) so a
+    # competing choice event preempting at age 18 doesn't permanently
+    # lock the player out of picking a trade.
     when=lambda c, co: (
-        c.age == 18
-        and c.school_track == "vocational"
+        c.school_track == "vocational"
+        and c.in_school
         and c.vocation_field is None
     ),
     chance=lambda c, co: 1.0,
@@ -1289,6 +1295,14 @@ EVENT_REGISTRY: list[Event] = [
     ),
 
     # --- Choice events ---
+    # Career-defining events go FIRST so a slice-of-life choice event
+    # (theft, bribery, marriage, etc) doesn't preempt them. roll_events
+    # walks the registry top-to-bottom and breaks on the first CHOICE
+    # event that fires — once-in-a-lifetime education and vocation
+    # picks must always win that race.
+    EDUCATION_PATH,
+    UNIVERSITY_MAJOR,
+    VOCATIONAL_TRACK,
     THEFT_CHILD,
     THEFT_ADULT,
     BRIBERY,
@@ -1300,9 +1314,6 @@ EVENT_REGISTRY: list[Event] = [
     RELIGIOUS_SCHOOL,
     DOWRY_NEGOTIATION,
     BILINGUAL_SCHOOLING,
-    EDUCATION_PATH,
-    UNIVERSITY_MAJOR,
-    VOCATIONAL_TRACK,
     LOVE_MARRIAGE,
 ]
 

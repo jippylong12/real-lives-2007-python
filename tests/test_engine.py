@@ -1040,6 +1040,76 @@ def test_education_path_vocational_choice_does_not_get_clobbered_at_age_18():
     assert char.job is not None, f"vocational grad should have starter job, msg={msg}"
 
 
+def test_vocational_track_event_eligible_across_whole_school_window():
+    """#83 followup regression: VOCATIONAL_TRACK must be able to fire
+    over the full vocational school window (ages 18 and 19), not just
+    age 18 exactly. Previously the trigger was `c.age == 18` which
+    meant a competing CHOICE event preempting the registry walk at
+    age 18 would lock the player out of picking a trade forever (the
+    next year c.age would be 19 and the trigger would fail)."""
+    from src.engine.events import VOCATIONAL_TRACK, UNIVERSITY_MAJOR
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.in_school = True
+    char.school_track = "vocational"
+    char.education = EducationLevel.SECONDARY
+    char.vocation_field = None
+
+    for age in (18, 19):
+        char.age = age
+        assert VOCATIONAL_TRACK.eligible(char, country), (
+            f"VOCATIONAL_TRACK should be eligible at age {age}"
+        )
+
+    # And UNIVERSITY_MAJOR similarly across the longer window
+    char.school_track = "university"
+    for age in (18, 19, 20, 21):
+        char.age = age
+        assert UNIVERSITY_MAJOR.eligible(char, country), (
+            f"UNIVERSITY_MAJOR should be eligible at age {age}"
+        )
+
+
+def test_career_defining_choice_events_have_priority_over_slice_of_life():
+    """#83 followup: EDUCATION_PATH, UNIVERSITY_MAJOR, and
+    VOCATIONAL_TRACK must appear in EVENT_REGISTRY before any
+    'slice-of-life' CHOICE event (theft, bribery, marriage,
+    pilgrimages, etc). roll_events walks top-to-bottom and breaks on
+    the first CHOICE event that fires — these once-in-a-lifetime
+    career picks must always win that race against random life
+    events at the same age.
+
+    MILITARY_SERVICE is a deliberate exception: being drafted at 18
+    is a legitimate real-world preemption of education plans, and
+    the widened VOCATIONAL_TRACK / UNIVERSITY_MAJOR triggers let the
+    picker fire after military service ends."""
+    from src.engine.events import EVENT_REGISTRY
+
+    career_keys = {"education_path", "university_major", "vocational_track"}
+    # The slice-of-life choices that should never preempt the career picks.
+    slice_of_life_keys = {
+        "theft_child", "theft_adult", "bribery",
+        "hajj", "varanasi_pilgrimage", "monastic_retreat",
+        "arranged_marriage", "conversion_offer", "religious_school",
+        "dowry_negotiation", "bilingual_schooling", "love_marriage",
+    }
+    indices = {ev.key: i for i, ev in enumerate(EVENT_REGISTRY)}
+    last_career_idx = max(indices[k] for k in career_keys if k in indices)
+    first_slice_idx = min(
+        (indices[k] for k in slice_of_life_keys if k in indices),
+        default=None,
+    )
+    if first_slice_idx is not None:
+        assert last_career_idx < first_slice_idx, (
+            f"all career-defining events must come before slice-of-life "
+            f"choice events; last career at {last_career_idx}, first "
+            f"slice-of-life at {first_slice_idx}"
+        )
+
+
 def test_education_path_university_choice_does_not_get_clobbered():
     """Same regression as the vocational case but for university."""
     from src.engine import education
