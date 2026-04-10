@@ -491,6 +491,215 @@ def test_update_life_notes_404_for_missing_id():
     assert statistics.update_life_notes("does-not-exist", "hello") is False
 
 
+def test_list_lives_filters_by_country_and_age_range():
+    """#88: list_lives accepts country, age, and net_worth filters
+    that AND together. The total reflects the filtered count."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Three different countries / lifespans.
+    for seed, country in [(401, "us"), (402, "de"), (403, "us")]:
+        g = Game.new(country_code=country, seed=seed)
+        g.state.character.age = 95
+        g.state.character.attributes.health = 5
+        for _ in range(15):
+            if not g.state.character.alive:
+                break
+            g.advance_year()
+        assert not g.state.character.alive
+
+    us_only = statistics.list_lives(country="us")
+    de_only = statistics.list_lives(country="de")
+    assert us_only["total"] == 2
+    assert de_only["total"] == 1
+    assert all(l["country_code"] == "us" for l in us_only["lives"])
+    assert all(l["country_code"] == "de" for l in de_only["lives"])
+
+    # Age filter — everyone died at 95 so min_age=90 should hit all 3.
+    young = statistics.list_lives(min_age=200)
+    assert young["total"] == 0
+    older = statistics.list_lives(min_age=90)
+    assert older["total"] == 3
+
+
+def test_list_lives_filter_by_name_substring():
+    """#88: name filter does a case-insensitive substring match."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.commit()
+    finally:
+        conn.close()
+
+    g = Game.new(country_code="us", seed=501)
+    g.state.character.age = 95
+    g.state.character.attributes.health = 5
+    g.state.character.name = "MARIA TESTOVNA"
+    for _ in range(15):
+        if not g.state.character.alive:
+            break
+        g.advance_year()
+    assert not g.state.character.alive
+
+    res = statistics.list_lives(name="maria")
+    assert res["total"] >= 1
+    assert any("MARIA" in l["name"].upper() for l in res["lives"])
+
+    miss = statistics.list_lives(name="zzzzz")
+    assert miss["total"] == 0
+
+
+def test_list_filter_facets_returns_distinct_values():
+    """#88: facets endpoint returns distinct countries / causes / jobs."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.commit()
+    finally:
+        conn.close()
+
+    for seed, cc in [(601, "us"), (602, "de"), (603, "us")]:
+        g = Game.new(country_code=cc, seed=seed)
+        g.state.character.age = 95
+        g.state.character.attributes.health = 5
+        for _ in range(15):
+            if not g.state.character.alive:
+                break
+            g.advance_year()
+
+    facets = statistics.list_filter_facets()
+    codes = {c["code"] for c in facets["countries"]}
+    assert "us" in codes
+    assert "de" in codes
+    assert isinstance(facets["causes"], list)
+    assert isinstance(facets["jobs"], list)
+
+
+def test_centenarian_achievement_unlocks_for_100plus_life():
+    """#90: a 100+ life triggers the 'centenarian' achievement on the
+    very next archive write. Replays don't re-unlock."""
+    from src.engine import achievements, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.execute("DELETE FROM achievements_unlocked")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Force a 100-year-old character to die.
+    g = Game.new(country_code="us", seed=701)
+    g.state.character.age = 100
+    g.state.character.attributes.health = 5
+    for _ in range(20):
+        if not g.state.character.alive:
+            break
+        result = g.advance_year()
+    assert not g.state.character.alive
+    assert g.state.character.age >= 100
+
+    # Centenarian should be unlocked for this archive id.
+    listed = achievements.list_achievements()
+    cent = next(a for a in listed if a["key"] == "centenarian")
+    assert cent["unlocked"] is True
+    assert cent["archive_id"] == g.state.id
+
+    # A second archive write doesn't re-unlock.
+    g2 = Game.new(country_code="us", seed=702)
+    g2.state.character.age = 100
+    g2.state.character.attributes.health = 5
+    for _ in range(20):
+        if not g2.state.character.alive:
+            break
+        g2.advance_year()
+    cent_after = next(
+        a for a in achievements.list_achievements() if a["key"] == "centenarian"
+    )
+    # Still pinned to the first life that earned it.
+    assert cent_after["archive_id"] == g.state.id
+
+
+def test_achievement_evaluation_returns_unlocked_keys_for_turn_result():
+    """#90: write_archive_row returns the list of newly-unlocked keys
+    so the caller can surface them in the death-screen toast."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM achievements_unlocked")
+        conn.commit()
+    finally:
+        conn.close()
+
+    g = Game.new(country_code="us", seed=801)
+    g.state.character.age = 100
+    g.state.character.attributes.health = 5
+    last_result = None
+    for _ in range(40):
+        if not g.state.character.alive:
+            break
+        last_result = g.advance_year()
+        # Resolve any pending choice event so the loop can keep advancing.
+        if last_result.pending_decision:
+            first_choice = last_result.pending_decision["choices"][0]["key"]
+            last_result = g.apply_decision(first_choice)
+    assert last_result is not None
+    assert not g.state.character.alive
+    assert "centenarian" in (last_result.unlocked_achievements or [])
+
+
+def test_achievements_scoped_per_player():
+    """#90: alice and bob each get their own first-centenarian unlock."""
+    from src.engine import achievements, Game
+    from src.data.build_db import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM life_archive")
+        conn.execute("DELETE FROM achievements_unlocked")
+        conn.commit()
+    finally:
+        conn.close()
+
+    def play_to_100(seed, player):
+        g = Game.new(country_code="us", seed=seed, player_name=player)
+        g.state.character.age = 100
+        g.state.character.attributes.health = 5
+        for _ in range(20):
+            if not g.state.character.alive:
+                break
+            g.advance_year()
+        return g.state.id
+
+    alice_id = play_to_100(901, "alice")
+    bob_id = play_to_100(902, "bob")
+
+    alice_achievements = achievements.list_achievements(player_name="alice")
+    bob_achievements = achievements.list_achievements(player_name="bob")
+    alice_cent = next(a for a in alice_achievements if a["key"] == "centenarian")
+    bob_cent = next(a for a in bob_achievements if a["key"] == "centenarian")
+    assert alice_cent["unlocked"] is True
+    assert bob_cent["unlocked"] is True
+    assert alice_cent["archive_id"] == alice_id
+    assert bob_cent["archive_id"] == bob_id
+
+
 def test_favorites_and_clear_non_favorites():
     """#70 followup: set_favorite + list_favorites + clear_non_favorites
     work together so the user can curate a permanent set and wipe

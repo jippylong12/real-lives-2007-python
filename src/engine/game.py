@@ -51,6 +51,10 @@ class TurnResult:
     pending_decision: Optional[dict]
     died: bool
     cause_of_death: Optional[str]
+    # #90: list of achievement keys newly unlocked by this turn (only
+    # populated when the character died and the archive write evaluated
+    # the registry). Frontend uses this to fire unlock toasts.
+    unlocked_achievements: list = field(default_factory=list)
 
 
 @dataclass
@@ -433,22 +437,25 @@ class Game:
             char.remember(f"Died of {disease_cause}.")
             log.append(TurnEvent("death", "Death", "life",
                                  f"You died at age {char.age}. Cause: {disease_cause}."))
-            statistics.write_archive_row(self.state)  # #70
+            unlocked = statistics.write_archive_row(self.state) or []
             self._checkpoint_rng()
             return TurnResult(self.state.year, char.age, log,
-                              self.state.pending_event, True, disease_cause)
+                              self.state.pending_event, True, disease_cause,
+                              unlocked_achievements=unlocked)
         died, cause = death.kill_check(char, country, self.rng)
+        unlocked: list = []
         if died:
             char.alive = False
             char.cause_of_death = cause
             char.remember(f"Died of {cause}.")
             log.append(TurnEvent("death", "Death", "life",
                                  f"You died at age {char.age}. Cause: {cause}."))
-            statistics.write_archive_row(self.state)  # #70
+            unlocked = statistics.write_archive_row(self.state) or []
         char.attributes.clamp()
         self._checkpoint_rng()
         return TurnResult(self.state.year, char.age, log,
-                          self.state.pending_event, died, cause)
+                          self.state.pending_event, died, cause,
+                          unlocked_achievements=unlocked)
 
     # ----- decisions -----
     def apply_decision(self, choice_key: str) -> TurnResult:

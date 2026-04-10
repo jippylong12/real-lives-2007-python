@@ -1155,6 +1155,13 @@ async function advanceYear() {
     const res = await api(`/api/game/${state.game.id}/advance`, { method: "POST" });
     state.game = res.game;
     log(`advanced to age ${res.game.character.age} — ${res.turn.events.length} events, decision=${!!res.turn.pending_decision}, died=${res.turn.died}`);
+    // #90: surface achievement unlocks as toasts. Order them after the
+    // death screen pop so they're not blocked by the modal.
+    if (res.turn.unlocked_achievements && res.turn.unlocked_achievements.length) {
+      for (const ach of res.turn.unlocked_achievements) {
+        showToast(`${ach.icon} Achievement unlocked: ${ach.title}`, { kind: "info" });
+      }
+    }
     renderGame();
     renderTurn(res.turn);
     if (res.turn.died) showDeathScreen(res.turn);
@@ -1414,13 +1421,39 @@ async function showStatisticsScreen() {
   await loadStatistics();
 }
 
+// #88: active filters on the past-lives query. Persists across
+// re-renders so applying a filter then sorting/scrolling doesn't lose
+// it. Cleared on screen close.
+const statsFilters = {
+  country: "",
+  cause: "",
+  job: "",
+  min_age: "",
+  max_age: "",
+  min_net_worth: "",
+  max_net_worth: "",
+  name: "",
+};
+
+function _buildLivesQuery() {
+  const params = new URLSearchParams();
+  params.set("limit", "10");
+  const player = getActivePlayer();
+  if (player) params.set("player", player);
+  for (const [k, v] of Object.entries(statsFilters)) {
+    if (v !== "" && v != null) params.set(k, v);
+  }
+  return `?${params.toString()}`;
+}
+
 async function loadStatistics() {
   try {
     // #85: scope every aggregation to the active player. Empty player
     // = unscoped (legacy global view).
     const q = playerQuery();
-    const livesQ = `?limit=10${playerSuffix()}`;
-    const [globalStats, byCountry, byCareer, talents, milestones, lives, favorites] = await Promise.all([
+    const livesQ = _buildLivesQuery();
+    const [globalStats, byCountry, byCareer, talents, milestones, lives, favorites,
+           achievements, players, facets] = await Promise.all([
       api(`/api/statistics/global${q}`),
       api(`/api/statistics/by_country${q}`),
       api(`/api/statistics/by_career${q}`),
@@ -1428,6 +1461,9 @@ async function loadStatistics() {
       api(`/api/statistics/milestones${q}`),
       api(`/api/statistics/lives${livesQ}`),
       api(`/api/statistics/favorites${q}`),
+      api(`/api/achievements${q}`),
+      api(`/api/statistics/players`),
+      api(`/api/statistics/lives/facets${q}`),
     ]);
     if (globalStats.total_lives === 0) {
       $("#stats-empty").classList.remove("hidden");
@@ -1435,16 +1471,195 @@ async function loadStatistics() {
       $("#stats-empty").classList.add("hidden");
     }
     renderGlobalCard(globalStats);
+    renderAchievements(achievements);
     renderMilestones(milestones);
     renderCountryTable(byCountry);
+    renderCountryMap(byCountry);
     renderCareerChart(byCareer);
     renderTalents(talents);
     renderFavoritesList(favorites);
     renderPastLivesList(lives);
+    renderPlayerPicker(players);
+    renderFilterForm(facets);
+    renderFilterChips();
   } catch (e) {
     logErr("loadStatistics failed", e);
     showToast(`Couldn't load statistics: ${e.message}`, { kind: "error" });
   }
+}
+
+// #85: render the player picker dropdown above the dashboard. Hidden
+// when there's only one (or zero) players in the archive.
+function renderPlayerPicker(players) {
+  const host = $opt("#stats-player-picker");
+  if (!host) return;
+  if (!players || players.length < 1) {
+    host.classList.add("hidden");
+    return;
+  }
+  host.classList.remove("hidden");
+  const select = host.querySelector("select");
+  const current = getActivePlayer();
+  // Rebuild options.
+  select.innerHTML = '<option value="">All players</option>' +
+    players.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
+  select.value = current || "";
+  select.onchange = async () => {
+    setActivePlayer(select.value);
+    await loadStatistics();
+  };
+}
+
+// #90: achievements grid. Locked entries appear grayed out and unlocked
+// entries link to the archive_id of the life that triggered them.
+function renderAchievements(achievements) {
+  const host = $opt("#stats-achievements");
+  if (!host) return;
+  if (!achievements || achievements.length === 0) {
+    host.innerHTML = '<p class="muted">No achievements yet.</p>';
+    return;
+  }
+  host.innerHTML = achievements.map(a => {
+    const cls = a.unlocked ? `unlocked tier-${a.tier}` : "locked";
+    const click = a.unlocked && a.archive_id
+      ? `data-archive-id="${escapeHtml(a.archive_id)}"`
+      : "";
+    return `
+      <div class="achievement-card ${cls}" ${click}>
+        <div class="ach-icon">${a.icon}</div>
+        <div class="ach-body">
+          <div class="ach-title">${escapeHtml(a.title)}</div>
+          <div class="ach-desc muted">${escapeHtml(a.description)}</div>
+        </div>
+      </div>`;
+  }).join("");
+  host.querySelectorAll("[data-archive-id]").forEach((el) => {
+    el.style.cursor = "pointer";
+    el.onclick = () => viewArchivedLife(el.dataset.archiveId);
+  });
+}
+
+// #86: country map view (region-grid heatmap). Falls back to the table
+// view when toggled. Each tile = one country, colored by n_lives.
+function renderCountryMap(byCountry) {
+  const host = $opt("#stats-country-map");
+  if (!host) return;
+  if (!byCountry || byCountry.length === 0) {
+    host.innerHTML = '<p class="muted">No country data yet.</p>';
+    return;
+  }
+  // Bucket by region (pulled from the loaded country catalog).
+  const codeToCountry = Object.fromEntries((state.countries || []).map(c => [c.code, c]));
+  const byRegion = {};
+  let maxLives = 0;
+  for (const r of byCountry) {
+    const code = r.country_code;
+    const meta = codeToCountry[code];
+    const region = (meta && meta.region) || "Other";
+    if (!byRegion[region]) byRegion[region] = [];
+    byRegion[region].push(r);
+    if (r.n_lives > maxLives) maxLives = r.n_lives;
+  }
+  const regionOrder = ["North America", "Central America", "Caribbean", "South America",
+                       "Europe", "Africa", "Middle East", "Asia", "Oceania"];
+  const sortedRegions = Object.keys(byRegion).sort((a, b) => {
+    const ai = regionOrder.indexOf(a);
+    const bi = regionOrder.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  const heatColor = (n) => {
+    if (!n) return "rgba(20, 18, 14, 0.04)";
+    const t = Math.max(0.15, n / maxLives);
+    // Cream → clay heatmap.
+    const r = Math.round(252 - 132 * t);
+    const g = Math.round(245 - 152 * t);
+    const b = Math.round(220 - 165 * t);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+  const lines = sortedRegions.map(region => {
+    const tiles = byRegion[region]
+      .sort((a, b) => b.n_lives - a.n_lives)
+      .map(r => `
+        <div class="map-tile" style="background:${heatColor(r.n_lives)}"
+             title="${escapeHtml(r.country_name)} — ${r.n_lives} lives, avg lifespan ${r.avg_lifespan}">
+          <span class="map-tile-code">${r.country_code.toUpperCase()}</span>
+          <span class="map-tile-n">${r.n_lives}</span>
+        </div>
+      `).join("");
+    return `
+      <div class="map-region">
+        <div class="map-region-title">${escapeHtml(region)}</div>
+        <div class="map-region-tiles">${tiles}</div>
+      </div>`;
+  });
+  host.innerHTML = lines.join("");
+}
+
+// #88: filter form rendering. Builds dropdowns from /api/statistics/lives/facets.
+function renderFilterForm(facets) {
+  const host = $opt("#stats-filters");
+  if (!host) return;
+  const countryOpts = (facets.countries || []).map(c =>
+    `<option value="${c.code}">${escapeHtml(c.name)}</option>`).join("");
+  const causeOpts = (facets.causes || []).map(c =>
+    `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  host.innerHTML = `
+    <div class="filter-row">
+      <label>Name <input type="text" id="filter-name" value="${escapeHtml(statsFilters.name)}" placeholder="substring" /></label>
+      <label>Country
+        <select id="filter-country">
+          <option value="">any</option>${countryOpts}
+        </select>
+      </label>
+      <label>Cause of death
+        <select id="filter-cause">
+          <option value="">any</option>${causeOpts}
+        </select>
+      </label>
+      <label>Job <input type="text" id="filter-job" value="${escapeHtml(statsFilters.job)}" placeholder="substring" /></label>
+      <label>Min age <input type="number" id="filter-min-age" value="${escapeHtml(statsFilters.min_age)}" min="0" max="120" /></label>
+      <label>Max age <input type="number" id="filter-max-age" value="${escapeHtml(statsFilters.max_age)}" min="0" max="120" /></label>
+      <label>Min net worth <input type="number" id="filter-min-nw" value="${escapeHtml(statsFilters.min_net_worth)}" /></label>
+      <button id="filter-apply" class="btn xs">Apply</button>
+      <button id="filter-clear" class="btn xs">Clear</button>
+    </div>`;
+  host.querySelector("#filter-country").value = statsFilters.country;
+  host.querySelector("#filter-cause").value = statsFilters.cause;
+  host.querySelector("#filter-apply").onclick = async () => {
+    statsFilters.name = host.querySelector("#filter-name").value.trim();
+    statsFilters.country = host.querySelector("#filter-country").value;
+    statsFilters.cause = host.querySelector("#filter-cause").value;
+    statsFilters.job = host.querySelector("#filter-job").value.trim();
+    statsFilters.min_age = host.querySelector("#filter-min-age").value;
+    statsFilters.max_age = host.querySelector("#filter-max-age").value;
+    statsFilters.min_net_worth = host.querySelector("#filter-min-nw").value;
+    await loadStatistics();
+  };
+  host.querySelector("#filter-clear").onclick = async () => {
+    for (const k of Object.keys(statsFilters)) statsFilters[k] = "";
+    await loadStatistics();
+  };
+}
+
+// #88: render active filters as removable chips above the past-lives list.
+function renderFilterChips() {
+  const host = $opt("#stats-filter-chips");
+  if (!host) return;
+  const chips = [];
+  for (const [k, v] of Object.entries(statsFilters)) {
+    if (v === "" || v == null) continue;
+    chips.push(`<span class="filter-chip" data-key="${k}">${escapeHtml(k)}: ${escapeHtml(String(v))} <span class="chip-x">×</span></span>`);
+  }
+  host.innerHTML = chips.join("");
+  host.querySelectorAll(".filter-chip").forEach((el) => {
+    el.onclick = async () => {
+      statsFilters[el.dataset.key] = "";
+      await loadStatistics();
+    };
+  });
 }
 
 function renderGlobalCard(s) {
@@ -1512,42 +1727,129 @@ function renderCountryTable(rows) {
   host.innerHTML = `<table class="stats-table"><thead><tr>${headerRow}</tr></thead><tbody>${bodyRows}</tbody></table>`;
 }
 
+// #87: chart instances kept around so re-renders can dispose them
+// before recreating (Chart.js requires this on the same canvas).
+let _careerChartInstance = null;
+let _talentsChartInstance = null;
+
 function renderCareerChart(rows) {
-  const host = $("#stats-career");
-  if (!rows || rows.length === 0) {
-    host.innerHTML = '<p class="muted">No data yet.</p>';
+  // Fall back to the CSS bar chart if Chart.js failed to load.
+  if (typeof window.Chart === "undefined") {
+    const host = $("#stats-career");
+    host.classList.remove("hidden");
+    if (!rows || rows.length === 0) {
+      host.innerHTML = '<p class="muted">No data yet.</p>';
+      return;
+    }
+    const max = Math.max(...rows.map((r) => r.n_lives), 1);
+    host.innerHTML = rows.map((r) => {
+      const pct = Math.round(100 * r.n_lives / max);
+      return `
+        <div class="stats-bar-row">
+          <div class="stats-bar-label">${escapeHtml(r.job)}</div>
+          <div class="stats-bar-track">
+            <div class="stats-bar-fill" style="width: ${pct}%"></div>
+          </div>
+          <div class="stats-bar-meta">${r.n_lives} · ${fmtMoney(r.avg_earnings)} avg</div>
+        </div>`;
+    }).join("");
     return;
   }
-  const max = Math.max(...rows.map((r) => r.n_lives), 1);
-  host.innerHTML = rows.map((r) => {
-    const pct = Math.round(100 * r.n_lives / max);
-    return `
-      <div class="stats-bar-row">
-        <div class="stats-bar-label">${escapeHtml(r.job)}</div>
-        <div class="stats-bar-track">
-          <div class="stats-bar-fill" style="width: ${pct}%"></div>
-        </div>
-        <div class="stats-bar-meta">${r.n_lives} · ${fmtMoney(r.avg_earnings)} avg</div>
-      </div>`;
-  }).join("");
+  $("#stats-career").classList.add("hidden");
+  const canvas = $("#stats-career-chart");
+  if (_careerChartInstance) _careerChartInstance.destroy();
+  if (!rows || rows.length === 0) {
+    canvas.classList.add("hidden");
+    return;
+  }
+  canvas.classList.remove("hidden");
+  _careerChartInstance = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: rows.map(r => r.job),
+      datasets: [{
+        label: "Lives",
+        data: rows.map(r => r.n_lives),
+        backgroundColor: "rgba(132, 96, 56, 0.78)",
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterLabel: (ctx) => {
+              const r = rows[ctx.dataIndex];
+              return `avg earnings ${fmtMoney(r.avg_earnings)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { beginAtZero: true, ticks: { precision: 0 } },
+      },
+      maintainAspectRatio: false,
+    },
+  });
 }
 
 function renderTalents(t) {
-  const host = $("#stats-talents");
   const attrs = ["intelligence", "artistic", "musical", "athletic", "strength", "endurance", "appearance", "conscience", "wisdom", "resistance"];
-  const max = Math.max(...attrs.map((a) => (t[a] && t[a].talented_count) || 0), 1);
-  host.innerHTML = attrs.map((a) => {
-    const stat = t[a] || { talented_count: 0, average_peak: 0 };
-    const pct = Math.round(100 * stat.talented_count / max);
-    return `
-      <div class="stats-bar-row">
-        <div class="stats-bar-label">${a}</div>
-        <div class="stats-bar-track">
-          <div class="stats-bar-fill talent" style="width: ${pct}%"></div>
-        </div>
-        <div class="stats-bar-meta">${stat.talented_count} talented · avg peak ${stat.average_peak}</div>
-      </div>`;
-  }).join("");
+  if (typeof window.Chart === "undefined") {
+    const host = $("#stats-talents");
+    host.classList.remove("hidden");
+    const max = Math.max(...attrs.map((a) => (t[a] && t[a].talented_count) || 0), 1);
+    host.innerHTML = attrs.map((a) => {
+      const stat = t[a] || { talented_count: 0, average_peak: 0 };
+      const pct = Math.round(100 * stat.talented_count / max);
+      return `
+        <div class="stats-bar-row">
+          <div class="stats-bar-label">${a}</div>
+          <div class="stats-bar-track">
+            <div class="stats-bar-fill talent" style="width: ${pct}%"></div>
+          </div>
+          <div class="stats-bar-meta">${stat.talented_count} talented · avg peak ${stat.average_peak}</div>
+        </div>`;
+    }).join("");
+    return;
+  }
+  $("#stats-talents").classList.add("hidden");
+  const canvas = $("#stats-talents-chart");
+  if (_talentsChartInstance) _talentsChartInstance.destroy();
+  canvas.classList.remove("hidden");
+  _talentsChartInstance = new Chart(canvas, {
+    type: "radar",
+    data: {
+      labels: attrs,
+      datasets: [{
+        label: "Average peak",
+        data: attrs.map(a => (t[a] && t[a].average_peak) || 0),
+        backgroundColor: "rgba(132, 96, 56, 0.18)",
+        borderColor: "rgba(132, 96, 56, 0.85)",
+        borderWidth: 2,
+        pointBackgroundColor: "rgba(132, 96, 56, 1)",
+      }],
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterLabel: (ctx) => {
+              const stat = t[attrs[ctx.dataIndex]] || {};
+              return `${stat.talented_count || 0} talented`;
+            },
+          },
+        },
+      },
+      scales: {
+        r: { beginAtZero: true, suggestedMax: 100 },
+      },
+      maintainAspectRatio: false,
+    },
+  });
 }
 
 function _lifeRowHtml(l) {
@@ -2639,6 +2941,39 @@ async function init() {
     e.target.value = "";  // allow re-importing the same file
   });
   $("#stats-clear-btn").addEventListener("click", clearNonFavorites);
+  // #86: country map toggle. Persists in localStorage so the user
+  // doesn't have to re-toggle on every dashboard open.
+  const countryToggle = $opt("#stats-country-toggle");
+  if (countryToggle) {
+    const apply = (view) => {
+      const table = $("#stats-country");
+      const map = $("#stats-country-map");
+      if (view === "map") {
+        table.classList.add("hidden");
+        map.classList.remove("hidden");
+        countryToggle.textContent = "View as table";
+        countryToggle.dataset.view = "map";
+      } else {
+        table.classList.remove("hidden");
+        map.classList.add("hidden");
+        countryToggle.textContent = "View as map";
+        countryToggle.dataset.view = "table";
+      }
+      try { localStorage.setItem("rl_country_view", view); } catch {}
+    };
+    apply(localStorage.getItem("rl_country_view") || "table");
+    countryToggle.addEventListener("click", () => {
+      apply(countryToggle.dataset.view === "map" ? "table" : "map");
+    });
+  }
+  // #88: filter form toggle.
+  const filtersToggle = $opt("#stats-filters-toggle");
+  if (filtersToggle) {
+    filtersToggle.addEventListener("click", () => {
+      const host = $opt("#stats-filters");
+      if (host) host.classList.toggle("hidden");
+    });
+  }
   // #85: player name input on the start screen. Updates localStorage
   // and reloads slots so the picker re-scopes immediately.
   const playerInput = $opt("#player-name-input");
