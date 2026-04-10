@@ -406,8 +406,11 @@ def milestones() -> dict:
         conn.close()
 
 
-def list_lives(limit: int = 50, offset: int = 0) -> dict:
-    """Paginated archive list. Returns {total, lives}."""
+def list_lives(limit: int = 10, offset: int = 0) -> dict:
+    """Paginated archive list (most recent first). Default limit is 10
+    — the dashboard's 'Recent lives' section is intentionally short
+    to keep the screen scannable. Use list_favorites() for the
+    permanent set the player has explicitly bookmarked."""
     conn = get_connection()
     try:
         total = conn.execute("SELECT COUNT(*) FROM life_archive").fetchone()[0]
@@ -416,7 +419,7 @@ def list_lives(limit: int = 50, offset: int = 0) -> dict:
             SELECT id, name, country_code, country_name, gender,
                    born_year, died_year, age_at_death, cause_of_death,
                    final_job, lifetime_earnings, peak_net_worth,
-                   married, children_count
+                   married, children_count, is_favorite
             FROM life_archive
             ORDER BY archived_at DESC
             LIMIT ? OFFSET ?
@@ -425,25 +428,103 @@ def list_lives(limit: int = 50, offset: int = 0) -> dict:
         ).fetchall()
         return {
             "total": int(total),
-            "lives": [{
-                "id": r["id"],
-                "name": r["name"],
-                "country_code": r["country_code"],
-                "country_name": r["country_name"],
-                "gender": int(r["gender"]),
-                "born_year": int(r["born_year"]),
-                "died_year": int(r["died_year"]),
-                "age_at_death": int(r["age_at_death"]),
-                "cause_of_death": r["cause_of_death"],
-                "final_job": r["final_job"],
-                "lifetime_earnings": int(r["lifetime_earnings"]),
-                "peak_net_worth": int(r["peak_net_worth"]),
-                "married": bool(r["married"]),
-                "children_count": int(r["children_count"]),
-            } for r in rows],
+            "lives": [_row_to_summary(r) for r in rows],
         }
     finally:
         conn.close()
+
+
+def list_favorites() -> list[dict]:
+    """Return every favorited life — no limit, no pagination. The
+    permanent curated set the player wants to keep visible across
+    all their playtime."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, name, country_code, country_name, gender,
+                   born_year, died_year, age_at_death, cause_of_death,
+                   final_job, lifetime_earnings, peak_net_worth,
+                   married, children_count, is_favorite
+            FROM life_archive
+            WHERE is_favorite = 1
+            ORDER BY archived_at DESC
+            """
+        ).fetchall()
+        return [_row_to_summary(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _row_to_summary(r) -> dict:
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "country_code": r["country_code"],
+        "country_name": r["country_name"],
+        "gender": int(r["gender"]),
+        "born_year": int(r["born_year"]),
+        "died_year": int(r["died_year"]),
+        "age_at_death": int(r["age_at_death"]),
+        "cause_of_death": r["cause_of_death"],
+        "final_job": r["final_job"],
+        "lifetime_earnings": int(r["lifetime_earnings"]),
+        "peak_net_worth": int(r["peak_net_worth"]),
+        "married": bool(r["married"]),
+        "children_count": int(r["children_count"]),
+        "is_favorite": bool(r["is_favorite"]),
+    }
+
+
+def set_favorite(archive_id: str, is_favorite: bool) -> bool:
+    """Toggle the is_favorite flag on an archived life. Returns True
+    if the row was found, False otherwise."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE life_archive SET is_favorite = ? WHERE id = ?",
+            (1 if is_favorite else 0, archive_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def clear_non_favorites() -> int:
+    """Delete every life from the archive that isn't favorited.
+    Returns the number of rows deleted. Used by the 'Clear archive'
+    button in the dashboard so the player can wipe test/cruft data
+    while keeping their hand-curated favorites."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM life_archive WHERE is_favorite = 0")
+        conn.commit()
+        deleted = cur.rowcount
+    finally:
+        conn.close()
+    # Rewrite the JSONL sidecar to match the new state so a future
+    # replay doesn't resurrect the cleared lives.
+    _rewrite_sidecar_from_db()
+    return deleted
+
+
+def _rewrite_sidecar_from_db() -> None:
+    """Rebuild the JSONL sidecar from the current DB state. Called
+    after clear_non_favorites so the durability layer doesn't undo
+    the user's cleanup the next time the server restarts."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(_INSERT_COLS)} FROM life_archive"
+        ).fetchall()
+    finally:
+        conn.close()
+    path = _sidecar_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(dict(r)) + "\n")
 
 
 def get_life(archive_id: str) -> dict | None:

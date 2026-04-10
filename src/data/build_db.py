@@ -312,6 +312,28 @@ CREATE INDEX IF NOT EXISTS idx_life_archive_died_year ON life_archive(died_year)
 """
 
 
+# Idempotent post-create migrations for the life_archive table.
+# CREATE TABLE IF NOT EXISTS won't add new columns to an existing
+# table, so columns added after the table first shipped need ALTER
+# TABLE statements that swallow "duplicate column name" errors.
+LIFE_ARCHIVE_MIGRATIONS = [
+    "ALTER TABLE life_archive ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+]
+
+
+def _apply_life_archive_migrations(conn: sqlite3.Connection) -> None:
+    """Run idempotent ALTER TABLE migrations for the life_archive
+    table. Each migration is wrapped in a try/except so re-running
+    a migration that's already been applied is a no-op."""
+    for sql in LIFE_ARCHIVE_MIGRATIONS:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError as e:
+            # 'duplicate column name' is the expected no-op signal.
+            if "duplicate column name" not in str(e).lower():
+                raise
+
+
 def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -329,6 +351,9 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
     conn = _connect(db_path)
     try:
         conn.executescript(SCHEMA_SQL)
+        # Idempotent post-create migrations for tables that ship
+        # additional columns over time.
+        _apply_life_archive_migrations(conn)
 
         # 1. Recovered schema from .dat files.
         parsed_files = parse_dat.parse_all(data_dir)

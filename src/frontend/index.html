@@ -195,6 +195,7 @@
           <!-- Visible when viewing an archived life from the statistics
                screen (#70). Wired up by viewArchivedLife(). -->
           <button id="btn-back-to-stats" class="btn lg hidden">Back to statistics</button>
+          <button id="btn-toggle-favorite" class="btn lg hidden">★ Add to favorites</button>
         </div>
       </section>
 
@@ -228,9 +229,17 @@
         <h3 class="stats-section-h">Talents</h3>
         <div id="stats-talents" class="stats-bar-chart"></div>
 
-        <h3 class="stats-section-h">Past lives</h3>
+        <h3 class="stats-section-h">Favorites</h3>
+        <div id="stats-favorites" class="stats-lives-list"></div>
+
+        <h3 class="stats-section-h">Recent lives</h3>
         <div id="stats-lives" class="stats-lives-list"></div>
         <div id="stats-lives-pager" class="stats-lives-pager"></div>
+
+        <div class="stats-danger-zone">
+          <button id="stats-clear-btn" class="btn xs danger">Clear non-favorited lives</button>
+          <span class="muted">Wipes everything except your favorites. Useful after a stretch of test runs.</span>
+        </div>
       </section>
 
     </main>

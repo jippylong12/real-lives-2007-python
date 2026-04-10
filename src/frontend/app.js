@@ -1100,6 +1100,12 @@ function showDeathScreen(turn) {
   $("#screen-game").classList.add("hidden");
   $("#screen-statistics").classList.add("hidden");
   $("#screen-death").classList.remove("hidden");
+  // Reset the archive-only buttons; viewArchivedLife re-shows them
+  // after calling showDeathScreen for the rehydrated case.
+  if (!_viewingArchivedLife) {
+    $opt("#btn-back-to-stats")?.classList.add("hidden");
+    $opt("#btn-toggle-favorite")?.classList.add("hidden");
+  }
   const c = state.game.character;
   const co = state.game.country;
   $("#death-detail").textContent =
@@ -1166,6 +1172,10 @@ function showDeathScreen(turn) {
 // screen's "Back to statistics" button is visible and clicking
 // "Live a new life" routes back to statistics instead.
 let _viewingArchivedLife = false;
+// Archive ID of the currently-displayed life on the death screen,
+// used by the favorite toggle button. Set by viewArchivedLife().
+let _viewingArchiveId = null;
+let _viewingIsFavorite = false;
 
 async function showStatisticsScreen() {
   log("showStatisticsScreen");
@@ -1178,13 +1188,14 @@ async function showStatisticsScreen() {
 
 async function loadStatistics() {
   try {
-    const [globalStats, byCountry, byCareer, talents, milestones, lives] = await Promise.all([
+    const [globalStats, byCountry, byCareer, talents, milestones, lives, favorites] = await Promise.all([
       api("/api/statistics/global"),
       api("/api/statistics/by_country"),
       api("/api/statistics/by_career"),
       api("/api/statistics/talents"),
       api("/api/statistics/milestones"),
-      api("/api/statistics/lives?limit=50"),
+      api("/api/statistics/lives?limit=10"),
+      api("/api/statistics/favorites"),
     ]);
     if (globalStats.total_lives === 0) {
       $("#stats-empty").classList.remove("hidden");
@@ -1196,6 +1207,7 @@ async function loadStatistics() {
     renderCountryTable(byCountry);
     renderCareerChart(byCareer);
     renderTalents(talents);
+    renderFavoritesList(favorites);
     renderPastLivesList(lives);
   } catch (e) {
     logErr("loadStatistics failed", e);
@@ -1306,17 +1318,11 @@ function renderTalents(t) {
   }).join("");
 }
 
-function renderPastLivesList(payload) {
-  const host = $("#stats-lives");
-  const lives = payload.lives || [];
-  if (lives.length === 0) {
-    host.innerHTML = '<p class="muted">No archived lives yet.</p>';
-    $("#stats-lives-pager").innerHTML = "";
-    return;
-  }
-  host.innerHTML = lives.map((l) => `
+function _lifeRowHtml(l) {
+  const star = l.is_favorite ? '<span class="pl-star" title="favorite">★</span>' : "";
+  return `
     <div class="past-life-row" data-archive-id="${escapeHtml(l.id)}">
-      <div class="pl-name">${escapeHtml(l.name)}</div>
+      <div class="pl-name">${escapeHtml(l.name)} ${star}</div>
       <div class="pl-meta">
         <span>${escapeHtml(l.country_name)}</span> ·
         <span>${l.born_year}-${l.died_year}</span> ·
@@ -1325,12 +1331,34 @@ function renderPastLivesList(payload) {
       </div>
       <div class="pl-cause muted">${escapeHtml(l.cause_of_death || "—")}</div>
     </div>
-  `).join("");
+  `;
+}
+
+function renderFavoritesList(favorites) {
+  const host = $("#stats-favorites");
+  if (!favorites || favorites.length === 0) {
+    host.innerHTML = '<p class="muted">No favorites yet — view a past life and click ★ to keep it here permanently.</p>';
+    return;
+  }
+  host.innerHTML = favorites.map(_lifeRowHtml).join("");
   host.querySelectorAll("[data-archive-id]").forEach((el) => {
     el.onclick = () => viewArchivedLife(el.dataset.archiveId);
   });
-  // Simple pagination footer (just the count for now — filters are #88).
-  $("#stats-lives-pager").innerHTML = `<span class="muted">Showing ${lives.length} of ${payload.total} total lives</span>`;
+}
+
+function renderPastLivesList(payload) {
+  const host = $("#stats-lives");
+  const lives = payload.lives || [];
+  if (lives.length === 0) {
+    host.innerHTML = '<p class="muted">No archived lives yet.</p>';
+    $("#stats-lives-pager").innerHTML = "";
+    return;
+  }
+  host.innerHTML = lives.map(_lifeRowHtml).join("");
+  host.querySelectorAll("[data-archive-id]").forEach((el) => {
+    el.onclick = () => viewArchivedLife(el.dataset.archiveId);
+  });
+  $("#stats-lives-pager").innerHTML = `<span class="muted">Showing the ${lives.length} most recent of ${payload.total} total lives</span>`;
 }
 
 async function viewArchivedLife(archiveId) {
@@ -1341,13 +1369,88 @@ async function viewArchivedLife(archiveId) {
     // showDeathScreen can render it without a separate code path.
     state.game = snapshot;
     _viewingArchivedLife = true;
+    _viewingArchiveId = archiveId;
+    // Look up the favorite state from the lists we already rendered
+    // (cheap; avoids a second round trip).
+    _viewingIsFavorite = _isArchiveFavorited(archiveId);
     $("#btn-back-to-stats").classList.remove("hidden");
+    _updateFavoriteButton();
+    $("#btn-toggle-favorite").classList.remove("hidden");
     showDeathScreen({
       cause_of_death: snapshot.character?.cause_of_death || "—",
     });
   } catch (e) {
     logErr("viewArchivedLife failed", e);
     showToast(`Couldn't load that life: ${e.message}`, { kind: "error" });
+  }
+}
+
+function _isArchiveFavorited(archiveId) {
+  // Look at the rendered favorites list (data attributes) — quicker
+  // than another fetch. If the favorites list isn't rendered yet,
+  // assume false; the toggle will set it correctly.
+  const favHost = $opt("#stats-favorites");
+  if (!favHost) return false;
+  return !!favHost.querySelector(`[data-archive-id="${archiveId.replace(/"/g, '\\"')}"]`);
+}
+
+function _updateFavoriteButton() {
+  const btn = $opt("#btn-toggle-favorite");
+  if (!btn) return;
+  if (_viewingIsFavorite) {
+    btn.textContent = "★ Remove from favorites";
+    btn.classList.add("favorited");
+  } else {
+    btn.textContent = "☆ Add to favorites";
+    btn.classList.remove("favorited");
+  }
+}
+
+async function toggleFavorite() {
+  if (!_viewingArchiveId) return;
+  const newState = !_viewingIsFavorite;
+  log(`toggleFavorite(${_viewingArchiveId}, ${newState})`);
+  try {
+    const r = await fetch(`/api/statistics/lives/${_viewingArchiveId}/favorite`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_favorite: newState }),
+    });
+    if (!r.ok) {
+      const msg = await r.text();
+      throw new Error(`${r.status}: ${msg}`);
+    }
+    _viewingIsFavorite = newState;
+    _updateFavoriteButton();
+    showToast(newState ? "Added to favorites" : "Removed from favorites", { kind: "success" });
+  } catch (e) {
+    logErr("toggleFavorite failed", e);
+    showToast(`Couldn't update favorite: ${e.message}`, { kind: "error" });
+  }
+}
+
+async function clearNonFavorites() {
+  const ok = await showConfirm({
+    title: "Clear non-favorited lives?",
+    body: "This permanently deletes every archived life that isn't marked as a favorite. The JSONL backup file will be rewritten too. Use this to wipe test/cruft data.",
+    confirmText: "Clear",
+    cancelText: "Cancel",
+    destructive: true,
+  });
+  if (!ok) return;
+  log("clearNonFavorites");
+  try {
+    const r = await fetch("/api/statistics/clear_non_favorites", { method: "POST" });
+    if (!r.ok) {
+      const msg = await r.text();
+      throw new Error(`${r.status}: ${msg}`);
+    }
+    const result = await r.json();
+    showToast(`Cleared ${result.deleted} non-favorited live${result.deleted === 1 ? "" : "s"}`, { kind: "success" });
+    await loadStatistics();
+  } catch (e) {
+    logErr("clearNonFavorites failed", e);
+    showToast(`Couldn't clear archive: ${e.message}`, { kind: "error" });
   }
 }
 
@@ -2141,7 +2244,10 @@ async function init() {
     // picker — that'd be confusing and lose the player's place.
     if (_viewingArchivedLife) {
       _viewingArchivedLife = false;
+      _viewingArchiveId = null;
+      _viewingIsFavorite = false;
       $("#btn-back-to-stats").classList.add("hidden");
+      $("#btn-toggle-favorite").classList.add("hidden");
       showStatisticsScreen();
     } else {
       showStartScreen();
@@ -2169,15 +2275,20 @@ async function init() {
   });
   $("#btn-back-to-stats").addEventListener("click", () => {
     _viewingArchivedLife = false;
+    _viewingArchiveId = null;
+    _viewingIsFavorite = false;
     $("#btn-back-to-stats").classList.add("hidden");
+    $("#btn-toggle-favorite").classList.add("hidden");
     showStatisticsScreen();
   });
+  $("#btn-toggle-favorite").addEventListener("click", toggleFavorite);
   $("#stats-import-btn").addEventListener("click", importArchive);
   $("#stats-import-input").addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
     if (file) handleArchiveImport(file);
     e.target.value = "";  // allow re-importing the same file
   });
+  $("#stats-clear-btn").addEventListener("click", clearNonFavorites);
   log("init: loading countries + finance products");
   await loadCountries();
   await loadFinanceProducts();

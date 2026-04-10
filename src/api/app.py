@@ -20,6 +20,7 @@ static files. There is no build step.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -318,9 +319,21 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # #70: replay the life_archive JSONL sidecar at startup so a wiped
-    # or rebuilt DB auto-restores from the durability layer. Best
-    # effort — log and continue if anything goes wrong.
+    # #70: run idempotent life_archive migrations at startup so
+    # existing DBs that aren't rebuilt still get any post-launch
+    # column additions (e.g., is_favorite). Then replay the JSONL
+    # sidecar so a wiped or rebuilt DB auto-restores from the
+    # durability layer. Best effort throughout — log and continue.
+    try:
+        from ..data import build_db as _build_db
+        _conn = _build_db.get_connection()
+        try:
+            _build_db._apply_life_archive_migrations(_conn)
+            _conn.commit()
+        finally:
+            _conn.close()
+    except Exception as e:
+        print(f"[life_archive] migration failed: {e}")
     try:
         from ..engine import statistics as _stats
         n_restored = _stats.restore_jsonl_into_db()
@@ -826,21 +839,64 @@ def create_app() -> FastAPI:
         return statistics.milestones()
 
     @app.get("/api/statistics/lives")
-    def stats_lives(limit: int = 50, offset: int = 0):
-        """Paginated list of archived lives. Each entry is a small
-        summary; click through fetches the full snapshot via
-        /api/statistics/lives/{id}."""
+    def stats_lives(limit: int = 10, offset: int = 0):
+        """Recent archived lives (most recent first). Default limit
+        is intentionally small — the curated permanent set lives in
+        /api/statistics/favorites."""
         return statistics.list_lives(limit=limit, offset=offset)
+
+    @app.get("/api/statistics/favorites")
+    def stats_favorites():
+        """Permanent curated set of favorited lives. No limit."""
+        return statistics.list_favorites()
+
+    @app.patch("/api/statistics/lives/{archive_id}/favorite")
+    async def stats_set_favorite(archive_id: str, req: Request):
+        """Toggle the is_favorite flag on an archived life. Body:
+        {"is_favorite": true|false}."""
+        try:
+            payload = json.loads((await req.body()).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        is_fav = bool(payload.get("is_favorite", True))
+        if not statistics.set_favorite(archive_id, is_fav):
+            raise HTTPException(status_code=404, detail="archived life not found")
+        return {"id": archive_id, "is_favorite": is_fav}
+
+    @app.post("/api/statistics/clear_non_favorites")
+    def stats_clear_non_favorites():
+        """Delete every non-favorited life from the archive. Returns
+        {deleted: N}. Use to wipe test/cruft data while keeping the
+        player's hand-curated set."""
+        deleted = statistics.clear_non_favorites()
+        return {"deleted": deleted}
 
     @app.get("/api/statistics/lives/{archive_id}")
     def stats_one_life(archive_id: str):
-        """Full character snapshot for one archived life — same shape
-        as /api/game/{id} so the past-life retrospective rehydrates
-        through the existing showDeathScreen rendering."""
+        """Full character snapshot for one archived life — wrapped in
+        the same shape as /api/game/{id} (with country dict, etc) so
+        the past-life retrospective rehydrates through the existing
+        showDeathScreen rendering on the frontend."""
         snapshot = statistics.get_life(archive_id)
         if snapshot is None:
             raise HTTPException(status_code=404, detail="archived life not found")
-        return snapshot
+        # snapshot is the raw GameState.to_dict() which doesn't include
+        # country / portfolio_value / career — those are added at the
+        # API level by _serialize_game. Replicate that here so the
+        # frontend shape matches a live game payload.
+        char_dict = snapshot.get("character") or {}
+        country_code = char_dict.get("country_code")
+        country = get_country(country_code) if country_code else None
+        country_dict = None
+        if country is not None:
+            country_dict = _country_dict(country)
+            country_dict["binary_facts"] = _binary_facts_summary(country.code)
+        return {
+            **snapshot,
+            "country": country_dict,
+            "portfolio_value": 0,   # final state — no live portfolio
+            "career": None,         # career hint not relevant for archived lives
+        }
 
     @app.get("/api/statistics/export")
     def stats_export():

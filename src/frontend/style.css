@@ -1357,6 +1357,35 @@ p { margin: 0 0 0.6rem 0; color: var(--ink-soft); }
   font-size: 12px;
   text-align: center;
 }
+.pl-star {
+  display: inline-block;
+  margin-left: 6px;
+  color: #d4a13c;
+  font-size: 13px;
+}
+
+.stats-danger-zone {
+  margin-top: 28px;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  font-size: 12px;
+}
+.btn.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.btn.danger:hover {
+  background: var(--bad);
+  color: #fff;
+}
+.btn.favorited {
+  background: #f7eecf;
+  border-color: #d4a13c;
+  color: #8a6817;
+}
 
 /* Death actions row to fit the new "Back to statistics" button */
 #death-actions {

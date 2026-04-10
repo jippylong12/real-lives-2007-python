@@ -346,6 +346,44 @@ def test_life_archive_jsonl_round_trip_after_db_wipe():
     assert row is not None, "JSONL replay didn't restore the wiped row"
 
 
+def test_favorites_and_clear_non_favorites():
+    """#70 followup: set_favorite + list_favorites + clear_non_favorites
+    work together so the user can curate a permanent set and wipe
+    everything else."""
+    from src.engine import statistics, Game
+    from src.data.build_db import get_connection
+
+    # Create two dead characters so we have rows to favorite + clear.
+    ids = []
+    for seed in (101, 102):
+        g = Game.new(country_code="us", seed=seed)
+        g.state.character.age = 95
+        g.state.character.attributes.health = 5
+        for _ in range(15):
+            if not g.state.character.alive:
+                break
+            g.advance_year()
+        assert not g.state.character.alive
+        ids.append(g.state.id)
+
+    # Favorite one of them.
+    assert statistics.set_favorite(ids[0], True) is True
+    favs = statistics.list_favorites()
+    fav_ids = {f["id"] for f in favs}
+    assert ids[0] in fav_ids
+    assert ids[1] not in fav_ids
+
+    # Clear non-favorites — the favorited row should survive.
+    statistics.clear_non_favorites()
+    conn = get_connection()
+    try:
+        remaining = {r[0] for r in conn.execute("SELECT id FROM life_archive").fetchall()}
+    finally:
+        conn.close()
+    assert ids[0] in remaining
+    assert ids[1] not in remaining
+
+
 def test_export_import_archive_round_trip():
     """#70: export → import is idempotent on id."""
     from src.engine import statistics, Game
