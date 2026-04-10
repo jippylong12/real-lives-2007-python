@@ -675,21 +675,29 @@ CONVERSION_OFFER = _choice(
 
 def _education_university(c):
     # Stay in school — education.update_education will auto-promote at 18
-    # to SECONDARY, then to UNIVERSITY at 22.
+    # to SECONDARY, then to UNIVERSITY at 22. school_track lets the
+    # vocational vs university completion branches and the UI tell
+    # them apart while in school.
     c.in_school = True
+    c.school_track = "university"
 
 
 def _education_vocational(c):
-    # Skip the secondary→university track entirely; jump straight to a
-    # vocational credential.
-    c.education = EducationLevel.VOCATIONAL
-    c.in_school = False
+    # Enter a 2-year vocational program. Mirror the university path:
+    # stay in school, set school_track, DO NOT grant the credential
+    # on entry (granted on graduation by education.update_education at
+    # age 20). Previously this immediately set in_school=False and
+    # granted education=VOCATIONAL, which made the player think they
+    # were in school but the engine treated them as a graduated adult.
+    c.in_school = True
+    c.school_track = "vocational"
 
 
 def _education_dropout(c):
     # Leave school. Education stays at whatever level was already
     # completed (primary or none).
     c.in_school = False
+    c.school_track = None
 
 
 def _set_vocation(field):
@@ -758,12 +766,12 @@ UNIVERSITY_MAJOR = _choice(
     description=(
         "You're heading into university. Time to choose what to study — your "
         "major will shape the kind of work you can do for the rest of your "
-        "life. Pick a field that fits your strengths."
+        "life. Pick a field that fits your strengths. When you graduate in "
+        "four years you'll start your career in this field."
     ),
     when=lambda c, co: (
         c.age == 18
-        and c.in_school
-        and c.education == EducationLevel.PRIMARY
+        and c.school_track == "university"
         and c.vocation_field is None
     ),
     chance=lambda c, co: 1.0,
@@ -821,11 +829,12 @@ VOCATIONAL_TRACK = _choice(
     description=(
         "You're starting vocational training. Time to pick a trade — your "
         "specialization decides which kind of skilled work you'll do for "
-        "the rest of your career."
+        "the rest of your career. When you graduate in two years you'll "
+        "begin work as an apprentice in this field."
     ),
     when=lambda c, co: (
         c.age == 18
-        and c.education == EducationLevel.VOCATIONAL
+        and c.school_track == "vocational"
         and c.vocation_field is None
     ),
     chance=lambda c, co: 1.0,

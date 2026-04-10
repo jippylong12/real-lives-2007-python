@@ -516,10 +516,16 @@ SYNTHETIC_JOB_LADDERS: list[dict] = [
     # ----- Athletics: 5-rung amateur → elite ladder -----
     {"name": "youth athlete",      "min_education": 0, "min_intelligence":  0, "min_age": 12, "max_age": 22, "salary_low":   2000, "salary_high":   8000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "amateur athlete", "is_freelance": 1},
     {"name": "amateur athlete",    "min_education": 0, "min_intelligence":  0, "min_age": 16, "max_age": 32, "salary_low":   5000, "salary_high":  18000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "semi-pro athlete", "is_freelance": 1},
-    {"name": "semi-pro athlete",   "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 36, "salary_low":  20000, "salary_high":  60000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "professional athlete", "is_freelance": 0},
+    # The whole athletics ladder is freelance — even at the elite level
+    # athletes are independent contractors whose income swings on talent
+    # and luck. Previously semi-pro and elite were is_freelance=0 which
+    # meant promoting from amateur silently flipped a self-employed
+    # athlete into a salaried role (#83 followup).
+    {"name": "semi-pro athlete",   "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 36, "salary_low":  20000, "salary_high":  60000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": "professional athlete", "is_freelance": 1},
     # 'professional athlete' is the existing binary entry — its promotes_to
-    # is patched in build_db to point at the new 'elite athlete' rung.
-    {"name": "elite athlete",      "min_education": 0, "min_intelligence":  0, "min_age": 22, "max_age": 38, "salary_low": 200000, "salary_high": 800000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": None, "is_freelance": 0},
+    # is patched in build_db to point at the new 'elite athlete' rung,
+    # and its is_freelance is overridden to 1 in the binary loop.
+    {"name": "elite athlete",      "min_education": 0, "min_intelligence":  0, "min_age": 22, "max_age": 38, "salary_low": 200000, "salary_high": 800000, "urban_only": 0, "rural_only": 0, "category": "athletics", "promotes_to": None, "is_freelance": 1},
 
     # ----- Military: 4-rung deeper ladder -----
     # 'soldier' → 'military sergeant' (existing binary chain) →
@@ -531,8 +537,12 @@ SYNTHETIC_JOB_LADDERS: list[dict] = [
     # 'lay practitioner' → 'traditional medicine practitioner' (existing
     # binary entry, freelance) → 'religious leader' → 'senior religious leader'
     {"name": "lay practitioner",        "min_education": 0, "min_intelligence": 20, "min_age": 16, "max_age": 80, "salary_low":  6000, "salary_high":  18000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": "traditional medicine practitioner", "is_freelance": 1},
-    {"name": "religious leader",        "min_education": 2, "min_intelligence": 45, "min_age": 25, "max_age": 80, "salary_low": 18000, "salary_high":  45000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": "senior religious leader", "is_freelance": 0},
-    {"name": "senior religious leader", "min_education": 4, "min_intelligence": 55, "min_age": 40, "max_age": 90, "salary_low": 40000, "salary_high":  90000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": None, "is_freelance": 0},
+    # The whole religious-leader ladder is freelance — independent
+    # spiritual practitioners, not salaried clergy. Previously the two
+    # synthetic rungs were is_freelance=0 which crossed the freelance
+    # boundary on promotion from traditional medicine practitioner (#83 followup).
+    {"name": "religious leader",        "min_education": 2, "min_intelligence": 45, "min_age": 25, "max_age": 80, "salary_low": 18000, "salary_high":  45000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": "senior religious leader", "is_freelance": 1},
+    {"name": "senior religious leader", "min_education": 4, "min_intelligence": 55, "min_age": 40, "max_age": 90, "salary_low": 40000, "salary_high":  90000, "urban_only": 0, "rural_only": 0, "category": "service", "promotes_to": None, "is_freelance": 1},
 
     # ----- Arts: per-discipline 3-rung ladders, all freelance -----
     # Writing

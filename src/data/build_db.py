@@ -86,6 +86,18 @@ def _cap_max_age(max_age: int, category: str | None) -> int:
     return min(max_age, cap)
 
 
+# #83 followup: binary freelance jobs whose ship-default promotes_to
+# chain crosses the freelance boundary into a salaried role. Forcing
+# these to be terminal stops promote() from silently flipping a self-
+# employed character into a salaried one mid-career — the
+# entrepreneurial framing only holds if the character stays
+# freelance until they make a deliberate choice to leave it via the
+# job board / Find work flow.
+TERMINAL_FREELANCE_OVERRIDE: frozenset[str] = frozenset({
+    "handicraft worker",   # binary points at "foreman" (salaried)
+})
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS countries (
     code                    TEXT PRIMARY KEY,
@@ -445,13 +457,27 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 if clean_name in seed.BINARY_JOB_PROMOTES_TO_PATCHES:
                     promotes_to = seed.BINARY_JOB_PROMOTES_TO_PATCHES[clean_name]
 
+                # #83 followup: terminal freelance roles whose binary
+                # promotes_to chain leads into a non-freelance salaried
+                # role (e.g. handicraft worker → foreman). The promotion
+                # would silently flip a self-employed character into a
+                # salaried one mid-career, breaking the entrepreneurial
+                # framing. Force these to be terminal so the player
+                # stays self-employed unless they deliberately apply
+                # for a different job via the job board.
+                if clean_name in TERMINAL_FREELANCE_OVERRIDE:
+                    promotes_to = None
+
                 # The 'writer' / 'artist' / 'musician' binary entries are
-                # all freelance — talent + luck careers (#61).
+                # all freelance — talent + luck careers (#61). Athletes
+                # added in #83 followup so the ladder stays freelance
+                # all the way through.
                 is_freelance = 1 if clean_name in (
                     "writer", "artist", "sculptor", "musician",
                     "traditional medicine practitioner", "fortune-teller",
                     "street vendor", "subsistence farmer", "small farmer",
                     "handicraft worker", "potter",
+                    "professional athlete",
                 ) else 0
 
                 conn.execute(

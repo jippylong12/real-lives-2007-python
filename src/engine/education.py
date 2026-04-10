@@ -70,20 +70,33 @@ def update_education(character: Character, country: Country, rng: random.Random)
         character.school_track = None
         return "You finished secondary school and joined the workforce."
 
-    # Vocational completion (#82-followup): 2 years after secondary ends.
+    # Vocational completion (#82-followup, #83-followup). Two paths
+    # land here: the events.py EDUCATION_PATH "vocational" choice
+    # (most common — fires at age 17) and the automatic age-18
+    # secondary completion branch above. Both set school_track and
+    # leave education at PRIMARY/SECONDARY; this branch grants the
+    # credential AND places the player in a starter trade job in
+    # their chosen vocation_field — the actual payoff for completing
+    # vocational school. Without this, picking 'vocational → trades →
+    # electrician' was a no-op the player had to follow up with
+    # manual job hunting.
     if (a == VOCATIONAL_END_AGE + 1
-            and character.education == EducationLevel.SECONDARY
             and character.in_school
             and character.school_track == "vocational"):
         character.education = EducationLevel.VOCATIONAL
         character.in_school = False
         character.school_track = None
-        return "You graduated from vocational school and joined the workforce."
+        return _graduate_into_starter_job(
+            character, country, rng,
+            base="You graduated from vocational school",
+        )
 
     # University completion. Backwards-compat: pre-fix saves don't have
     # school_track set, so treat None as "in university" since the old
     # secondary-completion branch only set in_school for the university
     # path (vocational immediately set in_school=False in the buggy code).
+    # Same payoff path as vocational — graduate into a starter job in
+    # the chosen field.
     if (a == UNI_END_AGE
             and character.education == EducationLevel.SECONDARY
             and character.in_school
@@ -91,6 +104,33 @@ def update_education(character: Character, country: Country, rng: random.Random)
         character.education = EducationLevel.UNIVERSITY
         character.in_school = False
         character.school_track = None
-        return "You graduated from university!"
+        return _graduate_into_starter_job(
+            character, country, rng,
+            base="You graduated from university",
+        )
 
     return None
+
+
+def _graduate_into_starter_job(character: Character, country: Country, rng: random.Random, base: str) -> str:
+    """Place the freshly-graduated character into a starter job in their
+    chosen vocation_field. The graduation event is the natural payoff
+    moment — the player chose this path years ago, and the system
+    follows through. If they didn't pick a vocation field (or no entry
+    job in that field fits), they graduate jobless and use Find work
+    like anyone else.
+
+    NOTE: this is the ONE place advance_year still calls assign_job —
+    everywhere else jobs are explicit player actions per the
+    'joblessness is a choice' fix. Graduation counts as a deliberate
+    choice that culminates here, not silent auto-assignment.
+    """
+    if not character.vocation_field:
+        return f"{base} and joined the workforce."
+    from . import careers  # in-function to avoid any import cycles
+    job_msg = careers.assign_job(character, country, rng)
+    if job_msg:
+        # job_msg is "You started working as a <job> (salary ~$X/yr)."
+        # Stitch the graduation onto it.
+        return f"{base} and started working as {job_msg.split('You started working as ')[-1]}"
+    return f"{base} and joined the workforce."

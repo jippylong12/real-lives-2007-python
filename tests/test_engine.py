@@ -956,6 +956,100 @@ def test_vocational_school_has_duration_and_grants_credential_on_completion():
     assert msg and "graduated from vocational" in msg.lower()
 
 
+def test_no_freelance_to_salaried_promotion_crossovers():
+    """#83 followup: no freelance job in the catalogue should promote
+    into a non-freelance job. Crossing the freelance boundary
+    silently strips the entrepreneurial framing — when a freelancer
+    gets promoted they should stay self-employed (or the chain
+    should terminate)."""
+    from src.data.build_db import get_connection
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT a.name AS from_job, b.name AS to_job, b.is_freelance AS to_fl
+        FROM jobs a
+        LEFT JOIN jobs b ON a.promotes_to = b.name
+        WHERE a.is_freelance = 1 AND a.promotes_to IS NOT NULL
+    """).fetchall()
+    crossovers = [
+        f"{r['from_job']} → {r['to_job']}"
+        for r in rows
+        if r["to_fl"] is not None and not r["to_fl"]
+    ]
+    assert not crossovers, f"freelance → salaried crossovers found: {crossovers}"
+
+
+def test_handicraft_worker_is_terminal_freelance():
+    """#83 followup: handicraft worker's binary promotes_to (foreman)
+    is overridden to None at build time — promoting a self-employed
+    artisan into a salaried foreman doesn't make sense."""
+    from src.engine import careers
+    j = careers.get_job("handicraft worker")
+    assert j is not None
+    assert j.is_freelance, "handicraft worker should be freelance"
+    assert j.promotes_to is None, (
+        f"handicraft worker should be terminal but promotes_to={j.promotes_to!r}"
+    )
+
+
+def test_vocational_graduation_places_starter_job_in_chosen_field():
+    """#83 followup: when a character finishes vocational school with
+    a vocation_field set (via VOCATIONAL_TRACK), the graduation event
+    auto-places them in an entry-level job in that field. This is the
+    payoff for having gone through vocational school — without it,
+    picking 'vocational → trades → electrician' was a no-op the
+    player had to follow up with manual job hunting."""
+    from src.engine import education
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    # Set up the post-vocational-school state.
+    char.in_school = True
+    char.school_track = "vocational"
+    char.education = EducationLevel.SECONDARY
+    char.vocation_field = "trades"
+    char.age = 20  # VOCATIONAL_END_AGE + 1
+    char.job = None
+    char.salary = 0
+
+    msg = education.update_education(char, country, rng)
+    assert msg is not None
+    assert "graduated from vocational" in msg.lower()
+    # Payoff: they were placed in a trade job.
+    assert char.job is not None, f"vocational grad should have a starter job, msg={msg}"
+    assert char.salary > 0
+    assert char.in_school is False
+    assert char.school_track is None
+    assert char.education == EducationLevel.VOCATIONAL
+
+
+def test_vocational_graduation_without_vocation_field_still_works():
+    """#83 followup: graduating from vocational without a vocation_field
+    set (e.g. dropped out of the trade picker) still produces a clean
+    graduation event — they just don't get an auto-assigned job."""
+    from src.engine import education
+    from src.engine.character import EducationLevel, create_random_character
+
+    rng = random.Random(0)
+    country = get_country("us")
+    char = create_random_character(country, rng)
+    char.in_school = True
+    char.school_track = "vocational"
+    char.education = EducationLevel.SECONDARY
+    char.vocation_field = None  # never picked a trade
+    char.age = 20
+    char.job = None
+    char.salary = 0
+
+    msg = education.update_education(char, country, rng)
+    assert msg is not None
+    assert "graduated from vocational" in msg.lower()
+    assert char.job is None  # no auto-assignment without a field
+    assert char.in_school is False
+    assert char.education == EducationLevel.VOCATIONAL
+
+
 def test_modern_self_employment_kinds_loaded_as_freelance():
     """#83: the new modern self-employment kinds (online seller, content
     creator, food vendor, gig worker, freelance consultant) load from
@@ -1145,7 +1239,13 @@ def test_treat_disease_manages_chronic():
 
 def test_synthetic_athletics_ladder_reachable():
     """#59: the athletics ladder now has 5 rungs from youth athlete to
-    elite athlete instead of just 'professional athlete'."""
+    elite athlete instead of just 'professional athlete'.
+
+    #83 followup: every rung is freelance — even at the elite level
+    athletes are independent contractors whose income swings on
+    talent and luck. Previously semi-pro and elite were is_freelance=0
+    which silently flipped a self-employed athlete into a salaried
+    role on promotion."""
     from src.engine import careers
     youth = careers.get_job("youth athlete")
     amateur = careers.get_job("amateur athlete")
@@ -1157,11 +1257,9 @@ def test_synthetic_athletics_ladder_reachable():
     assert semipro is not None and semipro.promotes_to == "professional athlete"
     assert pro is not None and pro.promotes_to == "elite athlete"  # patched
     assert elite is not None and elite.promotes_to is None  # terminal
-    # The first three are freelance (the talent grind), the top two
-    # are salaried (signed contracts).
-    assert youth.is_freelance
-    assert amateur.is_freelance
-    assert not pro.is_freelance
+    # All five rungs freelance — no crossover into a salaried role.
+    for j in (youth, amateur, semipro, pro, elite):
+        assert j.is_freelance, f"{j.name} should be freelance"
 
 
 def test_synthetic_writer_ladder_freelance():
