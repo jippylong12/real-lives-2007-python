@@ -139,7 +139,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     category          TEXT,                    -- vocation category (#51)
     promotes_to       TEXT,                    -- next job name in the ladder (#51)
     rural_only        INTEGER NOT NULL DEFAULT 0,
-    is_freelance      INTEGER NOT NULL DEFAULT 0  -- freelance flag (#61)
+    is_freelance      INTEGER NOT NULL DEFAULT 0,  -- freelance flag (#61)
+    promotion_years   INTEGER,                     -- per-job years-in-role for promotion
+    is_seniority_step INTEGER NOT NULL DEFAULT 0   -- 1 = step/tier, not a role change
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(category);
 
@@ -604,18 +606,23 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     "professional athlete",
                 ) else 0
 
+                # Per-job promotion pacing override.
+                promo_years = seed.BINARY_JOB_PROMOTION_YEARS.get(clean_name)
+
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO jobs (
                         name, min_education, min_intelligence, min_age, max_age,
                         salary_low, salary_high, urban_only, rural_only,
-                        category, promotes_to, is_freelance
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                        category, promotes_to, is_freelance,
+                        promotion_years, is_seniority_step
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         clean_name, min_education, intelligence, min_age, max_age,
                         salary_low, salary_high, urban_only, rural_only,
                         category, promotes_to, is_freelance,
+                        promo_years, 0,
                     ),
                 )
                 # Mirror into job_original_stats for the catch-all consumers
@@ -658,8 +665,9 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                 INSERT OR REPLACE INTO jobs (
                     name, min_education, min_intelligence, min_age, max_age,
                     salary_low, salary_high, urban_only, rural_only,
-                    category, promotes_to, is_freelance
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    category, promotes_to, is_freelance,
+                    promotion_years, is_seniority_step
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     sj["name"], sj["min_education"], sj["min_intelligence"],
@@ -668,6 +676,8 @@ def build(db_path: Path = DB_PATH, data_dir: Path = DATA_DIR, *, fresh: bool = T
                     sj["urban_only"], sj["rural_only"],
                     sj["category"], sj["promotes_to"],
                     sj.get("is_freelance", 0),
+                    sj.get("promotion_years"),
+                    sj.get("is_seniority_step", 0),
                 ),
             )
 

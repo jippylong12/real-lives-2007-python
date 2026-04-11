@@ -184,6 +184,29 @@ document.addEventListener("keydown", (e) => {
   cancelBtn && cancelBtn.onClick && cancelBtn.onClick();
 });
 
+// #110: Spacebar shortcut — advance to next year.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== " ") return;
+  // Don't intercept when typing in an input, textarea, or select.
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  // Only fire on the game screen when alive, no modal open, no pending decision.
+  if (!state.game) return;
+  if (!state.game.character?.alive) return;
+  if (state.game.pending_event) return;
+  const gameScreen = document.getElementById("screen-game");
+  if (!gameScreen || gameScreen.classList.contains("hidden")) return;
+  // Check no modal is open (job board, emigration, decision, dialog stack).
+  if (_dialogStack.length > 0) return;
+  const modals = ["jobboard-modal", "emigration-modal", "decision-modal"];
+  for (const id of modals) {
+    const el = document.getElementById(id);
+    if (el && !el.classList.contains("hidden")) return;
+  }
+  e.preventDefault();
+  advanceYear();
+});
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -250,6 +273,59 @@ function showConfirm(opts) {
         },
       ],
     });
+  });
+}
+
+/**
+ * Show a prompt dialog with a text input. Resolves with the trimmed
+ * string on confirm, or null on cancel / ESC / click-outside.
+ *
+ *   const name = await showPrompt({ title: "New profile", placeholder: "Enter name" });
+ *   if (!name) return; // cancelled
+ */
+function showPrompt(opts) {
+  if (typeof opts === "string") opts = { title: opts };
+  const {
+    title = "Enter a value",
+    body = "",
+    placeholder = "",
+    initialValue = "",
+    confirmText = "OK",
+    cancelText = "Cancel",
+    maxLength = 40,
+  } = opts || {};
+  return new Promise((resolve) => {
+    let handle = null;
+    const finish = (val) => { _closeDialog(handle); resolve(val); };
+    handle = _renderDialog({
+      title, body, kind: "default", dismissible: true,
+      buttons: [
+        { label: cancelText, variant: "", role: "cancel", onClick: () => finish(null) },
+        { label: confirmText, variant: "primary", role: "confirm", onClick: () => {
+          const input = handle.card.querySelector(".rl-dialog-input");
+          const val = input ? input.value.trim() : "";
+          finish(val || null);
+        }},
+      ],
+    });
+    // Insert input field before the actions bar.
+    const actions = handle.card.querySelector(".rl-dialog-actions");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "rl-dialog-input";
+    input.placeholder = placeholder;
+    input.value = initialValue;
+    input.maxLength = maxLength;
+    handle.card.insertBefore(input, actions);
+    // Enter key confirms.
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const val = input.value.trim();
+        finish(val || null);
+      }
+    });
+    setTimeout(() => input.focus(), 30);
   });
 }
 
@@ -356,7 +432,7 @@ async function payLoan(index, amount) {
 
 // ---------- Spend (#66) ----------
 const spendState = {
-  category: "big",
+  category: "housing",
   purchases: [],
 };
 
@@ -376,15 +452,27 @@ function renderSpendTab() {
 
   const c = state.game?.character;
 
-  // Category tabs
+  // Category tabs — derived from the purchase data so new categories
+  // appear automatically (#112).
   const tabsHost = $opt("#purchase-categories");
-  const cats = ["big", "lifestyle", "subscription", "charity", "gift"];
-  const labels = { big: "Big purchases", lifestyle: "Lifestyle", subscription: "Subscriptions", charity: "Charity", gift: "Gifts" };
+  const CATEGORY_LABELS = {
+    housing: "Housing", vehicles: "Vehicles", lifestyle: "Lifestyle",
+    tech: "Tech", health: "Health & Wellness", subscription: "Subscriptions",
+    education: "Education", charity: "Charity & Gifts",
+  };
+  const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS);
+  const seenCats = new Set(spendState.purchases.map((p) => p.category));
+  const cats = CATEGORY_ORDER.filter((c) => seenCats.has(c));
+  // Append any unknown categories at the end.
+  for (const c of seenCats) { if (!cats.includes(c)) cats.push(c); }
+  // If the active category isn't in the list, default to the first.
+  if (!cats.includes(spendState.category)) spendState.category = cats[0] || "housing";
   tabsHost.innerHTML = "";
   for (const cat of cats) {
     const btn = document.createElement("button");
     btn.className = "purchase-tab" + (cat === spendState.category ? " active" : "");
-    btn.textContent = labels[cat];
+    const icon = (typeof ICONS !== "undefined" && ICONS[cat]) || "";
+    btn.innerHTML = (icon ? `<span class="tab-icon">${icon}</span>` : "") + escapeHtml(CATEGORY_LABELS[cat] || cat);
     btn.onclick = () => {
       spendState.category = cat;
       renderSpendTab();
@@ -476,9 +564,19 @@ function buildPurchaseRow(p, isOwned) {
     actionHtml = `<button class="btn sm ${blockedReason ? 'blocked' : ''}" data-buy="${p.key}" data-blocked="${blockedReason}">Buy</button>`;
   }
 
+  // Purchase type indicator: one-time, repeatable, or subscription
+  let typeTag = "";
+  if (p.monthly_cost) {
+    typeTag = '<span class="pr-type sub" title="Recurring subscription"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a5 5 0 0 1 9.5-1.5M13 8a5 5 0 0 1-9.5 1.5"/><path d="M12.5 3.5v3h-3M3.5 12.5v-3h3"/></svg></span>';
+  } else if (!p.one_time) {
+    typeTag = '<span class="pr-type repeat" title="Can buy again"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a5 5 0 0 1 9.5-1.5M13 8a5 5 0 0 1-9.5 1.5"/><path d="M12.5 3.5v3h-3M3.5 12.5v-3h3"/></svg></span>';
+  } else {
+    typeTag = '<span class="pr-type once" title="One-time purchase"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M5 6l3-3 3 3"/></svg></span>';
+  }
+
   row.innerHTML = `
     <div class="pr-main">
-      <div class="pr-name">${p.name} ${ownedTag}</div>
+      <div class="pr-name">${typeTag}${p.name} ${ownedTag}</div>
       <div class="pr-desc">${p.description}</div>
       ${effectsHtml}
     </div>
@@ -675,7 +773,7 @@ async function quitJob() {
 async function dropOutOfSchool() {
   const ok = await showConfirm({
     title: "Drop out of school?",
-    body: "You'll start looking for work right away. This decision is permanent — you can't re-enroll later.",
+    body: "You'll start looking for work right away. You can enroll in university later, but it will cost tuition.",
     confirmText: "Drop out",
     cancelText: "Stay in school",
     destructive: true,
@@ -690,6 +788,201 @@ async function dropOutOfSchool() {
   } catch (e) {
     logErr("dropOutOfSchool failed", e);
     showToast(`Could not drop out: ${e.message}`, { kind: "error" });
+  }
+}
+
+// ---------- Profile management (#111) ----------
+const _NEW_PROFILE_SENTINEL = "__new__";
+let _profileListenerAttached = false;
+
+async function loadProfileDropdown() {
+  const select = $opt("#profile-select");
+  if (!select) return;
+  let players = [];
+  try {
+    players = await api("/api/players");
+  } catch (e) {
+    logErr("loadProfileDropdown failed", e);
+  }
+  const active = getActivePlayer();
+  select.innerHTML = "";
+
+  // Build options: existing profiles + "New Profile..."
+  for (const name of players) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    if (name === active) opt.selected = true;
+    select.appendChild(opt);
+  }
+  // If the active player isn't in the list yet (e.g., just created but
+  // has no saved games yet), add it so they stay selected.
+  if (active && !players.includes(active)) {
+    const opt = document.createElement("option");
+    opt.value = active;
+    opt.textContent = active;
+    opt.selected = true;
+    select.insertBefore(opt, select.firstChild);
+  }
+  // "New Profile..." option
+  const newOpt = document.createElement("option");
+  newOpt.value = _NEW_PROFILE_SENTINEL;
+  newOpt.textContent = "+ New Profile...";
+  select.appendChild(newOpt);
+
+  // If no active player and no existing profiles, prompt for creation.
+  if (!active && players.length === 0) {
+    select.value = _NEW_PROFILE_SENTINEL;
+    await createNewProfile(select);
+  }
+
+  // Attach the change listener only once.
+  if (!_profileListenerAttached) {
+    _profileListenerAttached = true;
+    select.addEventListener("change", async () => {
+      if (select.value === _NEW_PROFILE_SENTINEL) {
+        await createNewProfile(select);
+        return;
+      }
+      setActivePlayer(select.value);
+      await loadSlots();
+      renderSlotGrid();
+      showToast(`Playing as ${select.value}`, { kind: "info" });
+    });
+  }
+}
+
+async function createNewProfile(select) {
+  const name = await showPrompt({
+    title: "New profile",
+    body: "Profiles separate your save slots and statistics.",
+    placeholder: "Enter a name",
+    confirmText: "Create",
+  });
+  if (!name) {
+    // Cancelled — revert to previous selection.
+    select.value = getActivePlayer() || (select.options.length > 1 ? select.options[0].value : "");
+    return;
+  }
+  setActivePlayer(name);
+  // Add the new profile to the dropdown if it's not already there.
+  const exists = Array.from(select.options).some((o) => o.value === name);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    // Insert before the "New Profile..." option.
+    select.insertBefore(opt, select.lastChild);
+  }
+  select.value = name;
+  await loadSlots();
+  renderSlotGrid();
+  showToast(`Created profile: ${name}`, { kind: "success" });
+}
+
+async function renameProfile() {
+  const current = getActivePlayer();
+  if (!current) return;
+  const newName = await showPrompt({
+    title: "Rename profile",
+    placeholder: "New name",
+    initialValue: current,
+    confirmText: "Rename",
+  });
+  if (!newName || newName === current) return;
+  try {
+    await api(`/api/players/${encodeURIComponent(current)}/rename`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_name: newName }),
+    });
+    setActivePlayer(newName);
+    await loadProfileDropdown();
+    await loadSlots();
+    renderSlotGrid();
+    showToast(`Renamed to "${newName}"`, { kind: "success" });
+  } catch (e) {
+    logErr("renameProfile failed", e);
+    showToast(`Rename failed: ${e.message}`, { kind: "error" });
+  }
+}
+
+async function deleteProfile() {
+  const current = getActivePlayer();
+  if (!current) return;
+  const ok = await showConfirm({
+    title: `Delete profile "${current}"?`,
+    body: "This will permanently delete all save slots and game history for this profile. Statistics are kept.",
+    destructive: true,
+    confirmText: "Delete profile",
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/players/${encodeURIComponent(current)}/delete`, { method: "POST" });
+    // Fetch remaining profiles and auto-select the first one (or prompt
+    // for a new profile if none remain). Without this, the dropdown
+    // goes blank and the other profile's slots disappear.
+    let remaining = [];
+    try { remaining = await api("/api/players"); } catch {}
+    const next = remaining.filter((n) => n !== current)[0] || "";
+    setActivePlayer(next);
+    await loadProfileDropdown();
+    await loadSlots();
+    renderSlotGrid();
+    showToast(`Deleted profile "${current}"`, { kind: "success" });
+  } catch (e) {
+    logErr("deleteProfile failed", e);
+    showToast(`Delete failed: ${e.message}`, { kind: "error" });
+  }
+}
+
+// ---------- Late university enrollment (#107) ----------
+async function enrollUniversity() {
+  const c = state.game?.character;
+  if (!c) return;
+  const tuition = c.university_tuition || 0;
+  const ok = await showConfirm({
+    title: "Enroll in university?",
+    body: `Tuition is ~${fmtMoney(tuition)}/yr (4 years). You can keep working while enrolled.`,
+    confirmText: "Enroll",
+    cancelText: "Not now",
+  });
+  if (!ok) return;
+  log("enrollUniversity");
+  try {
+    const res = await api(`/api/game/${state.game.id}/enroll_university`, { method: "POST" });
+    state.game = res.game;
+    showToast(res.message, { kind: "info" });
+    renderGame();
+  } catch (e) {
+    logErr("enrollUniversity failed", e);
+    showToast(`Could not enroll: ${e.message}`, { kind: "error" });
+  }
+}
+
+async function tryForChild() {
+  const c = state.game?.character;
+  if (!c) return;
+  const ok = await showConfirm({
+    title: "Try for a child?",
+    body: "You and your spouse will try to have a child this year. Success isn't guaranteed and depends on age.",
+    confirmText: "Try",
+    cancelText: "Not now",
+  });
+  if (!ok) return;
+  try {
+    const res = await api(`/api/game/${state.game.id}/try_for_child`, { method: "POST" });
+    state.game = res.game;
+    const r = res.result;
+    if (r.success) {
+      showToast(r.message, { kind: "success", duration: 6000 });
+    } else {
+      showToast(r.message, { kind: "info", duration: 5000 });
+    }
+    renderGame();
+  } catch (e) {
+    logErr("tryForChild failed", e);
+    showToast(e.message || "Couldn't try for a child.", { kind: "error" });
   }
 }
 
@@ -1165,6 +1458,18 @@ async function advanceYear() {
     renderGame();
     renderTurn(res.turn);
     if (res.turn.died) showDeathScreen(res.turn);
+    // #109: auto-open job board when education just completed so the
+    // player can pick a career matching their new qualifications.
+    else if (res.turn.education_completed && state.game.character.can_work) {
+      const hasJob = !!state.game.character.job;
+      showToast(
+        hasJob
+          ? "You graduated! Browse the job board for new opportunities."
+          : "You finished your education! Time to find a job.",
+        { kind: "info" }
+      );
+      openJobBoard();
+    }
     // Refresh spending + healthcare panels (eligibility changes
     // every year as the character ages, gets new diseases, etc).
     loadPurchases();
@@ -1186,6 +1491,17 @@ async function decide(choiceKey) {
     state.game = res.game;
     renderGame();
     renderTurn(res.turn);
+    // #109: auto-open job board after dropout or education decision.
+    if (res.turn.education_completed && state.game.character.can_work) {
+      const hasJob = !!state.game.character.job;
+      showToast(
+        hasJob
+          ? "You graduated! Browse the job board for new opportunities."
+          : "You finished your education! Time to find a job.",
+        { kind: "info" }
+      );
+      openJobBoard();
+    }
   } catch (e) {
     logErr("decide failed", e);
     showToast(`Failed to apply decision: ${e.message}`, { kind: "error" });
@@ -1208,9 +1524,9 @@ async function showStartScreen() {
   // Always return to the slot picker view first; never leave the
   // user staring at a country grid when they came back from a life.
   backToSlotPicker();
-  // Refresh slots from the server every time we show the start screen
-  // so the cards reflect the latest state (the life we just exited
-  // may have changed age / died this turn).
+  // Refresh profile dropdown + slots from the server every time we
+  // show the start screen so the cards reflect the latest state.
+  await loadProfileDropdown();
   await loadSlots();
   renderSlotGrid();
 }
@@ -1286,6 +1602,7 @@ function showDeathScreen(turn) {
     ["Final job", c.job || "—"],
     ["Final salary", c.salary ? fmtMoney(c.salary) + "/yr" : "—"],
     ["Net worth at death", fmtMoney(netWorth)],
+    ["Lifestyle", c.lifestyle_tier_name || "—"],
     ["Married", c.married ? (c.spouse_name || "yes") : "no"],
     ["Children", numChildren],
     ["Diseases endured", `${numDiseases}${numChronics ? ` (${numChronics} chronic)` : ""}`],
@@ -2111,6 +2428,11 @@ function renderGame() {
   $("#flag").src = `/flags/${co.code}.bmp`;
   $("#flag").alt = co.name;
   $("#char-name").textContent = c.name;
+
+  // Property scene — pixel-art view of owned possessions.
+  if (typeof PropertyScene !== "undefined") {
+    PropertyScene.render($opt("#property-canvas"), c);
+  }
   const where = `${c.city}, ${co.name}`;
   $("#char-where").textContent = c.is_urban === false ? `${where} · rural` : where;
 
@@ -2157,6 +2479,11 @@ function renderGame() {
   if (dropBtn) {
     dropBtn.classList.toggle("hidden", !c.can_drop_out);
   }
+  // #107: Enroll in university button — visible when eligible.
+  const enrollBtn = $opt("#btn-enroll-uni");
+  if (enrollBtn) {
+    enrollBtn.classList.toggle("hidden", !c.can_enroll_university);
+  }
   // #49: Move abroad button — visible from age 16 onward.
   const emigrateBtn = $opt("#btn-emigrate");
   if (emigrateBtn) {
@@ -2164,10 +2491,63 @@ function renderGame() {
   }
   $("#stat-salary").textContent = c.salary ? fmtMoney(c.salary) + "/yr" : "—";
   $("#stat-money").textContent = fmtMoney(c.money);
+  // #113: lifestyle tier badge with icon
+  const lifestyleEl = $opt("#stat-lifestyle");
+  if (lifestyleEl) {
+    const tier = c.lifestyle_tier ?? 3;
+    const tierIcon = (typeof ICONS !== "undefined" && ICONS["tier_" + tier]) || "";
+    lifestyleEl.innerHTML = (tierIcon ? `<span class="tier-icon">${tierIcon}</span>` : "") + escapeHtml(c.lifestyle_tier_name || "—");
+    lifestyleEl.className = "lifestyle-badge tier-" + tier;
+  }
+  // #113: lifestyle budget selector (age 18+)
+  const budgetRow = $opt("#budget-row");
+  const budgetSel = $opt("#budget-select");
+  if (budgetRow && budgetSel) {
+    if (c.age >= 18) {
+      budgetRow.classList.remove("hidden");
+      const opts = c.budget_options || [];
+      // Only rebuild options if the count changed (avoids flicker).
+      if (budgetSel.options.length !== opts.length) {
+        budgetSel.innerHTML = "";
+        for (const o of opts) {
+          const opt = document.createElement("option");
+          opt.value = o.level;
+          opt.textContent = `${o.label} (${fmtMoney(o.yearly_cost)}/yr)`;
+          budgetSel.appendChild(opt);
+        }
+        budgetSel.onchange = async () => {
+          const level = parseInt(budgetSel.value, 10);
+          try {
+            const res = await api(`/api/game/${state.game.id}/set_budget`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ level }),
+            });
+            state.game = res;
+            renderGame();
+            showToast(`Budget set to ${budgetSel.options[budgetSel.selectedIndex].textContent.split(" (")[0]}`, { kind: "info" });
+          } catch (e) {
+            logErr("set_budget failed", e);
+          }
+        };
+      }
+      budgetSel.value = c.lifestyle_budget ?? 2;
+    } else {
+      budgetRow.classList.add("hidden");
+    }
+  }
   $("#stat-portfolio").textContent = fmtMoney(g.portfolio_value || 0);
   $("#stat-debt").textContent = fmtMoney(c.debt || 0);
   $("#stat-married").textContent = c.married ? (c.spouse_name || "yes") : "no";
   $("#stat-kids").textContent = (c.children || []).length;
+  // Try for child button — visible when married and eligible.
+  const tryChildBtn = $opt("#btn-try-child");
+  if (tryChildBtn) {
+    tryChildBtn.classList.toggle("hidden", !c.can_try_for_child);
+    if (c.try_for_child_reason && !c.can_try_for_child) {
+      tryChildBtn.title = c.try_for_child_reason;
+    }
+  }
 
   // #50: spouse card with attributes, salary, age. Hidden when not
   // married (or only dating). The spouse object is the source of
@@ -2225,7 +2605,8 @@ function renderGame() {
       let nextLine = "";
       let gatesLine = "";
       if (career.next_job) {
-        nextLine = `<div class="career-next">Next: <strong>${escapeHtml(career.next_job)}</strong> (${career.years_to_promote} yrs in role)</div>`;
+        const stepLabel = career.next_is_seniority_step ? "Next step" : "Next";
+        nextLine = `<div class="career-next">${stepLabel}: <strong>${escapeHtml(career.next_job)}</strong> (${career.years_to_promote} yrs in role)</div>`;
         // Surface every requirement the player is currently failing
         // for the next rung — education, IQ, age, urban/rural — so
         // they aren't forced to click to discover the gate.
@@ -2287,7 +2668,7 @@ function renderGame() {
       careerEl.innerHTML = `
         <div class="career-head">
           <span class="career-cat">${cat}${career.is_freelance ? ' <span class="career-freelance-tag">freelance</span>' : ""}</span>
-          <span class="career-promos">${career.promotion_count} promotion${career.promotion_count === 1 ? "" : "s"}</span>
+          <span class="career-promos">${career.promotion_count > 0 ? career.promotion_count + " promotion" + (career.promotion_count === 1 ? "" : "s") : ""}${career.is_seniority_step ? (career.promotion_count > 0 ? " · " : "") + "seniority tier" : ""}</span>
         </div>
         ${barHtml}
         <div class="career-yrs">${yearsLabel}</div>
@@ -2905,6 +3286,8 @@ async function init() {
   $("#btn-back-to-slots").addEventListener("click", backToSlotPicker);
   $("#btn-quit-job").addEventListener("click", quitJob);
   $("#btn-drop-out").addEventListener("click", dropOutOfSchool);
+  $("#btn-enroll-uni").addEventListener("click", enrollUniversity);
+  $opt("#btn-try-child")?.addEventListener("click", tryForChild);
   $("#btn-find-work").addEventListener("click", openJobBoard);
   $("#btn-jobboard-close").addEventListener("click", closeJobBoard);
   // #49: emigration
@@ -2974,25 +3357,11 @@ async function init() {
       if (host) host.classList.toggle("hidden");
     });
   }
-  // #85: player name input on the start screen. Updates localStorage
-  // and reloads slots so the picker re-scopes immediately.
-  const playerInput = $opt("#player-name-input");
-  const savePlayerBtn = $opt("#btn-save-player");
-  if (playerInput) {
-    playerInput.value = getActivePlayer();
-    const apply = async () => {
-      setActivePlayer(playerInput.value);
-      await loadSlots();
-      renderSlotGrid();
-      showToast(getActivePlayer()
-        ? `Now playing as ${getActivePlayer()}`
-        : "Switched to shared (unscoped) view", { kind: "info" });
-    };
-    if (savePlayerBtn) savePlayerBtn.addEventListener("click", apply);
-    playerInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") apply();
-    });
-  }
+  // #111: profile dropdown + management. Populated from /api/players
+  // with "New Profile..." option. Rename/delete buttons manage profiles.
+  $opt("#btn-rename-profile")?.addEventListener("click", renameProfile);
+  $opt("#btn-delete-profile")?.addEventListener("click", deleteProfile);
+  await loadProfileDropdown();
   log("init: loading countries + finance products");
   await loadCountries();
   await loadFinanceProducts();

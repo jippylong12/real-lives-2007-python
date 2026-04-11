@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..engine import careers, finances, healthcare, spending
+from ..engine import careers, education, finances, healthcare, lifestyle, relationships, spending
 from ..engine.game import Game, NUM_SLOTS, list_games, list_slots, load_game
 from ..engine.world import (
     all_countries, binary_facts_for, cities_for, description_for, get_country,
@@ -122,11 +122,29 @@ def _serialize_game(game: Game) -> dict:
         can_drop, drop_reason = careers.can_drop_out_of_school(state.character, country)
         char_dict["can_drop_out"] = can_drop
         char_dict["drop_out_blocked_reason"] = drop_reason
+        # #107: surface late university enrollment eligibility.
+        can_enroll, enroll_reason = education.can_enroll_university(state.character, country)
+        char_dict["can_enroll_university"] = can_enroll
+        char_dict["enroll_university_reason"] = enroll_reason
+        tuition = education.yearly_tuition(state.character, country) if state.character.in_school else 0
+        char_dict["university_tuition"] = int(country.gdp_pc * education.TUITION_RATES["university"])
+        char_dict["current_tuition"] = tuition
     else:
         char_dict["can_work"] = False
         char_dict["work_blocked_reason"] = "no country"
         char_dict["can_drop_out"] = False
         char_dict["drop_out_blocked_reason"] = "no country"
+
+    # #113: lifestyle budget options for the frontend selector.
+    if country is not None:
+        char_dict["budget_options"] = lifestyle.budget_options(country)
+        char_dict["budget_yearly_cost"] = lifestyle.budget_yearly_cost(
+            state.character, country)
+
+    # Parenthood: surface eligibility so the frontend can show/hide the button.
+    can_try, try_reason = relationships.can_try_for_child(state.character)
+    char_dict["can_try_for_child"] = can_try
+    char_dict["try_for_child_reason"] = try_reason
 
     return {
         "id": state.id,
@@ -200,6 +218,8 @@ def _career_summary(character, country) -> dict | None:
         # next rung). Promotable freelancers like writer→published
         # author keep their normal ladder UI.
         "is_freelance": bool(job.is_freelance),
+        "is_seniority_step": bool(job.is_seniority_step),
+        "next_is_seniority_step": bool(next_rung.is_seniority_step) if next_rung else False,
     }
 
 
@@ -324,6 +344,7 @@ def _turn_dict(result) -> dict:
         "died": result.died,
         "cause_of_death": result.cause_of_death,
         "unlocked_achievements": unlocked_records,
+        "education_completed": getattr(result, "education_completed", False),
     }
 
 
@@ -405,6 +426,63 @@ def create_app() -> FastAPI:
     def games(player: Optional[str] = None):
         """List saved games, optionally scoped to ``?player=NAME`` (#85)."""
         return list_games(player_name=player)
+
+    @app.get("/api/players")
+    def list_players():
+        """Return distinct player names from saved games (#111).
+        Used by the profile dropdown on the start screen."""
+        from ..data.build_db import get_connection
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT player_name FROM games "
+                "WHERE player_name IS NOT NULL AND player_name != '' "
+                "ORDER BY player_name"
+            ).fetchall()
+        finally:
+            conn.close()
+        return [r[0] for r in rows]
+
+    class RenamePlayerRequest(BaseModel):
+        new_name: str
+
+    @app.post("/api/players/{name}/rename")
+    def rename_player(name: str, req: RenamePlayerRequest):
+        """Rename a player profile (#111). Updates all games and archived
+        lives to use the new name."""
+        new = req.new_name.strip()[:40]
+        if not new:
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        from ..data.build_db import get_connection
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE games SET player_name = ? WHERE player_name = ?",
+                (new, name),
+            )
+            conn.execute(
+                "UPDATE life_archive SET player_name = ? WHERE player_name = ?",
+                (new, name),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return {"ok": True, "old_name": name, "new_name": new}
+
+    @app.post("/api/players/{name}/delete")
+    def delete_player(name: str):
+        """Delete a player profile and all their saved games (#111).
+        Archived lives are kept for statistics continuity."""
+        from ..data.build_db import get_connection
+        conn = get_connection()
+        try:
+            conn.execute(
+                "DELETE FROM games WHERE player_name = ?", (name,)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return {"ok": True, "deleted": name}
 
     @app.get("/api/slots")
     def slots(player: Optional[str] = None):
@@ -546,6 +624,50 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e))
         game.save()
         return _serialize_game(game)
+
+    @app.post("/api/game/{game_id}/enroll_university")
+    def enroll_university(game_id: str):
+        """Enroll in university later in life (#107). Requires secondary
+        education, age 18-55, and enough money for tuition."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        country = get_country(game.state.character.country_code)
+        try:
+            msg = education.enroll_university(game.state.character, country)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        game.save()
+        return {"message": msg, "game": _serialize_game(game)}
+
+    class SetBudgetRequest(BaseModel):
+        level: int
+
+    @app.post("/api/game/{game_id}/set_budget")
+    def set_budget(game_id: str, req: SetBudgetRequest):
+        """Set the player's lifestyle budget level (0-6) (#113)."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        level = max(0, min(6, req.level))
+        game.state.character.lifestyle_budget = level
+        game.save()
+        return _serialize_game(game)
+
+    @app.post("/api/game/{game_id}/try_for_child")
+    def try_for_child(game_id: str):
+        """Player-initiated attempt to have a child. Requires marriage,
+        age 18-50, and no infant children."""
+        game = load_game(game_id)
+        if game is None:
+            raise HTTPException(status_code=404, detail="game not found")
+        import random as _rand
+        rng = _rand.Random(game.state.seed + game.state.character.age)
+        result = relationships.try_for_child(game.state.character, rng)
+        if not result["success"] and "married" in result.get("message", "").lower():
+            raise HTTPException(status_code=400, detail=result["message"])
+        game.save()
+        return {"result": result, "game": _serialize_game(game)}
 
     @app.get("/api/game/{game_id}/job_board")
     def job_board(game_id: str):

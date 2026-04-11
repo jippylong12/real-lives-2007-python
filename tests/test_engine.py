@@ -1231,7 +1231,7 @@ def test_jobs_table_populated_from_binary():
     from src.engine import careers
     jobs = careers.all_jobs()
     assert len(jobs) >= 131  # binary baseline
-    assert len(jobs) <= 200  # sanity cap
+    assert len(jobs) <= 250  # sanity cap (career ladder expansion adds ~30 step jobs)
     # All categories present
     cats = {j.category for j in jobs if j.category}
     assert {"medical", "stem", "education", "trades", "police", "maritime"}.issubset(cats)
@@ -1687,14 +1687,15 @@ def test_education_path_vocational_choice_does_not_get_clobbered_at_age_18():
     assert char.school_track == "vocational"
     assert char.in_school is True
 
-    # Year 20: graduates and (with vocation_field set) gets a starter job.
+    # Year 20: graduates. #109: no longer auto-assigns a job — the
+    # frontend opens the job board so the player picks their own.
     char.vocation_field = "trades"
     char.age = 20
     msg = education.update_education(char, country, rng)
     assert char.in_school is False
     assert char.school_track is None
     assert char.education == EducationLevel.VOCATIONAL
-    assert char.job is not None, f"vocational grad should have starter job, msg={msg}"
+    assert "trades" in msg.lower(), f"graduation msg should mention field, msg={msg}"
 
 
 def test_vocational_track_event_eligible_across_whole_school_window():
@@ -1794,19 +1795,16 @@ def test_education_path_university_choice_does_not_get_clobbered():
 
 
 def test_vocational_graduation_places_starter_job_in_chosen_field():
-    """#83 followup: when a character finishes vocational school with
-    a vocation_field set (via VOCATIONAL_TRACK), the graduation event
-    auto-places them in an entry-level job in that field. This is the
-    payoff for having gone through vocational school — without it,
-    picking 'vocational → trades → electrician' was a no-op the
-    player had to follow up with manual job hunting."""
+    """#83 followup / #109 update: when a character finishes vocational
+    school with a vocation_field set, they graduate with a message
+    mentioning their field. They are NOT auto-assigned a job — the
+    frontend opens the job board so the player picks their own."""
     from src.engine import education
     from src.engine.character import EducationLevel, create_random_character
 
     rng = random.Random(0)
     country = get_country("us")
     char = create_random_character(country, rng)
-    # Set up the post-vocational-school state.
     char.in_school = True
     char.school_track = "vocational"
     char.education = EducationLevel.SECONDARY
@@ -1818,9 +1816,8 @@ def test_vocational_graduation_places_starter_job_in_chosen_field():
     msg = education.update_education(char, country, rng)
     assert msg is not None
     assert "graduated from vocational" in msg.lower()
-    # Payoff: they were placed in a trade job.
-    assert char.job is not None, f"vocational grad should have a starter job, msg={msg}"
-    assert char.salary > 0
+    # #109: no auto-assignment — player picks via job board.
+    assert "trades" in msg.lower(), f"graduation msg should mention field, msg={msg}"
     assert char.in_school is False
     assert char.school_track is None
     assert char.education == EducationLevel.VOCATIONAL
@@ -2163,14 +2160,16 @@ def test_promote_walks_ladder_with_experience():
     assert msg is None
     assert char.job == "engineer"
 
-    # Build up experience
+    # Build up experience — engineer now promotes to "senior engineer"
+    # (a seniority step) after its per-job promotion_years.
     char.years_in_role = 6
     msg = careers.promote(char, country, rng)
     assert msg is not None
-    assert "engineering department manager" in msg
-    assert char.job == "engineering department manager"
+    assert "senior engineer" in msg
+    assert char.job == "senior engineer"
     assert char.years_in_role == 0
-    assert char.promotion_count == 1
+    # Seniority steps don't increment promotion_count
+    assert char.promotion_count == 0
 
 
 def test_job_board_age_gate_by_country_hdi():
@@ -2328,8 +2327,9 @@ def test_request_raise_eligibility_gates():
     assert not eligible
     assert "year" in reason
 
-    # 5 years in — eligible (first promo threshold)
-    char.years_in_role = 5
+    # Enough years in — eligible. Engineer has per-job promotion_years
+    # so threshold depends on that, not the global formula.
+    char.years_in_role = 6
     eligible, _ = careers.can_request_raise(char)
     assert eligible
 

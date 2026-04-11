@@ -571,6 +571,64 @@ SYNTHETIC_JOB_LADDERS: list[dict] = [
     {"name": "food vendor",          "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 70, "salary_low": 10000, "salary_high":  35000, "urban_only": 1, "rural_only": 0, "category": "service",  "promotes_to": None, "is_freelance": 1},
     {"name": "gig worker",           "min_education": 0, "min_intelligence":  0, "min_age": 18, "max_age": 65, "salary_low":  6000, "salary_high":  25000, "urban_only": 1, "rural_only": 0, "category": "service",  "promotes_to": None, "is_freelance": 1},
     {"name": "freelance consultant", "min_education": 4, "min_intelligence": 60, "min_age": 25, "max_age": 75, "salary_low": 40000, "salary_high": 200000, "urban_only": 0, "rural_only": 0, "category": "business", "promotes_to": None, "is_freelance": 1},
+
+    # =================================================================
+    # Seniority step ladders + intermediate rungs (#113 career redesign)
+    # =================================================================
+
+    # ----- Education: teacher step system (peak ~58-62) -----
+    {"name": "teacher II",       "min_education": 4, "min_intelligence": 40, "min_age": 24, "max_age": 72, "salary_low": 44000, "salary_high": 66000, "urban_only": 0, "rural_only": 0, "category": "education", "promotes_to": "teacher III",    "promotion_years": 4, "is_seniority_step": 1},
+    {"name": "teacher III",      "min_education": 4, "min_intelligence": 42, "min_age": 28, "max_age": 72, "salary_low": 48000, "salary_high": 72000, "urban_only": 0, "rural_only": 0, "category": "education", "promotes_to": "senior teacher",  "promotion_years": 5, "is_seniority_step": 1},
+    {"name": "senior teacher",   "min_education": 4, "min_intelligence": 45, "min_age": 32, "max_age": 72, "salary_low": 54000, "salary_high": 81000, "urban_only": 0, "rural_only": 0, "category": "education", "promotes_to": "master teacher",  "promotion_years": 5, "is_seniority_step": 1},
+    {"name": "master teacher",   "min_education": 4, "min_intelligence": 48, "min_age": 36, "max_age": 72, "salary_low": 60000, "salary_high": 90000, "urban_only": 0, "rural_only": 0, "category": "education", "promotes_to": "department head", "promotion_years": 6, "is_seniority_step": 1},
+    {"name": "department head",  "min_education": 4, "min_intelligence": 50, "min_age": 40, "max_age": 72, "salary_low": 66000, "salary_high": 99000, "urban_only": 0, "rural_only": 0, "category": "education", "promotes_to": "school administrator", "promotion_years": 6},
+
+    # ----- Medical: nursing step system (peak ~49-52) -----
+    {"name": "senior nurse",       "min_education": 4, "min_intelligence": 42, "min_age": 24, "max_age": 75, "salary_low": 62000, "salary_high": 93000,  "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": "charge nurse",       "promotion_years": 4, "is_seniority_step": 1},
+    {"name": "charge nurse",       "min_education": 4, "min_intelligence": 45, "min_age": 28, "max_age": 75, "salary_low": 68000, "salary_high": 102000, "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": "head nurse",         "promotion_years": 5, "is_seniority_step": 1},
+    # head nurse already exists; now promotes to nursing supervisor instead of department manager
+    {"name": "nursing supervisor",  "min_education": 4, "min_intelligence": 50, "min_age": 34, "max_age": 75, "salary_low": 80000, "salary_high": 120000, "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": "nursing director",   "promotion_years": 6},
+    {"name": "nursing director",    "min_education": 4, "min_intelligence": 55, "min_age": 40, "max_age": 75, "salary_low": 96000, "salary_high": 144000, "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": None,                  "promotion_years": 7},
+
+    # ----- Medical: doctor step system (peak ~44-50) -----
+    {"name": "attending physician", "min_education": 4, "min_intelligence": 55, "min_age": 30, "max_age": 75, "salary_low": 170000, "salary_high": 255000, "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": "senior physician",  "promotion_years": 5, "is_seniority_step": 1},
+    {"name": "senior physician",    "min_education": 4, "min_intelligence": 60, "min_age": 35, "max_age": 75, "salary_low": 200000, "salary_high": 300000, "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": "chief of medicine", "promotion_years": 6, "is_seniority_step": 1},
+    {"name": "chief of medicine",   "min_education": 4, "min_intelligence": 65, "min_age": 42, "max_age": 75, "salary_low": 250000, "salary_high": 400000, "urban_only": 0, "rural_only": 0, "category": "medical", "promotes_to": None,                "promotion_years": 7},
+
+    # ----- Police: step system (peak ~47-52) -----
+    {"name": "police officer II",  "min_education": 1, "min_intelligence": 28, "min_age": 22, "max_age": 60, "salary_low": 40000, "salary_high": 60000,  "urban_only": 0, "rural_only": 0, "category": "police", "promotes_to": "senior officer",    "promotion_years": 4, "is_seniority_step": 1},
+    {"name": "senior officer",     "min_education": 1, "min_intelligence": 30, "min_age": 26, "max_age": 60, "salary_low": 48000, "salary_high": 72000,  "urban_only": 0, "rural_only": 0, "category": "police", "promotes_to": "police inspector",   "promotion_years": 5, "is_seniority_step": 1},
+    # police inspector already exists; chain continues to police captain → police chief
+
+    # ----- Military: intermediate ranks (peak ~42-48) -----
+    {"name": "corporal",         "min_education": 0, "min_intelligence": 8,  "min_age": 19, "max_age": 55, "salary_low": 24000, "salary_high": 36000,  "urban_only": 0, "rural_only": 0, "category": "military", "promotes_to": "military sergeant", "promotion_years": 3, "is_seniority_step": 1},
+    {"name": "staff sergeant",   "min_education": 0, "min_intelligence": 20, "min_age": 25, "max_age": 55, "salary_low": 42000, "salary_high": 63000,  "urban_only": 0, "rural_only": 0, "category": "military", "promotes_to": "military officer",  "promotion_years": 5, "is_seniority_step": 1},
+
+    # ----- STEM: engineering step system (peak ~54-58) -----
+    {"name": "senior engineer",      "min_education": 4, "min_intelligence": 72, "min_age": 26, "max_age": 72, "salary_low":  85000, "salary_high": 128000, "urban_only": 0, "rural_only": 0, "category": "stem", "promotes_to": "staff engineer",        "promotion_years": 5, "is_seniority_step": 1},
+    {"name": "staff engineer",       "min_education": 4, "min_intelligence": 74, "min_age": 30, "max_age": 72, "salary_low":  96000, "salary_high": 144000, "urban_only": 0, "rural_only": 0, "category": "stem", "promotes_to": "principal engineer",     "promotion_years": 5, "is_seniority_step": 1},
+    {"name": "principal engineer",   "min_education": 4, "min_intelligence": 76, "min_age": 35, "max_age": 72, "salary_low": 120000, "salary_high": 180000, "urban_only": 0, "rural_only": 0, "category": "stem", "promotes_to": "engineering director",   "promotion_years": 6},
+    {"name": "engineering director", "min_education": 4, "min_intelligence": 70, "min_age": 40, "max_age": 72, "salary_low": 150000, "salary_high": 225000, "urban_only": 0, "rural_only": 0, "category": "stem", "promotes_to": "vp of engineering",     "promotion_years": 7},
+    {"name": "vp of engineering",    "min_education": 4, "min_intelligence": 68, "min_age": 45, "max_age": 72, "salary_low": 180000, "salary_high": 300000, "urban_only": 0, "rural_only": 0, "category": "stem", "promotes_to": None,                     "promotion_years": 8},
+
+    # ----- Trades: step system (peak ~37-42) -----
+    {"name": "journeyman",      "min_education": 0, "min_intelligence": 10, "min_age": 18, "max_age": 65, "salary_low": 30000, "salary_high": 45000, "urban_only": 0, "rural_only": 0, "category": "trades", "promotes_to": "master craftsman", "promotion_years": 4, "is_seniority_step": 1},
+    {"name": "master craftsman", "min_education": 0, "min_intelligence": 15, "min_age": 22, "max_age": 65, "salary_low": 40000, "salary_high": 60000, "urban_only": 0, "rural_only": 0, "category": "trades", "promotes_to": "foreman",         "promotion_years": 4, "is_seniority_step": 1},
+    # foreman already exists; add superintendent above it
+    {"name": "superintendent",  "min_education": 1, "min_intelligence": 25, "min_age": 30, "max_age": 65, "salary_low": 60000, "salary_high": 90000, "urban_only": 0, "rural_only": 0, "category": "trades", "promotes_to": None,               "promotion_years": 6},
+
+    # ----- Government/Law: step system (peak ~52-60) -----
+    {"name": "senior lawyer",   "min_education": 4, "min_intelligence": 70, "min_age": 30, "max_age": 72, "salary_low":  80000, "salary_high": 120000, "urban_only": 0, "rural_only": 0, "category": "government", "promotes_to": "law partner",            "promotion_years": 6, "is_seniority_step": 1},
+    {"name": "law partner",     "min_education": 4, "min_intelligence": 72, "min_age": 36, "max_age": 72, "salary_low": 120000, "salary_high": 250000, "urban_only": 0, "rural_only": 0, "category": "government", "promotes_to": "judge",                  "promotion_years": 6},
+    # judge already exists as terminal
+    {"name": "senior civil servant",    "min_education": 2, "min_intelligence": 45, "min_age": 28, "max_age": 72, "salary_low": 45000, "salary_high": 68000,  "urban_only": 0, "rural_only": 0, "category": "government", "promotes_to": "government officer",       "promotion_years": 5, "is_seniority_step": 1},
+    {"name": "government officer",      "min_education": 2, "min_intelligence": 50, "min_age": 33, "max_age": 72, "salary_low": 56000, "salary_high": 84000,  "urban_only": 0, "rural_only": 0, "category": "government", "promotes_to": "senior government official", "promotion_years": 6},
+    # senior government official already exists
+    {"name": "deputy minister",         "min_education": 4, "min_intelligence": 65, "min_age": 45, "max_age": 72, "salary_low": 100000, "salary_high": 180000, "urban_only": 0, "rural_only": 0, "category": "government", "promotes_to": None,                        "promotion_years": 7},
+
+    # ----- Business: entry rungs (peak ~50-55) -----
+    {"name": "business analyst",  "min_education": 2, "min_intelligence": 40, "min_age": 20, "max_age": 65, "salary_low": 36000, "salary_high": 54000, "urban_only": 0, "rural_only": 0, "category": "business", "promotes_to": "senior analyst",     "promotion_years": 4},
+    {"name": "senior analyst",    "min_education": 2, "min_intelligence": 45, "min_age": 24, "max_age": 65, "salary_low": 48000, "salary_high": 72000, "urban_only": 0, "rural_only": 0, "category": "business", "promotes_to": "department manager", "promotion_years": 5, "is_seniority_step": 1},
 ]
 
 
@@ -583,6 +641,49 @@ BINARY_JOB_PROMOTES_TO_PATCHES: dict[str, str] = {
     "artist":               "exhibited artist",
     "musician":             "recording artist",
     "traditional medicine practitioner": "religious leader",
+    # Career ladder redesign — insert intermediate rungs
+    "primary school teacher": "teacher II",
+    "nurse":                  "senior nurse",
+    "head nurse":             "nursing supervisor",
+    "doctor":                 "attending physician",
+    "policeman":              "police officer II",
+    "soldier":                "corporal",
+    "military sergeant":      "staff sergeant",
+    "engineer":               "senior engineer",
+    "lawyer":                 "senior lawyer",
+    "customs official":       "senior civil servant",
+    "foreman":                "superintendent",
+}
+
+# Per-job promotion_years overrides for existing binary jobs.
+# Applied during build_db so each job can control its own pacing.
+BINARY_JOB_PROMOTION_YEARS: dict[str, int] = {
+    # Education
+    "primary school teacher": 4,
+    "school administrator":   7,
+    "school principal":       None,  # terminal
+    "college professor":      6,
+    "college head of department": 8,
+    # Medical
+    "nurse":           4,
+    "head nurse":      5,
+    "doctor":          5,
+    # Police
+    "policeman":       4,
+    "police inspector": 6,
+    "police captain":  7,
+    # Military
+    "soldier":            3,
+    "military sergeant":  4,
+    # Business
+    "department manager": 7,
+    "general manager":    8,
+    # Trades
+    "foreman":            5,
+    # Government
+    "lawyer":             6,
+    "customs official":   5,
+    "senior government official": 7,
 }
 
 

@@ -337,3 +337,66 @@ def age_family(character: Character, country: Country | None = None, rng: random
                         fm.alive = False
                         break
     return notes
+
+
+# ---------------------------------------------------------------------------
+# Player-initiated parenthood
+# ---------------------------------------------------------------------------
+
+def can_try_for_child(character: Character) -> tuple[bool, str]:
+    """Whether the player can try for a child right now."""
+    if not character.married:
+        return False, "You need to be married first."
+    if character.age > 50:
+        return False, "You're past the age for having children."
+    if character.age < 18:
+        return False, "You're too young."
+    if len(character.children) >= 8:
+        return False, "Your family is already very large."
+    # Cooldown: can't try every year.
+    child_ages = [ch.age for ch in character.children if ch.age is not None]
+    if child_ages and min(child_ages) < 1:
+        return False, "Your youngest child is still an infant."
+    return True, ""
+
+
+def try_for_child(character: Character, rng: random.Random) -> dict:
+    """Player-initiated attempt to have a child. ~65% success rate.
+    Returns a result dict with success, message, and optional child info."""
+    ok, reason = can_try_for_child(character)
+    if not ok:
+        return {"success": False, "message": reason}
+
+    # Age affects fertility.
+    if character.age <= 30:
+        chance = 0.70
+    elif character.age <= 40:
+        chance = 0.50
+    else:
+        chance = 0.30
+
+    if rng.random() >= chance:
+        return {
+            "success": False,
+            "message": "You and your spouse tried for a child this year, but it didn't happen.",
+        }
+
+    from .character import FamilyMember as FM, Gender, _random_name
+    gender = Gender(rng.randint(0, 1))
+    child = FM(
+        relation="child",
+        name=_random_name(gender, rng),
+        age=0,
+        alive=True,
+        gender=gender,
+    )
+    character.children.append(child)
+    label = "son" if gender == Gender.MALE else "daughter"
+    character.attributes.adjust(happiness=+12, health=-3)
+    character.remember(f"Welcomed a {label}, {child.name}.")
+    return {
+        "success": True,
+        "message": f"You and your spouse welcomed a {label}, {child.name}!",
+        "child_name": child.name,
+        "child_gender": int(gender),
+    }

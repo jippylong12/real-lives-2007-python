@@ -40,14 +40,14 @@
             </p>
           </div>
 
-          <!-- #85: optional player name. When set, save slots and the
-               statistics dashboard scope to this player so multiple
-               players sharing one DB don't see each other's runs. -->
+          <!-- #111: profile dropdown. Lists existing profiles from the DB
+               with a "New Profile..." option at the bottom. Selecting a
+               profile scopes save slots and statistics to that player. -->
           <div class="player-bar">
-            <label for="player-name-input" class="player-bar-label">Playing as</label>
-            <input id="player-name-input" type="text" maxlength="40"
-                   placeholder="(anyone — leave blank for shared)" />
-            <button id="btn-save-player" class="btn xs">Save</button>
+            <label for="profile-select" class="player-bar-label">Profile</label>
+            <select id="profile-select"></select>
+            <button id="btn-rename-profile" class="btn xs player-bar-action icon-btn" title="Rename profile"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3L5 14H2v-3l8.5-8.5z"/></svg></button>
+            <button id="btn-delete-profile" class="btn xs player-bar-action icon-btn danger-text" title="Delete profile"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5"/><path d="M4.5 4.5l.5 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-9"/></svg></button>
           </div>
 
           <!-- Slot picker view (default) -->
@@ -81,16 +81,28 @@
             </div>
           </div>
 
+          <!-- Property scene: pixel-art view of owned possessions.
+               Evolves as the player buys houses, cars, upgrades, etc. -->
+          <canvas id="property-canvas" class="property-canvas" width="400" height="200"></canvas>
+
           <!-- Always-visible essentials (#47) -->
           <div class="quickstats compact">
             <div class="row"><span>Age</span><strong id="stat-age">0</strong></div>
             <div class="row"><span>Year</span><strong id="stat-year">2007</strong></div>
             <div class="row"><span>Money</span><strong id="stat-money">$0</strong></div>
+            <div class="lifestyle-section">
+              <div class="row"><span>Living standard</span><strong id="stat-lifestyle" class="lifestyle-badge" title="Computed from your spending, budget, and wealth">—</strong></div>
+              <div class="row budget-row hidden" id="budget-row">
+                <span class="muted">Daily spending</span>
+                <select id="budget-select" class="budget-select" title="Choose how much you spend on food, clothing, and daily life"></select>
+              </div>
+            </div>
             <div class="row"><span>Job</span><strong id="stat-job">—</strong></div>
             <div class="job-actions">
               <button id="btn-find-work" class="btn xs hidden">Find work</button>
               <button id="btn-quit-job" class="btn xs hidden">Quit</button>
               <button id="btn-drop-out" class="btn xs hidden">Drop out of school</button>
+              <button id="btn-enroll-uni" class="btn xs hidden">Enroll in university</button>
               <span id="work-blocked" class="muted hidden"></span>
             </div>
           </div>
@@ -112,6 +124,9 @@
               <div class="row"><span>Debt</span><strong id="stat-debt">$0</strong></div>
               <div class="row"><span>Married</span><strong id="stat-married">no</strong></div>
               <div class="row"><span>Children</span><strong id="stat-kids">0</strong></div>
+              <div class="row" id="try-child-row" style="border-bottom:0">
+                <button id="btn-try-child" class="btn xs hidden">Try for a child</button>
+              </div>
             </div>
           </details>
 
@@ -141,7 +156,7 @@
           <section id="event-area" class="panel event-area">
             <div class="event-area-header">
               <h2 id="year-title">Age 0</h2>
-              <button id="btn-advance" class="btn primary">Live another year →</button>
+              <button id="btn-advance" class="btn primary" title="Keyboard shortcut: Space">Live another year →<span class="key-hint">Space</span></button>
             </div>
             <div id="event-list" class="event-list">
               <p class="placeholder">Click "Live another year" to begin your life.</p>
@@ -348,6 +363,8 @@
          the dashboard renders, the bar charts fall back to the
          original CSS bar layout. -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/static/icons.js"></script>
+    <script src="/static/property-scene.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

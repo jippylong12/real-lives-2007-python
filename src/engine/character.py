@@ -321,6 +321,20 @@ class Character:
     # character can't bounce between countries every year — real visas
     # take time to process and migrant lives take time to settle.
     last_emigration_age: int | None = None
+    # #107: late university enrollment — target graduation age. Set
+    # when the player enrolls in university after the normal window.
+    # Cleared on graduation. None for standard-age enrollees.
+    uni_graduation_age: int | None = None
+    # #113: lifestyle tier (0-6). Computed each year from spending
+    # patterns and wealth relative to the country's GDP. Stored here
+    # so the frontend can display it without recomputing.
+    lifestyle_tier: int = 3
+    lifestyle_tier_name: str = "Comfortable"
+    # #113: player-chosen lifestyle budget (0-6). Controls daily
+    # living expenses (food, clothing, utilities). Defaults to 2
+    # (Modest). Available from age 18+. The actual tier blends
+    # budget + wealth + purchase spending.
+    lifestyle_budget: int = 2
 
     @property
     def life_stage(self) -> LifeStage:
@@ -396,6 +410,10 @@ class Character:
             "peak_attributes": dict(self.peak_attributes),
             "previous_countries": list(self.previous_countries),
             "last_emigration_age": self.last_emigration_age,
+            "uni_graduation_age": self.uni_graduation_age,
+            "lifestyle_tier": self.lifestyle_tier,
+            "lifestyle_tier_name": self.lifestyle_tier_name,
+            "lifestyle_budget": self.lifestyle_budget,
         }
         return d
 
@@ -478,6 +496,10 @@ class Character:
             peak_attributes=dict(d.get("peak_attributes", {})),
             previous_countries=list(d.get("previous_countries", [])),
             last_emigration_age=d.get("last_emigration_age"),
+            uni_graduation_age=d.get("uni_graduation_age"),
+            lifestyle_tier=d.get("lifestyle_tier", 3),
+            lifestyle_tier_name=d.get("lifestyle_tier_name", "Comfortable"),
+            lifestyle_budget=d.get("lifestyle_budget", 2),
         )
 
 

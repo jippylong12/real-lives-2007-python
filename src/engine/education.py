@@ -109,13 +109,20 @@ def update_education(character: Character, country: Country, rng: random.Random)
     # path (vocational immediately set in_school=False in the buggy code).
     # Same payoff path as vocational — graduate into a starter job in
     # the chosen field.
-    if (a == UNI_END_AGE
-            and character.education == EducationLevel.SECONDARY
+    #
+    # #107: late enrollees have a _uni_graduation_age that overrides
+    # the standard UNI_END_AGE (22). This lets adults who enroll later
+    # graduate after 4 years from their enrollment age.
+    grad_age = character.uni_graduation_age or UNI_END_AGE
+    if (a == grad_age
             and character.in_school
-            and character.school_track in ("university", None)):
+            and character.school_track in ("university", None)
+            and character.education in (EducationLevel.SECONDARY, EducationLevel.VOCATIONAL)):
         character.education = EducationLevel.UNIVERSITY
         character.in_school = False
         character.school_track = None
+        # Clean up the late-enrollment marker.
+        character.uni_graduation_age = None
         return _graduate_into_starter_job(
             character, country, rng,
             base="You graduated from university",
@@ -124,25 +131,87 @@ def update_education(character: Character, country: Country, rng: random.Random)
     return None
 
 
-def _graduate_into_starter_job(character: Character, country: Country, rng: random.Random, base: str) -> str:
-    """Place the freshly-graduated character into a starter job in their
-    chosen vocation_field. The graduation event is the natural payoff
-    moment — the player chose this path years ago, and the system
-    follows through. If they didn't pick a vocation field (or no entry
-    job in that field fits), they graduate jobless and use Find work
-    like anyone else.
+# #108: tuition rates as a fraction of the country's GDP per capita.
+# Primary is free in most of the world. Secondary has modest fees.
+# Vocational and university are the expensive ones.
+TUITION_RATES: dict[str, float] = {
+    "primary": 0.0,       # free
+    "secondary": 0.03,    # ~3% of GDP/capita
+    "vocational": 0.08,   # ~8% of GDP/capita
+    "university": 0.20,   # ~20% of GDP/capita
+}
 
-    NOTE: this is the ONE place advance_year still calls assign_job —
-    everywhere else jobs are explicit player actions per the
-    'joblessness is a choice' fix. Graduation counts as a deliberate
-    choice that culminates here, not silent auto-assignment.
+
+def yearly_tuition(character: Character, country: Country) -> int:
+    """Return the tuition cost for this year of school. Zero if not in school.
+    Scaled by the country's GDP per capita so education costs are
+    realistic relative to the local economy (#108)."""
+    if not character.in_school or not character.school_track:
+        return 0
+    rate = TUITION_RATES.get(character.school_track, 0.0)
+    return int(country.gdp_pc * rate)
+
+
+# #107: late university enrollment constants.
+LATE_ENROLL_MIN_AGE = 18
+LATE_ENROLL_MAX_AGE = 55
+LATE_UNI_DURATION = 4  # years
+
+
+def can_enroll_university(character: Character, country: Country) -> tuple[bool, str]:
+    """Check whether the character can enroll in university later in life.
+    Returns (eligible, reason)."""
+    if character.in_school:
+        return False, "Already in school."
+    if character.education >= EducationLevel.UNIVERSITY:
+        return False, "Already have a university degree."
+    if character.education < EducationLevel.SECONDARY:
+        return False, "Need at least a secondary education."
+    if character.age < LATE_ENROLL_MIN_AGE:
+        return False, "Too young — must be at least 18."
+    if character.age > LATE_ENROLL_MAX_AGE:
+        return False, "Too old to enroll."
+    tuition = int(country.gdp_pc * TUITION_RATES["university"])
+    if character.money < tuition:
+        return False, f"Can't afford tuition (${tuition:,})."
+    return True, ""
+
+
+def enroll_university(character: Character, country: Country) -> str:
+    """Enroll the character in university later in life (#107).
+    Deducts the first year of tuition and sets up the school state.
+    The character will graduate after LATE_UNI_DURATION years via the
+    normal graduation path, keyed off their enrollment age."""
+    ok, reason = can_enroll_university(character, country)
+    if not ok:
+        raise ValueError(reason)
+    tuition = int(country.gdp_pc * TUITION_RATES["university"])
+    character.money -= tuition
+    character.in_school = True
+    character.school_track = "university"
+    # Set education to SECONDARY so the graduation check at UNI_END_AGE
+    # equivalent fires. We store the target graduation age on the
+    # character so update_education can detect late enrollees.
+    if character.education == EducationLevel.VOCATIONAL:
+        # Keep vocational — university upgrades from it.
+        pass
+    character.uni_graduation_age = character.age + LATE_UNI_DURATION
+    # Clear vocation field so the UNIVERSITY_MAJOR choice event fires
+    # and the player can pick a new major for their university degree.
+    character.vocation_field = None
+    # If they already had a job, they keep it (part-time / night school).
+    return (
+        f"You enrolled in university! Tuition: ${tuition:,}/yr. "
+        f"You'll graduate at age {character.uni_graduation_age}."
+    )
+
+
+def _graduate_into_starter_job(character: Character, country: Country, rng: random.Random, base: str) -> str:
+    """Return graduation message. The character joins the workforce but
+    does NOT get auto-assigned a job (#109). The frontend detects
+    education_completed in the TurnResult and auto-opens the job board
+    so the player can choose their own first job.
     """
-    if not character.vocation_field:
-        return f"{base} and joined the workforce."
-    from . import careers  # in-function to avoid any import cycles
-    job_msg = careers.assign_job(character, country, rng)
-    if job_msg:
-        # job_msg is "You started working as a <job> (salary ~$X/yr)."
-        # Stitch the graduation onto it.
-        return f"{base} and started working as {job_msg.split('You started working as ')[-1]}"
-    return f"{base} and joined the workforce."
+    if character.vocation_field:
+        return f"{base} with a focus in {character.vocation_field}. Time to find a job!"
+    return f"{base}. Time to find a job!"

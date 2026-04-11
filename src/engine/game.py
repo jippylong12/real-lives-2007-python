@@ -27,7 +27,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import careers, death, diseases, education, events, finances, relationships, statistics
+from . import careers, death, diseases, education, events, finances, lifestyle, relationships, statistics
 from .character import Character, EducationLevel, create_random_character
 from .world import Country, all_countries, get_country, random_country
 from ..data.build_db import get_connection
@@ -55,6 +55,10 @@ class TurnResult:
     # populated when the character died and the archive write evaluated
     # the registry). Frontend uses this to fire unlock toasts.
     unlocked_achievements: list = field(default_factory=list)
+    # #109: set when the character just finished education (graduated,
+    # dropped out, or completed a level) and has no job. Frontend uses
+    # this to auto-open the job board so the player doesn't get stranded.
+    education_completed: bool = False
 
 
 @dataclass
@@ -176,10 +180,27 @@ class Game:
         log: list[TurnEvent] = []
 
         # 1. Education changes
+        was_in_school = char.in_school
         ed_msg = education.update_education(char, country, self.rng)
         if ed_msg:
             log.append(TurnEvent("education", "Education", "education", ed_msg))
             char.remember(ed_msg)
+        # #109: detect education completion so the frontend can auto-open
+        # the job board. Fires whenever school just ended (graduated,
+        # dropped out, or completed a level) — even if the character
+        # already has a job (e.g., late university enrollees who kept
+        # working), so the player can choose a new career path.
+        edu_just_completed = (was_in_school and not char.in_school)
+
+        # 1b. Tuition (#108): deduct yearly education costs while in school.
+        tuition = education.yearly_tuition(char, country)
+        if tuition > 0:
+            char.money -= tuition
+            log.append(TurnEvent(
+                "tuition", "Tuition", "finance",
+                f"Paid ${tuition:,} in {char.school_track} school tuition this year.",
+                money_delta=-tuition,
+            ))
 
         # 2. Promotion check + auto-retirement (#51, #75).
         # Tick years_in_role first so the promotion check sees the
@@ -266,6 +287,36 @@ class Game:
                                  "Money worries weighed on you this year.",
                                  deltas={"happiness": stress}))
 
+        # 5b. Lifestyle budget (#113). Deduct daily living expenses
+        # (food, clothing, utilities) based on the player's chosen
+        # budget level. Available from age 18+.
+        if char.age >= 18:
+            budget_cost = lifestyle.budget_yearly_cost(char, country)
+            if budget_cost > 0:
+                char.money -= budget_cost
+                log.append(TurnEvent(
+                    "living_expenses", "Living expenses", "finance",
+                    f"Daily living costs this year: ${budget_cost:,} "
+                    f"({lifestyle.BUDGET_LABELS.get(char.lifestyle_budget, 'Modest')} lifestyle).",
+                    money_delta=-budget_cost,
+                ))
+
+        # 5c. Lifestyle tier (#113). Compute from spending + wealth after
+        # all income/expenses/stress are settled. Apply tier effects.
+        ls = lifestyle.apply_yearly_effects(char, country)
+        if ls["deltas"]:
+            desc = ls["description"]
+            effect_parts = []
+            for k, v in ls["deltas"].items():
+                sign = "+" if v > 0 else ""
+                effect_parts.append(f"{sign}{v} {k}")
+            effect_str = ", ".join(effect_parts)
+            log.append(TurnEvent(
+                "lifestyle", f"Lifestyle: {ls['tier_name']}", "finance",
+                f"{desc} ({effect_str})",
+                deltas=ls["deltas"],
+            ))
+
         # 6. Relationships
         rel_msg = relationships.update_relationships(char, country, self.rng)
         if rel_msg:
@@ -345,6 +396,7 @@ class Game:
                 return TurnResult(
                     self.state.year, char.age, log, self.state.pending_event,
                     False, None,
+                    education_completed=edu_just_completed,
                 )
             # #52: record passive event firings so cooldowns + lifetime
             # caps work. Done before apply so a side-effect that
@@ -441,7 +493,8 @@ class Game:
             self._checkpoint_rng()
             return TurnResult(self.state.year, char.age, log,
                               self.state.pending_event, True, disease_cause,
-                              unlocked_achievements=unlocked)
+                              unlocked_achievements=unlocked,
+                              education_completed=edu_just_completed)
         died, cause = death.kill_check(char, country, self.rng)
         unlocked: list = []
         if died:
@@ -455,7 +508,8 @@ class Game:
         self._checkpoint_rng()
         return TurnResult(self.state.year, char.age, log,
                           self.state.pending_event, died, cause,
-                          unlocked_achievements=unlocked)
+                          unlocked_achievements=unlocked,
+                          education_completed=edu_just_completed)
 
     # ----- decisions -----
     def apply_decision(self, choice_key: str) -> TurnResult:
@@ -477,6 +531,7 @@ class Game:
             char.money += choice.money_delta
         for k, v in choice.moral_delta.items():
             char.moral_ledger[k] = char.moral_ledger.get(k, 0) + v
+        was_in_school = char.in_school
         if choice.side_effect is not None:
             # #50: side effects that need year/country/rng (e.g.,
             # _accept_proposal, which rolls a full Spouse) accept an
@@ -503,6 +558,9 @@ class Game:
         line = f"{ev.title}: {choice.summary}"
         char.remember(line)
 
+        # #109: detect dropout / education completion via decision.
+        edu_done = (was_in_school and not char.in_school and char.job is None)
+
         log = [TurnEvent(
             ev.key, ev.title, ev.category, choice.summary,
             money_delta=choice.money_delta, deltas=choice.deltas,
@@ -512,6 +570,7 @@ class Game:
         return TurnResult(
             self.state.year, char.age, log, None,
             died=not char.alive, cause_of_death=char.cause_of_death,
+            education_completed=edu_done,
         )
 
 

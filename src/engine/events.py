@@ -157,11 +157,11 @@ def _simple_passive(
     year and keep the event log readable."""
     _deltas = dict(deltas) if deltas else {}
     _money = money_delta
-    _history = history if history is not None else summary
     def apply(c, co, rng):
-        if _deltas:
-            c.attributes.adjust(**_deltas)
-        c.remember(_history)
+        # NOTE: do NOT call c.attributes.adjust() or c.remember() here
+        # — game.advance_year handles both after apply returns via the
+        # EventOutcome deltas. Doing it here too would double-apply
+        # stat changes and produce duplicate history entries.
         return EventOutcome(summary=summary, deltas=_deltas, money_delta=_money)
     ev = _passive(
         key=key, title=title, category=category, description=summary,
@@ -1513,9 +1513,9 @@ EVENT_REGISTRY: list[Event] = [
         "had_child", "A new child", "life",
         "You and your spouse had a child.",
         when=lambda c, co: c.married and c.age <= 45 and len(c.children) < 5,
-        chance=lambda c, co: 0.18,
+        chance=lambda c, co: 0.06,  # reduced — kids are mostly player-initiated now
         apply=_apply_pregnancy,
-        cooldown_years=2,  # #52: not biologically every year
+        cooldown_years=3,  # #52: not biologically every year
     ),
 
     # --- Civic ---

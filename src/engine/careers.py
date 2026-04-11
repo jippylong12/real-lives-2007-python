@@ -43,6 +43,8 @@ class Job:
     category: str | None
     promotes_to: str | None
     is_freelance: bool = False
+    promotion_years: int | None = None      # per-job years-in-role override
+    is_seniority_step: bool = False          # step/tier advance, not a role change
 
 
 def _scale_for_country(country: Country) -> float:
@@ -95,6 +97,8 @@ def all_jobs() -> tuple[Job, ...]:
             category=r["category"],
             promotes_to=r["promotes_to"],
             is_freelance=bool(r["is_freelance"]),
+            promotion_years=r["promotion_years"],
+            is_seniority_step=bool(r["is_seniority_step"]),
         )
         for r in rows
     )
@@ -270,11 +274,24 @@ RETIREMENT_WEALTH_MULTIPLIER = 20
 
 
 def _years_required_for_promo(character: Character, current: Job) -> int:
-    """Skill-adjusted years_in_role threshold for the next promotion (#60)."""
-    promo_count = character.promotion_count or 0
-    base = 5 if promo_count == 0 else 7 if promo_count == 1 else 10
+    """Skill-adjusted years_in_role threshold for the next promotion (#60).
+
+    If the current job has ``promotion_years`` set, that value is used
+    as the base (per-job pacing). Otherwise falls back to the global
+    formula based on ``promotion_count``.
+    """
+    if current.promotion_years is not None:
+        base = current.promotion_years
+    else:
+        promo_count = character.promotion_count or 0
+        if promo_count == 0:
+            base = 5
+        elif promo_count == 1:
+            base = 7
+        else:
+            base = 10
     skill = _skill_factor(character, current.category)
-    return max(2, int(round(base / skill)))
+    return max(3, int(round(base / skill)))
 
 
 def can_request_salary_raise(character: Character) -> tuple[bool, str | None]:
@@ -793,23 +810,7 @@ def promote(character: Character, country: Country, rng: random.Random) -> str |
     if next_job is None:
         return None
 
-    # How many promotions has the character already taken? Use the gap
-    # between the entry tier and current as a proxy via promotion_count.
-    promo_count = character.promotion_count or 0
-    if promo_count == 0:
-        years_required = 5
-    elif promo_count == 1:
-        years_required = 7
-    else:
-        years_required = 10
-
-    # Attribute-driven progression speed (#60). A high-skill character
-    # promotes ~half as fast; a low-skill character takes nearly twice
-    # as long. Uses the character's CURRENT job category to pick the
-    # relevant attribute.
-    skill = _skill_factor(character, current.category)
-    years_required = max(2, int(round(years_required / skill)))
-
+    years_required = _years_required_for_promo(character, current)
     if character.years_in_role < years_required:
         return None
     if not _meets_requirements(next_job, character):
@@ -817,8 +818,14 @@ def promote(character: Character, country: Country, rng: random.Random) -> str |
 
     _set_job(character, country, next_job, rng)
     character.years_in_role = 0
-    character.promotion_count = promo_count + 1
-    return f"You were promoted to {next_job.name} (salary ~${character.salary:,}/yr)."
+
+    # Seniority steps don't count as promotions — they're pay/tier
+    # bumps within the same role (Teacher II, Officer III, etc.).
+    if next_job.is_seniority_step:
+        return f"Your seniority advanced — you're now a {next_job.name} (salary ~${character.salary:,}/yr)."
+    else:
+        character.promotion_count = (character.promotion_count or 0) + 1
+        return f"You were promoted to {next_job.name} (salary ~${character.salary:,}/yr)."
 
 
 def quit_job(character: Character) -> None:
